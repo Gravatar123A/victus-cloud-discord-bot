@@ -1,0 +1,12 @@
+node_modules
+dist
+logs
+.env
+.git
+.gitignore
+*.md
+Dockerfile
+docker-compose.yml
+nodemon.json
+package-lock.json
+src/**/*.spec.ts
