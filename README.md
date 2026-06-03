@@ -59,6 +59,23 @@ npm run build
 npm start
 ```
 
+### Pterodactyl Deployment
+
+Use these startup settings in the NodeJS egg:
+
+```bash
+MAIN_FILE=index.js
+AUTO_UPDATE=1
+```
+
+The root `index.js` launcher builds `src/index.ts` into `dist/index.js` automatically when the compiled output is missing, then starts the bot. If you prefer a fully compiled startup, set the startup command to:
+
+```bash
+npm install && npm run build && npm start
+```
+
+Do not set `MAIN_FILE` to `index.js` unless this root launcher exists in the server files. The bot source entrypoint is `src/index.ts`, and the compiled production entrypoint is `dist/index.js`.
+
 ## Commands
 
 ### User Commands

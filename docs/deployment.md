@@ -73,3 +73,27 @@ The following files are essential for your production server:
 - `src/` (required for Docker builds)
 - `dist/` (if hosting directly without Docker)
 - `.env`
+# Pterodactyl Startup
+
+For the standard Pterodactyl NodeJS egg, set:
+
+```bash
+MAIN_FILE=index.js
+AUTO_UPDATE=1
+```
+
+The repository includes a root `index.js` launcher for Pterodactyl. It checks for `dist/index.js`, runs `npm run build` if the compiled output is missing, and then imports the compiled bot.
+
+If you use a custom startup command instead, use:
+
+```bash
+npm install && npm run build && npm start
+```
+
+Common crash:
+
+```text
+Error: Cannot find module './index.js'
+```
+
+That means the panel is trying to boot a root `index.js` that was not present, or the server files are out of date. Pull the latest repository files and restart.
