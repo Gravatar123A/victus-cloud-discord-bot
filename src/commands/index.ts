@@ -16,6 +16,7 @@ import { ticketCommand } from './ticket.js';
 import { preferencesCommand } from './preferences.js';
 import { announceCommand } from './announce.js';
 import { accountCommand } from './account.js';
+import { linkPanelCommand } from './link-panel.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -35,6 +36,7 @@ const allCommands: Command[] = [
     preferencesCommand,
     announceCommand,
     accountCommand,
+    linkPanelCommand,
 ];
 
 for (const command of allCommands) {

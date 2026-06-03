@@ -98,7 +98,7 @@ export const interactionCreateEvent: Event = {
                 if (command.handleButton) {
                     try {
                         await command.handleButton(interaction);
-                        return;
+                        if (interaction.replied || interaction.deferred) return;
                     } catch (error) {
                         logger.error(`Error handling button ${customId}:`, error);
                     }
