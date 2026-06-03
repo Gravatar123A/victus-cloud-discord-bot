@@ -7,6 +7,51 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
 import type { Event } from '../types/index.js';
 
+let dmQueueProcessing = false;
+
+async function processAdminDmQueue(client: Client<true>) {
+    if (dmQueueProcessing) return;
+    dmQueueProcessing = true;
+
+    try {
+        const queuedMessages = await supabase.getPendingDiscordDms(10);
+        for (const queued of queuedMessages) {
+            const job = await supabase.claimDiscordDm(queued.id);
+            if (!job) continue;
+
+            try {
+                const target = await client.users.fetch(job.discord_id).catch(() => null);
+                if (!target) throw new Error(`Could not fetch Discord user ${job.discord_id}`);
+
+                const container = ComponentsV2.baseContainer(ComponentsV2.Accents.primary)
+                    .addTextDisplayComponents(
+                        ComponentsV2.text(
+                            `# ◆ ${job.subject}\n\n` +
+                            `${job.message}\n\n` +
+                            `-# Sent by Victus Cloud Admin${job.admin_email ? ` (${job.admin_email})` : ''}`
+                        )
+                    );
+
+                await target.send({
+                    components: [container],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+
+                await supabase.markDiscordDmSent(job.id);
+                logger.info(`Admin Discord DM sent to ${target.tag} (${job.discord_id})`);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown Discord DM delivery failure';
+                await supabase.markDiscordDmFailed(job.id, message);
+                logger.warn(`Admin Discord DM failed for ${job.discord_id}: ${message}`);
+            }
+        }
+    } catch (error) {
+        logger.error('Discord DM queue processor failed:', error);
+    } finally {
+        dmQueueProcessing = false;
+    }
+}
+
 export const readyEvent: Event = {
     name: 'clientReady',
     once: true,
@@ -52,6 +97,13 @@ export const readyEvent: Event = {
                 );
             }
         });
+
+        // Process admin-panel Discord DM jobs. The queue keeps delivery reliable even
+        // when the website and bot are deployed on different hosts.
+        await processAdminDmQueue(client);
+        setInterval(() => {
+            processAdminDmQueue(client).catch((error) => logger.error('DM queue interval failed:', error));
+        }, 15000);
 
         // Set bot activity
         client.user.setPresence({

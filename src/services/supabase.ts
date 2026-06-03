@@ -1133,6 +1133,74 @@ class SupabaseService {
             failed_count: (current.failed_count || 0) + failed,
         });
     }
+
+    // ============================================
+    // Admin Discord DM Queue
+    // ============================================
+
+    async getPendingDiscordDms(limit = 10): Promise<any[]> {
+        const { data, error } = await this.client
+            .from('discord_dm_queue')
+            .select('*')
+            .eq('status', 'pending')
+            .order('created_at', { ascending: true })
+            .limit(limit);
+
+        if (error) {
+            logger.error('Failed to get pending Discord DMs:', error);
+            return [];
+        }
+        return data || [];
+    }
+
+    async claimDiscordDm(id: string): Promise<any | null> {
+        const { data, error } = await this.client
+            .from('discord_dm_queue')
+            .update({ status: 'sending', error_message: null })
+            .eq('id', id)
+            .eq('status', 'pending')
+            .select('*')
+            .maybeSingle();
+
+        if (error) {
+            logger.error('Failed to claim Discord DM:', error);
+            return null;
+        }
+        return data;
+    }
+
+    async markDiscordDmSent(id: string): Promise<boolean> {
+        const { error } = await this.client
+            .from('discord_dm_queue')
+            .update({
+                status: 'sent',
+                sent_at: new Date().toISOString(),
+                error_message: null,
+            })
+            .eq('id', id);
+
+        if (error) {
+            logger.error('Failed to mark Discord DM sent:', error);
+            return false;
+        }
+        return true;
+    }
+
+    async markDiscordDmFailed(id: string, errorMessage: string): Promise<boolean> {
+        const { error } = await this.client
+            .from('discord_dm_queue')
+            .update({
+                status: 'failed',
+                error_message: errorMessage.slice(0, 500),
+            })
+            .eq('id', id);
+
+        if (error) {
+            logger.error('Failed to mark Discord DM failed:', error);
+            return false;
+        }
+        return true;
+    }
 }
 
 export const supabase = new SupabaseService();
