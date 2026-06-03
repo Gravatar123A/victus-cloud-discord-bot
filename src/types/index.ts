@@ -76,10 +76,18 @@ export interface UserProfile {
     email: string;
     first_name: string | null;
     last_name: string | null;
+    full_name?: string | null;
+    username?: string | null;
     is_admin: boolean;
-    billing_panel_created: boolean;
+    billing_panel_created?: boolean;
+    billing_account_created?: boolean;
     control_panel_created: boolean;
+    victus_drive_created?: boolean;
     avatar_url: string | null;
+    credits?: number | string | null;
+    credit?: number | string | null;
+    balance?: number | string | null;
+    paymenter_credits?: number | string | null;
     created_at: string;
 }
 

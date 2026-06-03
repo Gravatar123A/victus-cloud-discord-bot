@@ -36,12 +36,14 @@ export const userCommand: Command = {
                 let profile = null;
                 let servers: any[] = [];
                 let history: any[] = [];
+                let creditBalance = undefined;
 
                 if (linkedAccount) {
                     // Fetch full profile info
                     profile = await supabase.getUserProfile(linkedAccount.user_id);
-                    // Fetch user servers
-                    servers = await supabase.getServers(); // Enhance this later for specific user filtering
+                    creditBalance = await supabase.getCreditBalance(profile);
+                    // Fetch only this user's servers
+                    servers = profile?.email ? await supabase.getUserServers(profile.email) : [];
                     // Fetch history
                     history = await supabase.getUserHistory(linkedAccount.user_id);
                 }
@@ -52,7 +54,8 @@ export const userCommand: Command = {
                     !!linkedAccount,
                     profile,
                     servers,
-                    history
+                    history,
+                    creditBalance
                 );
 
                 await interaction.editReply({

@@ -16,6 +16,7 @@ import {
     ButtonStyle,
 } from 'discord.js';
 import { config } from '../config.js';
+import { compactId, decodeDisplayText, formatCredits, formatDate, Icons, statusIcon, statusLabel } from '../utils/premium.js';
 
 // ============================================
 // Constants
@@ -207,22 +208,21 @@ export function helpMenuContainer(
 export function invoiceListContainer(
     invoices: { id: string; amount: string; status: string; date: string }[]
 ): ContainerBuilder {
-    let content = `# 📄 Your Invoices\n\n`;
+    let content = `# ${Icons.invoice} Your Invoices\n\n`;
 
     if (invoices.length === 0) {
-        content += `No invoices found.`;
+        content += `_No invoices found for your linked Victus account._`;
     } else {
-        invoices.slice(0, 5).forEach((inv) => {
-            const statusEmoji = inv.status === 'paid' ? '✅' :
-                inv.status === 'pending' ? '⏳' : '❌';
-            content += `### Invoice #${inv.id}\n` +
-                `💰 **Amount:** ${inv.amount} | ${statusEmoji} **Status:** ${inv.status}\n` +
-                `📅 **Date:** ${inv.date}\n\n`;
+        invoices.slice(0, 8).forEach((invoice) => {
+            content += `### ${statusIcon(invoice.status)} Invoice #${invoice.id}\n` +
+                `${Icons.credits} **Amount:** ${invoice.amount} | **Status:** ${statusLabel(invoice.status)}\n` +
+                `${Icons.calendar} **Date:** ${invoice.date}\n\n`;
         });
     }
 
     return baseContainer(Accents.primary).addTextDisplayComponents(text(content));
 }
+
 
 // ============================================
 // Preset: Services List Container
@@ -230,22 +230,22 @@ export function invoiceListContainer(
 export function servicesListContainer(
     services: { name: string; status: string; price: string; renewsAt?: string }[]
 ): ContainerBuilder {
-    let content = `# 📦 Your Services\n\n`;
+    let content = `# ${Icons.service} Your Services\n\n`;
 
     if (services.length === 0) {
-        content += `No active services found.`;
+        content += `_No active services found for your linked Victus account._`;
     } else {
-        services.slice(0, 5).forEach((svc) => {
-            const statusEmoji = svc.status === 'active' ? '🟢' : '🔴';
-            content += `### ${svc.name}\n` +
-                `${statusEmoji} **Status:** ${svc.status} | 💰 **Price:** ${svc.price}` +
-                (svc.renewsAt ? `\n📅 **Renews:** ${svc.renewsAt}` : '') +
+        services.slice(0, 8).forEach((service) => {
+            content += `### ${statusIcon(service.status)} ${decodeDisplayText(service.name)}\n` +
+                `**Status:** ${statusLabel(service.status)} | ${Icons.credits} **Price:** ${service.price}` +
+                (service.renewsAt ? `\n${Icons.calendar} **Renews:** ${service.renewsAt}` : '') +
                 `\n\n`;
         });
     }
 
     return baseContainer(Accents.primary).addTextDisplayComponents(text(content));
 }
+
 
 // ============================================
 // Preset: User Info Container
@@ -256,35 +256,50 @@ export function userInfoContainer(
     isLinked: boolean,
     profile?: any,
     servers: any[] = [],
-    history: any[] = []
+    history: any[] = [],
+    creditBalance?: { amount: number; currency: string; found: boolean; source: string }
 ): ContainerBuilder {
     const accent = isLinked ? Accents.success : Accents.warning;
     const container = baseContainer(accent);
 
-    let content = `# 👤 User Profile: ${username}\n`;
-    content += `🆔 **Discord ID:** \`${discordId}\`\n`;
-    content += `🔗 **Linked:** ${isLinked ? '✅ Yes' : '❌ No'}\n\n`;
+    const displayName = decodeDisplayText(profile?.username || profile?.full_name || username, username);
+    let content = `# ${Icons.crown} Victus Profile: ${displayName}\n`;
+    content += `-# ${Icons.id} Discord ID: \`${discordId}\`  ${Icons.link} Link Status: **${isLinked ? 'Connected' : 'Not linked'}**\n\n`;
 
     if (isLinked && profile) {
-        content += `### 💳 Account Details\n`;
-        content += `📧 **Email:** ${profile.email || '`Hidden`'}\n`;
-        content += `💰 **Credits:** ${profile.credits || 0}\n`;
-        content += `📅 **Joined:** ${profile.created_at ? new Date(profile.created_at).toLocaleDateString() : 'Unknown'}\n\n`;
+        const billingReady = profile.billing_account_created ?? profile.billing_panel_created;
+        const panelReady = profile.control_panel_created;
+        const driveReady = profile.victus_drive_created;
+        const creditText = creditBalance
+            ? `${formatCredits(creditBalance.amount, creditBalance.currency)}${creditBalance.source === 'paymenter' ? ' synced from Paymenter' : ''}`
+            : formatCredits(profile.credits || profile.credit || profile.balance || 0);
 
-        content += `### 🎮 Active Servers (${servers.length})\n`;
+        content += `### ${Icons.credits} Account Ledger\n`;
+        content += `${Icons.mail} **Email:** ${profile.email || '`Hidden`'}\n`;
+        content += `${Icons.credits} **Credits:** **${creditText}**\n`;
+        content += `${Icons.calendar} **Joined:** ${formatDate(profile.created_at)}\n\n`;
+
+        content += `### ${Icons.spark} Provisioning\n`;
+        content += `${billingReady ? Icons.success : Icons.warning} Billing account: **${billingReady ? 'Ready' : 'Not ready'}**\n`;
+        content += `${panelReady ? Icons.success : Icons.warning} Game panel: **${panelReady ? 'Ready' : 'Not ready'}**\n`;
+        content += `${driveReady ? Icons.success : Icons.warning} Victus Drive: **${driveReady ? 'Ready' : 'Not ready'}**\n\n`;
+
+        content += `### ${Icons.server} Servers Owned (${servers.length})\n`;
         if (servers.length > 0) {
-            servers.slice(0, 3).forEach(s => {
-                content += `• \`${s.identifier}\` - **${s.name}**\n`;
+            servers.slice(0, 6).forEach(s => {
+                const status = s.is_suspended || s.suspended ? 'suspended' : (s.status || 'offline');
+                content += `${statusIcon(status)} \`${compactId(s.identifier)}\` **${decodeDisplayText(s.name)}** - ${statusLabel(status)}\n`;
             });
+            if (servers.length > 6) content += `-# Showing 6 of ${servers.length}. Use the panel for the full fleet.\n`;
         } else {
             content += `_No active servers found._\n`;
         }
         content += `\n`;
 
-        content += `### 🕒 Recent Actions\n`;
+        content += `### ${Icons.activity} Recent Admin Trace\n`;
         if (history.length > 0) {
             history.slice(0, 3).forEach(h => {
-                content += `• [${new Date(h.created_at || '').toLocaleDateString()}] ${h.action || 'Action'}\n`;
+                content += `${Icons.spark} ${formatDate(h.created_at)} - ${decodeDisplayText(h.action || 'Action')}\n`;
             });
         } else {
             content += `_No recent actions recorded._\n`;

@@ -15,6 +15,7 @@ import { userCommand } from './user.js';
 import { ticketCommand } from './ticket.js';
 import { preferencesCommand } from './preferences.js';
 import { announceCommand } from './announce.js';
+import { accountCommand } from './account.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -33,6 +34,7 @@ const allCommands: Command[] = [
     ticketCommand,
     preferencesCommand,
     announceCommand,
+    accountCommand,
 ];
 
 for (const command of allCommands) {

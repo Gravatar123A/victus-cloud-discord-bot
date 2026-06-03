@@ -3,6 +3,66 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { LinkedAccount, LinkToken, UserProfile } from '../types/index.js';
 
+type CreditBalance = {
+    amount: number;
+    currency: string;
+    found: boolean;
+    source: 'paymenter' | 'profile' | 'none';
+};
+
+function normalizeBaseUrl(url: string): string {
+    return url.replace(/\/$/, '');
+}
+
+function getResourceRecord(resource: any): Record<string, any> {
+    return {
+        ...(resource || {}),
+        ...(resource?.attributes || {}),
+    };
+}
+
+function asArray(value: unknown): any[] {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === 'object') return [value];
+    return [];
+}
+
+function toNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value.replace(/[^0-9.-]+/g, ''));
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function pickAmount(resource: any): number | null {
+    const record = getResourceRecord(resource);
+    for (const key of ['amount', 'balance', 'credits', 'credit', 'value', 'total', 'available']) {
+        const amount = toNumber(record[key]);
+        if (amount !== null) return amount;
+    }
+    return null;
+}
+
+function pickCurrency(resource: any): string {
+    const record = getResourceRecord(resource);
+    const currency = record.currency;
+    if (typeof currency === 'string' && currency.trim()) return currency.toUpperCase();
+    if (currency && typeof currency === 'object') {
+        const currencyRecord = getResourceRecord(currency);
+        for (const key of ['code', 'name', 'currency']) {
+            const value = currencyRecord[key];
+            if (typeof value === 'string' && value.trim()) return value.toUpperCase();
+        }
+    }
+    for (const key of ['currency_code', 'code']) {
+        const value = record[key];
+        if (typeof value === 'string' && value.trim()) return value.toUpperCase();
+    }
+    return 'USD';
+}
+
 class SupabaseService {
     private client: SupabaseClient;
 
@@ -334,9 +394,157 @@ class SupabaseService {
      * Get servers for a specific user (by email)
      */
     async getUserServers(userEmail: string): Promise<any[]> {
+        if (!userEmail) return [];
         const servers = await this.getServers();
-        // Filter by user - this requires user lookup which we'll enhance later
-        return servers;
+        const users = await this.getPterodactylUsers();
+        const email = userEmail.toLowerCase();
+
+        const matchedUsers = users.filter((user: any) => {
+            const record = getResourceRecord(user);
+            return String(record.email || '').toLowerCase() === email;
+        });
+        const userIds = new Set(matchedUsers.map((user: any) => String(getResourceRecord(user).id ?? user.id)));
+
+        return servers.filter((server: any) => {
+            const record = getResourceRecord(server);
+            const serverUser = record.user ?? record.owner_id ?? record.user_id;
+            const serverEmail = String(record.user_email || record.email || record.owner_email || '').toLowerCase();
+            return (serverEmail && serverEmail === email) || userIds.has(String(serverUser));
+        });
+    }
+
+    /**
+     * Get Pterodactyl users
+     */
+    async getPterodactylUsers(): Promise<any[]> {
+        try {
+            const result = await this.pterodactylApi('users');
+            return result?.data || [];
+        } catch (error) {
+            logger.error('Failed to get Pterodactyl users:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get Paymenter credits for a Victus profile by email.
+     */
+    async getCreditBalance(profile: UserProfile | null): Promise<CreditBalance> {
+        const profileAmount =
+            toNumber(profile?.paymenter_credits) ??
+            toNumber(profile?.credits) ??
+            toNumber(profile?.credit) ??
+            toNumber(profile?.balance);
+
+        if (!profile?.email) {
+            return {
+                amount: profileAmount ?? 0,
+                currency: 'USD',
+                found: profileAmount !== null,
+                source: profileAmount !== null ? 'profile' : 'none',
+            };
+        }
+
+        const paymenterBalance = await this.getPaymenterCreditsByEmail(profile.email);
+        if (paymenterBalance.found) return paymenterBalance;
+
+        return {
+            amount: profileAmount ?? 0,
+            currency: 'USD',
+            found: profileAmount !== null,
+            source: profileAmount !== null ? 'profile' : 'none',
+        };
+    }
+
+    private async paymenterDirect(path: string): Promise<any | null> {
+        if (!config.paymenter.url || !config.paymenter.apiKey) return null;
+
+        const response = await fetch(`${normalizeBaseUrl(config.paymenter.url)}${path}`, {
+            headers: {
+                Authorization: `Bearer ${config.paymenter.apiKey}`,
+                Accept: 'application/vnd.api+json, application/json',
+                'Content-Type': 'application/json',
+            },
+        });
+
+        if (!response.ok) {
+            logger.warn(`Paymenter direct request failed ${response.status}: ${path}`);
+            return null;
+        }
+
+        return response.json();
+    }
+
+    private async getPaymenterCreditsByEmail(email: string): Promise<CreditBalance> {
+        const encodedEmail = encodeURIComponent(email);
+        const userLookups = [
+            `/api/v1/admin/users?filter[email]=${encodedEmail}&include=credits&per_page=5`,
+            `/api/admin/users?filter[email]=${encodedEmail}&include=credits&per_page=5`,
+            `/api/v1/admin/users?search=${encodedEmail}&include=credits&per_page=5`,
+            `/api/admin/users?search=${encodedEmail}&include=credits&per_page=5`,
+        ];
+
+        let matchedUser: any = null;
+        let userPayload: any = null;
+        for (const path of userLookups) {
+            const payload = await this.paymenterDirect(path);
+            const users = asArray(payload?.data ?? payload);
+            matchedUser = users.find((user) => String(getResourceRecord(user).email || '').toLowerCase() === email.toLowerCase());
+            if (matchedUser) {
+                userPayload = payload;
+                break;
+            }
+        }
+
+        if (!matchedUser) return { amount: 0, currency: 'USD', found: false, source: 'none' };
+
+        const directAmount = pickAmount(matchedUser);
+        if (directAmount !== null) {
+            return { amount: directAmount, currency: pickCurrency(matchedUser), found: true, source: 'paymenter' };
+        }
+
+        const includedCredits = asArray(userPayload?.included).filter((item) => {
+            const type = String(item.type || '').toLowerCase();
+            return type === 'credit' || type === 'credits';
+        });
+        const credits = includedCredits
+            .map((credit) => ({ amount: pickAmount(credit), currency: pickCurrency(credit) }))
+            .filter((credit): credit is { amount: number; currency: string } => credit.amount !== null);
+
+        const userId = getResourceRecord(matchedUser).id ?? matchedUser.id;
+        if (credits.length === 0 && userId) {
+            const creditLookups = [
+                `/api/v1/admin/credits?filter[user_id]=${encodeURIComponent(String(userId))}&per_page=100`,
+                `/api/admin/credits?filter[user_id]=${encodeURIComponent(String(userId))}&per_page=100`,
+                `/api/v1/admin/users/${encodeURIComponent(String(userId))}?include=credits`,
+                `/api/admin/users/${encodeURIComponent(String(userId))}?include=credits`,
+            ];
+
+            for (const path of creditLookups) {
+                const payload = await this.paymenterDirect(path);
+                const creditRows = path.includes('/users/')
+                    ? asArray(payload?.included).filter((item) => {
+                        const type = String(item.type || '').toLowerCase();
+                        return type === 'credit' || type === 'credits';
+                    })
+                    : asArray(payload?.data ?? payload);
+
+                credits.push(...creditRows
+                    .map((credit) => ({ amount: pickAmount(credit), currency: pickCurrency(credit) }))
+                    .filter((credit): credit is { amount: number; currency: string } => credit.amount !== null));
+
+                if (credits.length > 0) break;
+            }
+        }
+
+        if (credits.length === 0) return { amount: 0, currency: 'USD', found: true, source: 'paymenter' };
+
+        const totals = credits.reduce<Record<string, number>>((acc, credit) => {
+            acc[credit.currency] = (acc[credit.currency] || 0) + credit.amount;
+            return acc;
+        }, {});
+        const [currency = 'USD', amount = 0] = Object.entries(totals).sort((a, b) => b[1] - a[1])[0] || [];
+        return { amount, currency, found: true, source: 'paymenter' };
     }
 
     /**
@@ -396,6 +604,20 @@ class SupabaseService {
     async getBillingUsers(): Promise<any[]> {
         const result = await this.paymenterApi('users');
         return result?.data || [];
+    }
+
+    async getBillingUserByEmail(email: string): Promise<any | null> {
+        if (!email) return null;
+        try {
+            const users = await this.getBillingUsers();
+            return users.find((user: any) => {
+                const record = getResourceRecord(user);
+                return String(record.email || '').toLowerCase() === email.toLowerCase();
+            }) || null;
+        } catch (error) {
+            logger.error('Failed to lookup billing user:', error);
+            return null;
+        }
     }
 
     // ============================================
