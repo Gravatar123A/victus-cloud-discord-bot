@@ -15,8 +15,12 @@ import { config } from '../config.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { generateLinkToken, getExpiryTime } from '../utils/tokens.js';
 import { logger } from '../utils/logger.js';
+import { assignLinkedRole } from '../utils/roles.js';
+import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
 
 const LINK_PANEL_BUTTON = 'victus_link_panel_start';
+const LINK_POLL_INTERVAL_MS = 10000;
+const LINK_POLL_MAX_ATTEMPTS = 30;
 
 function canManageLinkPanel(interaction: { memberPermissions: any }) {
     return Boolean(
@@ -25,14 +29,60 @@ function canManageLinkPanel(interaction: { memberPermissions: any }) {
     );
 }
 
+function watchForCompletedLink(interaction: ButtonInteraction) {
+    const discordId = interaction.user.id;
+    const guildId = interaction.guildId;
+    let attempts = 0;
+
+    const pollInterval = setInterval(async () => {
+        attempts++;
+        if (attempts > LINK_POLL_MAX_ATTEMPTS) {
+            clearInterval(pollInterval);
+            return;
+        }
+
+        const linked = await supabase.getLinkedAccount(discordId);
+        if (!linked) return;
+
+        clearInterval(pollInterval);
+        logger.info(`Link panel polling: account link detected for ${discordId}`);
+
+        const roleSuccess = await assignLinkedRole(interaction.client, discordId);
+
+        const dmContainer = ComponentsV2.successContainer(
+            'Account Successfully Linked',
+            'Your Discord account has been linked to Victus Cloud.\n\n' +
+            (roleSuccess
+                ? 'Your website linked role has been assigned.'
+                : 'Your account is linked, but I could not assign the linked role. Please contact staff.')
+        );
+        await sendNotificationDM(interaction.client, discordId, dmContainer);
+
+        if (guildId) {
+            await sendAuditLog(
+                interaction.client,
+                guildId,
+                'Account Linked (Link Panel)',
+                `User: <@${discordId}> (${discordId})\n` +
+                `Status: ${roleSuccess ? 'Role assigned' : 'Role assignment failed or unavailable'}`,
+                roleSuccess ? ComponentsV2.Accents.success : ComponentsV2.Accents.warning
+            );
+        }
+    }, LINK_POLL_INTERVAL_MS);
+}
+
 async function createPersonalLinkReply(interaction: ButtonInteraction) {
     const existingLink = await supabase.getLinkedAccount(interaction.user.id);
     if (existingLink) {
+        const roleSuccess = await assignLinkedRole(interaction.client, interaction.user.id);
         await interaction.reply({
             components: [
                 ComponentsV2.infoContainer(
                     'Already Connected',
-                    'Your Discord account is already linked to a Victus Cloud account.\n\nUse `/account` to view your account status.'
+                    'Your Discord account is already linked to a Victus Cloud account.\n\n' +
+                    (roleSuccess
+                        ? 'Your website linked role is active.'
+                        : 'I could not confirm the linked role. Please contact staff if it is still missing.')
                 ),
             ],
             flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
@@ -77,6 +127,7 @@ async function createPersonalLinkReply(interaction: ButtonInteraction) {
     });
 
     logger.info(`Link panel token generated for ${interaction.user.tag} (${interaction.user.id})`);
+    watchForCompletedLink(interaction);
 }
 
 export async function postLinkPanel(interaction: ChatInputCommandInteraction) {
