@@ -7,15 +7,32 @@ import { generateLinkToken, getExpiryTime } from '../utils/tokens.js';
 import { assignLinkedRole } from '../utils/roles.js';
 import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
 import { logger } from '../utils/logger.js';
+import { postLinkPanel } from './link-panel.js';
 
 export const linkCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('link')
-        .setDescription('Link your Discord account to Victus Cloud'),
+        .setDescription('Victus Cloud account linking tools')
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('account')
+                .setDescription('Link your Discord account to Victus Cloud')
+        )
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('panel')
+                .setDescription('Post a Victus Cloud account-linking panel')
+        ),
 
     cooldown: 30, // 30 second cooldown
 
     async execute(interaction) {
+        const subcommand = interaction.options.getSubcommand(false);
+        if (subcommand === 'panel') {
+            await postLinkPanel(interaction);
+            return;
+        }
+
         await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
 
         // Check if already linked

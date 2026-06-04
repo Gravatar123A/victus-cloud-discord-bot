@@ -3,6 +3,7 @@ import {
     ButtonBuilder,
     ButtonInteraction,
     ButtonStyle,
+    ChatInputCommandInteraction,
     ContainerBuilder,
     MessageFlags,
     PermissionFlagsBits,
@@ -79,6 +80,68 @@ async function createPersonalLinkReply(interaction: ButtonInteraction) {
     logger.info(`Link panel token generated for ${interaction.user.tag} (${interaction.user.id})`);
 }
 
+export async function postLinkPanel(interaction: ChatInputCommandInteraction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    if (!canManageLinkPanel(interaction)) {
+        await interaction.editReply({
+            components: [
+                ComponentsV2.errorContainer(
+                    'Missing Permission',
+                    'You need the **Manage Server** permission to post the Victus Cloud link panel.'
+                ),
+            ],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+
+    const container = new ContainerBuilder()
+        .setAccentColor(ComponentsV2.Accents.primary)
+        .addTextDisplayComponents(
+            ComponentsV2.text(
+                `# ${Icons.crown} Link Your Victus Cloud Account\n\n` +
+                `Connect your Discord account to Victus Cloud to unlock account commands, server access, billing visibility, support tickets, and private notifications.\n\n` +
+                `### ${Icons.spark} How it works\n` +
+                `${Icons.link} Click **Link Victus Account** below\n` +
+                `${Icons.user} Log in to the Victus Cloud website\n` +
+                `${Icons.success} Confirm the Discord connection\n\n` +
+                `-# Each click creates a private, expiring link just for that Discord user.`
+            )
+        );
+
+    const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setCustomId(LINK_PANEL_BUTTON)
+            .setLabel('Link Victus Account')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji(Icons.link),
+        new ButtonBuilder()
+            .setLabel('Open Victus Cloud')
+            .setStyle(ButtonStyle.Link)
+            .setURL(config.branding.website)
+            .setEmoji(Icons.panel)
+    );
+
+    container.addActionRowComponents(buttons);
+
+    if (!interaction.channel || !('send' in interaction.channel)) {
+        await interaction.editReply({
+            content: 'I cannot post a link panel in this channel.',
+        });
+        return;
+    }
+
+    await interaction.channel.send({
+        components: [container],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+
+    await interaction.editReply({
+        content: 'Link panel posted in this channel.',
+    });
+}
+
 export const linkPanelCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('link-panel')
@@ -88,65 +151,7 @@ export const linkPanelCommand: Command = {
     cooldown: 20,
 
     async execute(interaction) {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-        if (!canManageLinkPanel(interaction)) {
-            await interaction.editReply({
-                components: [
-                    ComponentsV2.errorContainer(
-                        'Missing Permission',
-                        'You need the **Manage Server** permission to post the Victus Cloud link panel.'
-                    ),
-                ],
-                flags: ComponentsV2.IS_COMPONENTS_V2,
-            });
-            return;
-        }
-
-        const container = new ContainerBuilder()
-            .setAccentColor(ComponentsV2.Accents.primary)
-            .addTextDisplayComponents(
-                ComponentsV2.text(
-                    `# ${Icons.crown} Link Your Victus Cloud Account\n\n` +
-                    `Connect your Discord account to Victus Cloud to unlock account commands, server access, billing visibility, support tickets, and private notifications.\n\n` +
-                    `### ${Icons.spark} How it works\n` +
-                    `${Icons.link} Click **Link Victus Account** below\n` +
-                    `${Icons.user} Log in to the Victus Cloud website\n` +
-                    `${Icons.success} Confirm the Discord connection\n\n` +
-                    `-# Each click creates a private, expiring link just for that Discord user.`
-                )
-            );
-
-        const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder()
-                .setCustomId(LINK_PANEL_BUTTON)
-                .setLabel('Link Victus Account')
-                .setStyle(ButtonStyle.Primary)
-                .setEmoji(Icons.link),
-            new ButtonBuilder()
-                .setLabel('Open Victus Cloud')
-                .setStyle(ButtonStyle.Link)
-                .setURL(config.branding.website)
-                .setEmoji(Icons.panel)
-        );
-
-        container.addActionRowComponents(buttons);
-
-        if (!interaction.channel || !('send' in interaction.channel)) {
-            await interaction.editReply({
-                content: 'I cannot post a link panel in this channel.',
-            });
-            return;
-        }
-
-        await interaction.channel.send({
-            components: [container],
-            flags: ComponentsV2.IS_COMPONENTS_V2,
-        });
-
-        await interaction.editReply({
-            content: 'Link panel posted in this channel.',
-        });
+        await postLinkPanel(interaction);
     },
 
     async handleButton(interaction) {
