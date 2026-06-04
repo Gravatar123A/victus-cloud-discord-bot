@@ -109,17 +109,44 @@ export async function postLinkPanel(interaction: ChatInputCommandInteraction) {
 
     const panelEmbed = new EmbedBuilder()
         .setColor(ComponentsV2.Accents.primary)
-        .setTitle('Link Your Victus Cloud Account')
+        .setAuthor({
+            name: 'Victus Cloud Connection',
+            iconURL: config.branding.logo,
+            url: config.branding.website,
+        })
+        .setTitle('Step Into the Victus Cloud Network')
         .setDescription(
-            'Connect your Discord account to Victus Cloud to unlock account commands, server access, billing visibility, support tickets, and private notifications.\n\n' +
-            '**How it works**\n' +
-            '1. Click **Link Victus Account** below\n' +
-            '2. Log in to the Victus Cloud website\n' +
-            '3. Confirm the Discord connection\n\n' +
-            'Each click creates a private, expiring link just for that Discord user.'
+            '**Bind your Discord identity to your Victus Cloud account and unlock the control layer.**\n\n' +
+            'Once connected, the bot can recognize your account, surface your services, route support faster, and send private account-aware notifications.'
+        )
+        .addFields(
+            {
+                name: 'What Unlocks',
+                value:
+                    'Account commands\n' +
+                    'Server and service visibility\n' +
+                    'Billing and invoice shortcuts\n' +
+                    'Private support notifications',
+                inline: true,
+            },
+            {
+                name: 'How It Works',
+                value:
+                    'Click **Link Victus Account**\n' +
+                    'Sign in on Victus Cloud\n' +
+                    'Confirm the exact Discord + Victus accounts\n' +
+                    'Return linked and ready',
+                inline: true,
+            },
+            {
+                name: 'Security',
+                value: 'Every click creates a private expiring link token just for the Discord user who pressed it.',
+                inline: false,
+            },
         )
         .setThumbnail(config.branding.logo)
-        .setFooter({ text: 'Victus Cloud' });
+        .setFooter({ text: 'Victus Cloud • Secure account linking', iconURL: config.branding.logo })
+        .setTimestamp();
 
     try {
         await interaction.channel.send({ embeds: [panelEmbed], components: [buttons] });
