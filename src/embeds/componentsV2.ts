@@ -135,13 +135,11 @@ export function linkAccountContainer(
         new ButtonBuilder()
             .setLabel('Link Account')
             .setStyle(ButtonStyle.Link)
-            .setURL(linkUrl)
-            .setEmoji('🔗'),
+            .setURL(linkUrl),
         new ButtonBuilder()
             .setLabel('Help')
             .setStyle(ButtonStyle.Link)
             .setURL(`${config.branding.website}/help/discord-linking`)
-            .setEmoji('❓')
     );
 
     container.addActionRowComponents(buttons);
@@ -187,13 +185,11 @@ export function helpMenuContainer(
         new ButtonBuilder()
             .setLabel('Invite')
             .setStyle(ButtonStyle.Link)
-            .setURL(`https://discord.com/api/oauth2/authorize?client_id=${config.discord.clientId}&permissions=8&scope=bot%20applications.commands`)
-            .setEmoji('🔗'),
+            .setURL(`https://discord.com/api/oauth2/authorize?client_id=${config.discord.clientId}&permissions=8&scope=bot%20applications.commands`),
         new ButtonBuilder()
             .setLabel('Support')
             .setStyle(ButtonStyle.Link)
             .setURL(config.branding.website)
-            .setEmoji('🛠️')
     );
 
     container.addActionRowComponents(menu);
@@ -335,3 +331,4 @@ export const ComponentsV2 = {
     Accents,
     IS_COMPONENTS_V2,
 };
+
