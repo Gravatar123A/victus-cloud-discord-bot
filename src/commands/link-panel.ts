@@ -56,7 +56,7 @@ function watchForCompletedLink(interaction: ButtonInteraction) {
                 ? 'Your website linked role has been assigned.'
                 : 'Your account is linked, but I could not assign the linked role. Please contact staff.')
         );
-        await sendNotificationDM(interaction.client, discordId, dmContainer);
+        await sendNotificationDM(interaction.client, discordId, dmContainer, 'security');
 
         if (guildId) {
             await sendAuditLog(

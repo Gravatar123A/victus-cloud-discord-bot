@@ -80,7 +80,7 @@ export const readyEvent: Event = {
                 `• Use \`/servers\` to see your servers.\n` +
                 `• Use \`/help\` to see all commands.`
             );
-            await sendNotificationDM(client, discord_id, dmContainer);
+            await sendNotificationDM(client, discord_id, dmContainer, 'security');
 
             // 3. Send Audit Log
             // Since we don't have guildId in the payload, we use supportGuildId from config if available

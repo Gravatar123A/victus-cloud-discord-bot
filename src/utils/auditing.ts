@@ -46,9 +46,19 @@ export async function sendAuditLog(
 export async function sendNotificationDM(
     client: Client,
     discordId: string,
-    container: any // ContainerBuilder
+    container: any, // ContainerBuilder
+    category?: 'maintenance' | 'billing' | 'security' | 'promotions'
 ): Promise<void> {
     try {
+        if (category) {
+            const prefs = await supabase.getUserPreferences(discordId);
+            const enabled = prefs?.[`dm_${category}`] ?? true;
+            if (!enabled) {
+                logger.debug(`Skipping ${category} DM for ${discordId}; user disabled this category`);
+                return;
+            }
+        }
+
         const user = await client.users.fetch(discordId).catch(() => null);
         if (!user) {
             logger.warn(`Could not fetch user ${discordId} to send DM`);

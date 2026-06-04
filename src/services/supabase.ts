@@ -10,6 +10,13 @@ type CreditBalance = {
     source: 'paymenter' | 'profile' | 'none';
 };
 
+const DEFAULT_DM_PREFERENCES = {
+    dm_maintenance: true,
+    dm_billing: true,
+    dm_security: true,
+    dm_promotions: true,
+};
+
 function normalizeBaseUrl(url: string): string {
     return url.replace(/\/$/, '');
 }
@@ -996,11 +1003,13 @@ class SupabaseService {
         dm_security: boolean;
         dm_promotions: boolean;
     }>): Promise<boolean> {
+        const existing = await this.getUserPreferences(discordId);
         const { error } = await this.client
             .from('user_preferences')
             .upsert({
                 discord_id: discordId,
                 user_id: userId,
+                ...(existing ? {} : DEFAULT_DM_PREFERENCES),
                 ...prefs,
                 updated_at: new Date().toISOString(),
             }, { onConflict: 'discord_id' });
@@ -1017,16 +1026,29 @@ class SupabaseService {
      */
     async getUsersOptedInForDM(category: 'maintenance' | 'billing' | 'security' | 'promotions'): Promise<string[]> {
         const column = `dm_${category}`;
-        const { data, error } = await this.client
+        const { data: linkedAccounts, error: linkedError } = await this.client
+            .from('discord_linked_accounts')
+            .select('discord_id');
+
+        if (linkedError) {
+            logger.error(`Failed to get linked accounts for ${category} DMs:`, linkedError);
+            return [];
+        }
+
+        const { data: optedOut, error } = await this.client
             .from('user_preferences')
             .select('discord_id')
-            .eq(column, true);
+            .eq(column, false);
 
         if (error) {
             logger.error(`Failed to get users opted in for ${category}:`, error);
             return [];
         }
-        return (data || []).map(u => u.discord_id);
+
+        const optedOutIds = new Set((optedOut || []).map(u => u.discord_id));
+        return (linkedAccounts || [])
+            .map(account => account.discord_id)
+            .filter(discordId => discordId && !optedOutIds.has(discordId));
     }
 
     // ============================================

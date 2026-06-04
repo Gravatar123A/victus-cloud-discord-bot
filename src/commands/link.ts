@@ -121,7 +121,7 @@ export const linkCommand: Command = {
                     'Your Discord account has been linked to Victus Cloud.\n\n' +
                     'You now have access to server management commands!'
                 );
-                await sendNotificationDM(interaction.client, discordId, dmContainer);
+                await sendNotificationDM(interaction.client, discordId, dmContainer, 'security');
 
                 // 3. Send Audit Log
                 if (guildId) {

@@ -107,7 +107,7 @@ export const unlinkCommand: Command = {
                 });
 
                 // Send DM Notification
-                await sendNotificationDM(interaction.client, interaction.user.id, container);
+                await sendNotificationDM(interaction.client, interaction.user.id, container, 'security');
 
                 // Send Audit Log
                 if (interaction.guildId) {
