@@ -5,6 +5,7 @@ import {
     ButtonStyle,
     ChatInputCommandInteraction,
     ContainerBuilder,
+    EmbedBuilder,
     MessageFlags,
     PermissionFlagsBits,
     SlashCommandBuilder,
@@ -81,7 +82,7 @@ async function createPersonalLinkReply(interaction: ButtonInteraction) {
 }
 
 export async function postLinkPanel(interaction: ChatInputCommandInteraction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
 
     if (!canManageLinkPanel(interaction)) {
         await interaction.editReply({
@@ -132,10 +133,33 @@ export async function postLinkPanel(interaction: ChatInputCommandInteraction) {
         return;
     }
 
-    await interaction.channel.send({
-        components: [container],
-        flags: ComponentsV2.IS_COMPONENTS_V2,
-    });
+    try {
+        await interaction.channel.send({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+    } catch (error: any) {
+        logger.error('Failed to send Components v2 link panel, falling back to embed:', error);
+        if (error?.errors) logger.error('Validation details:', JSON.stringify(error.errors, null, 2));
+
+        const fallbackEmbed = new EmbedBuilder()
+            .setColor(ComponentsV2.Accents.primary)
+            .setTitle('Link Your Victus Cloud Account')
+            .setDescription(
+                'Connect your Discord account to Victus Cloud to unlock account commands, server access, billing visibility, support tickets, and private notifications.\n\n' +
+                '**How it works**\n' +
+                '1. Click **Link Victus Account** below\n' +
+                '2. Log in to the Victus Cloud website\n' +
+                '3. Confirm the Discord connection\n\n' +
+                'Each click creates a private, expiring link just for that Discord user.'
+            )
+            .setFooter({ text: 'Victus Cloud' });
+
+        await interaction.channel.send({
+            embeds: [fallbackEmbed],
+            components: [buttons],
+        });
+    }
 
     await interaction.editReply({
         content: 'Link panel posted in this channel.',
