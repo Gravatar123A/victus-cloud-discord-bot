@@ -17,6 +17,7 @@ import { preferencesCommand } from './preferences.js';
 import { announceCommand } from './announce.js';
 import { accountCommand } from './account.js';
 import { linkPanelCommand } from './link-panel.js';
+import { createAccountCommand } from './create-account.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -37,6 +38,7 @@ const allCommands: Command[] = [
     announceCommand,
     accountCommand,
     linkPanelCommand,
+    createAccountCommand,
 ];
 
 for (const command of allCommands) {
