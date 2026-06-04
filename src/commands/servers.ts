@@ -190,13 +190,11 @@ async function handleServerList(interaction: any, userId: string) {
         new ButtonBuilder()
             .setLabel('Open Game Panel')
             .setStyle(ButtonStyle.Link)
-            .setURL(config.branding.panel)
-            .setEmoji(Icons.panel),
+            .setURL(config.branding.panel),
         new ButtonBuilder()
             .setLabel('Billing')
             .setStyle(ButtonStyle.Link)
             .setURL(config.branding.billing)
-            .setEmoji(Icons.credits)
     );
 
     container.addActionRowComponents(menu);
@@ -265,25 +263,21 @@ async function handleServerInfo(interaction: any, userId: string) {
             .setCustomId(`server_start_${serverId}`)
             .setLabel('Start')
             .setStyle(ButtonStyle.Success)
-            .setEmoji(Icons.start)
             .setDisabled(status === 'running'),
         new ButtonBuilder()
             .setCustomId(`server_stop_${serverId}`)
             .setLabel('Stop')
             .setStyle(ButtonStyle.Danger)
-            .setEmoji(Icons.stop)
             .setDisabled(status === 'offline' || status === 'stopped'),
         new ButtonBuilder()
             .setCustomId(`server_restart_${serverId}`)
             .setLabel('Restart')
             .setStyle(ButtonStyle.Primary)
-            .setEmoji(Icons.restart)
             .setDisabled(status !== 'running'),
         new ButtonBuilder()
             .setLabel('Open Panel')
             .setStyle(ButtonStyle.Link)
             .setURL(`${config.branding.panel}/server/${serverId}`)
-            .setEmoji(Icons.panel)
     );
 
     container.addActionRowComponents(buttons);
@@ -325,3 +319,4 @@ async function handleServerPower(interaction: any, userId: string) {
         flags: ComponentsV2.IS_COMPONENTS_V2,
     });
 }
+
