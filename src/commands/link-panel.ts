@@ -18,6 +18,13 @@ import { logger } from '../utils/logger.js';
 
 const LINK_PANEL_BUTTON = 'victus_link_panel_start';
 
+function canManageLinkPanel(interaction: { memberPermissions: any }) {
+    return Boolean(
+        interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ||
+        interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)
+    );
+}
+
 async function createPersonalLinkReply(interaction: ButtonInteraction) {
     const existingLink = await supabase.getLinkedAccount(interaction.user.id);
     if (existingLink) {
@@ -76,13 +83,25 @@ export const linkPanelCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('link-panel')
         .setDescription('Post a Victus Cloud account-linking panel with a one-click link button')
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .setDMPermission(false),
 
     cooldown: 20,
 
     async execute(interaction) {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        if (!canManageLinkPanel(interaction)) {
+            await interaction.editReply({
+                components: [
+                    ComponentsV2.errorContainer(
+                        'Missing Permission',
+                        'You need the **Manage Server** permission to post the Victus Cloud link panel.'
+                    ),
+                ],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+            return;
+        }
 
         const container = new ContainerBuilder()
             .setAccentColor(ComponentsV2.Accents.primary)
@@ -134,4 +153,12 @@ export const linkPanelCommand: Command = {
         if (interaction.customId !== LINK_PANEL_BUTTON) return;
         await createPersonalLinkReply(interaction);
     },
+};
+
+export const linkPanelAliasCommand: Command = {
+    ...linkPanelCommand,
+    data: new SlashCommandBuilder()
+        .setName('linkpanel')
+        .setDescription('Alias for /link-panel, posts the Victus Cloud account-linking panel')
+        .setDMPermission(false),
 };
