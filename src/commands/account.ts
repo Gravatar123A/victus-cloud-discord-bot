@@ -10,7 +10,6 @@ import { supabase } from '../services/supabase.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { requireLinkedAccount } from '../middleware/requireLinked.js';
 import { config } from '../config.js';
-import { Icons } from '../utils/premium.js';
 import { logger } from '../utils/logger.js';
 
 export const accountCommand: Command = {
@@ -27,12 +26,21 @@ export const accountCommand: Command = {
         const linked = await requireLinkedAccount(interaction);
         if (!linked) return;
 
+        const safe = async <T>(label: string, fallback: T, task: Promise<T>): Promise<T> => {
+            try {
+                return await task;
+            } catch (error) {
+                logger.warn(`Account command partial load failed (${label}):`, error);
+                return fallback;
+            }
+        };
+
         try {
-            const profile = await supabase.getUserProfile(linked.userId);
+            const profile = await safe('profile', null, supabase.getUserProfile(linked.userId));
             const [creditBalance, servers, history] = await Promise.all([
-                supabase.getCreditBalance(profile),
-                profile?.email ? supabase.getUserServers(profile.email) : Promise.resolve([]),
-                supabase.getUserHistory(linked.userId),
+                safe('credits', { amount: 0, currency: 'USD', found: false, source: 'none' }, supabase.getCreditBalance(profile)),
+                profile?.email ? safe('servers', [], supabase.getUserServers(profile.email)) : Promise.resolve([]),
+                safe('history', [], supabase.getUserHistory(linked.userId)),
             ]);
 
             const container = ComponentsV2.userInfoContainer(
@@ -49,18 +57,15 @@ export const accountCommand: Command = {
                 new ButtonBuilder()
                     .setLabel('Billing')
                     .setStyle(ButtonStyle.Link)
-                    .setURL(config.branding.billing)
-                    .setEmoji(Icons.credits),
+                    .setURL(config.branding.billing),
                 new ButtonBuilder()
                     .setLabel('Game Panel')
                     .setStyle(ButtonStyle.Link)
-                    .setURL(config.branding.panel)
-                    .setEmoji(Icons.panel),
+                    .setURL(config.branding.panel),
                 new ButtonBuilder()
                     .setLabel('Website')
                     .setStyle(ButtonStyle.Link)
                     .setURL(config.branding.website)
-                    .setEmoji(Icons.brand)
             );
 
             container.addActionRowComponents(buttons);
