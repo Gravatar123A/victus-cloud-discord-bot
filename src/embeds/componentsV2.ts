@@ -1,133 +1,140 @@
 /**
- * Discord Components v2 Theme Utilities
- * Uses the new Discord.js v14.19+ Components v2 system
+ * Premium Discord Components v2 layouts for Victus Cloud.
+ * Keep button emoji-free to avoid guild-specific invalid emoji failures.
  */
 
 import {
-    ContainerBuilder,
-    TextDisplayBuilder,
-    ThumbnailBuilder,
-    SeparatorBuilder,
-    MediaGalleryBuilder,
-    MediaGalleryItemBuilder,
     ActionRowBuilder,
     ButtonBuilder,
-    StringSelectMenuBuilder,
     ButtonStyle,
+    ContainerBuilder,
+    MediaGalleryBuilder,
+    MediaGalleryItemBuilder,
+    SeparatorBuilder,
+    StringSelectMenuBuilder,
+    TextDisplayBuilder,
+    ThumbnailBuilder,
 } from 'discord.js';
 import { config } from '../config.js';
 import { compactId, decodeDisplayText, formatCredits, formatDate, Icons, statusIcon, statusLabel } from '../utils/premium.js';
 
-// ============================================
-// Constants
-// ============================================
-// Flag for V2 Components support in interaction responses
 export const IS_COMPONENTS_V2 = 1 << 15;
 
-// ============================================
-// Color Accents (for containers)
-// ============================================
 export const Accents = {
-    primary: 0x6366f1,    // Indigo - Victus brand
-    success: 0x10b981,    // Emerald
-    warning: 0xf59e0b,    // Amber
-    danger: 0xef4444,     // Red
-    info: 0x3b82f6,       // Blue
-    purple: 0x8b5cf6,     // Purple
-    discord: 0x5865f2,    // Discord blurple
+    primary: 0x8b5cf6,
+    success: 0x10b981,
+    warning: 0xf59e0b,
+    danger: 0xef4444,
+    info: 0x3b82f6,
+    purple: 0x8b5cf6,
+    discord: 0x5865f2,
+    midnight: 0x111827,
 } as const;
 
-// ============================================
-// Helper: Create Text Display
-// ============================================
+const HERO_IMAGE = `${config.branding.website}/images/hero/discord-bot-hero.webp`;
+const INVITE_URL = `https://discord.com/api/oauth2/authorize?client_id=${config.discord.clientId}&permissions=8&scope=bot%20applications.commands`;
+
 export function text(content: string): TextDisplayBuilder {
-    const safeContent = content && content.trim().length > 0 ? content : ' ';
-    return new TextDisplayBuilder().setContent(safeContent);
+    return new TextDisplayBuilder().setContent(content && content.trim() ? content : ' ');
 }
 
-// ============================================
-// Helper: Create Separator
-// ============================================
 export function separator(divider = true): SeparatorBuilder {
     return new SeparatorBuilder().setDivider(divider);
 }
 
-// ============================================
-// Helper: Create Media Gallery
-// ============================================
 export function mediaGallery(imageUrl: string): MediaGalleryBuilder {
-    return new MediaGalleryBuilder().addItems(
-        new MediaGalleryItemBuilder().setURL(imageUrl)
-    );
+    return new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(imageUrl));
 }
 
-// ============================================
-// Preset: Base Container
-// ============================================
+export function thumbnail(imageUrl = config.branding.logo): ThumbnailBuilder {
+    return new ThumbnailBuilder().setURL(imageUrl);
+}
+
 export function baseContainer(accent: number): ContainerBuilder {
     return new ContainerBuilder().setAccentColor(accent);
 }
 
-// ============================================
-// Preset: Standard Message Container
-// ============================================
-function createBrandedContainer(accent: number, title: string, description: string, emoji: string): ContainerBuilder {
-    return baseContainer(accent)
-        .addTextDisplayComponents(text(`# ${emoji} ${title}\n\n${description}`));
+function brandLine(label = 'VICTUS CLOUD CONNECTION') {
+    return `-# ${Icons.spark} ${label} • secure account intelligence • Discord operations`;
 }
 
-// ============================================
-// Preset: Success Message Container
-// ============================================
+function panelTitle(title: string, eyebrow = 'COMMAND LAYER') {
+    return `${brandLine(eyebrow)}\n# ${title}`;
+}
+
+function premiumContainer(accent: number, title: string, description: string, eyebrow?: string, imageUrl = HERO_IMAGE): ContainerBuilder {
+    const container = baseContainer(accent);
+    if (imageUrl) container.addMediaGalleryComponents(mediaGallery(imageUrl));
+    container
+        .addTextDisplayComponents(text(`${panelTitle(title, eyebrow)}\n\n${description}`))
+        .addSeparatorComponents(separator());
+    return container;
+}
+
+function footerNote(note = 'Victus Cloud • private, audited, and account-aware') {
+    return text(`-# ${note}`);
+}
+
+function commandButtons(): ActionRowBuilder<ButtonBuilder> {
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setLabel('Open Dashboard')
+            .setStyle(ButtonStyle.Link)
+            .setURL(config.branding.website),
+        new ButtonBuilder()
+            .setLabel('Billing Panel')
+            .setStyle(ButtonStyle.Link)
+            .setURL(config.branding.billing),
+        new ButtonBuilder()
+            .setLabel('Support')
+            .setStyle(ButtonStyle.Link)
+            .setURL(config.branding.website)
+    );
+}
+
+function createBrandedContainer(accent: number, title: string, description: string, eyebrow: string): ContainerBuilder {
+    return premiumContainer(accent, title, description, eyebrow)
+        .addTextDisplayComponents(footerNote());
+}
+
 export function successContainer(title: string, description: string): ContainerBuilder {
-    return createBrandedContainer(Accents.success, title, description, '✅');
+    return createBrandedContainer(Accents.success, `◇ ${title}`, description, 'SUCCESS SIGNAL');
 }
 
-// ============================================
-// Preset: Error Message Container
-// ============================================
 export function errorContainer(title: string, description: string): ContainerBuilder {
-    return createBrandedContainer(Accents.danger, title, description, '⚠️');
+    return createBrandedContainer(Accents.danger, `△ ${title}`, description, 'ERROR SIGNAL');
 }
 
-// ============================================
-// Preset: Warning Message Container
-// ============================================
 export function warningContainer(title: string, description: string): ContainerBuilder {
-    return createBrandedContainer(Accents.warning, title, description, '⚠️');
+    return createBrandedContainer(Accents.warning, `△ ${title}`, description, 'ATTENTION REQUIRED');
 }
 
-// ============================================
-// Preset: Info Message Container
-// ============================================
 export function infoContainer(title: string, description: string): ContainerBuilder {
-    return createBrandedContainer(Accents.info, title, description, 'ℹ️');
+    return createBrandedContainer(Accents.info, `◆ ${title}`, description, 'INFORMATION NODE');
 }
 
-// ============================================
-// Preset: Link Account Container
-// ============================================
 export function linkAccountContainer(
     username: string,
     avatarUrl: string,
     expiryTimestamp: number,
     linkUrl: string
 ): ContainerBuilder {
-    const container = baseContainer(Accents.primary)
-        .addTextDisplayComponents(
-            text(
-                `# 🔗 Link Your Account\n\n` +
-                `Click the button below to link your Discord account to Victus Cloud.\n\n` +
-                `### How it works:\n` +
-                `1️⃣ Click **Link Account**\n` +
-                `2️⃣ Log in to Victus Cloud\n` +
-                `3️⃣ Confirm the connection\n\n` +
-                `⏰ **Expires:** <t:${expiryTimestamp}:R>\n` +
-                `👤 **Discord:** ${username}`
-            )
-        );
+    const container = premiumContainer(
+        Accents.discord,
+        'Link Your Victus Cloud Account',
+        `**Confirm the Discord account and Victus account before connecting them.**\n\n` +
+        `> Discord identity: **${username}**\n` +
+        `> Secure token expires: <t:${expiryTimestamp}:R>\n\n` +
+        `### What happens next\n` +
+        `› Open the private link below\n` +
+        `› Sign in to Victus Cloud\n` +
+        `› Review both accounts\n` +
+        `› Confirm the connection`,
+        'PRIVATE LINK SESSION'
+    );
 
     if (avatarUrl) {
+        container.addTextDisplayComponents(text(`-# Discord avatar preview`));
         container.addMediaGalleryComponents(mediaGallery(avatarUrl));
     }
 
@@ -137,47 +144,100 @@ export function linkAccountContainer(
             .setStyle(ButtonStyle.Link)
             .setURL(linkUrl),
         new ButtonBuilder()
+            .setLabel('Create Account')
+            .setStyle(ButtonStyle.Link)
+            .setURL(`${config.branding.website}/discord-signup?from=bot`),
+        new ButtonBuilder()
             .setLabel('Help')
             .setStyle(ButtonStyle.Link)
-            .setURL(`${config.branding.website}/help/discord-linking`)
+            .setURL(`${config.branding.website}/docs`)
     );
 
-    container.addActionRowComponents(buttons);
+    container
+        .addActionRowComponents(buttons)
+        .addTextDisplayComponents(footerNote('Private link tokens are single-user and expire automatically.'));
+
     return container;
 }
 
-// ============================================
-// Preset: Help Menu Container
-// ============================================
+export function linkPanelContainer(): ContainerBuilder {
+    const container = premiumContainer(
+        Accents.primary,
+        'Victus Cloud Account Link Panel',
+        `**Bind Discord to Victus Cloud and unlock account-aware controls.**\n\n` +
+        `### Unlocks\n` +
+        `› Website linked role and member verification\n` +
+        `› Account, server, invoice, and service commands\n` +
+        `› Private operational DMs from Victus Cloud\n` +
+        `› Faster support context for staff\n\n` +
+        `### Security\n` +
+        `Each click creates a private expiring token for the user who pressed it. The final website page shows both accounts before linking.`,
+        'PUBLIC CONNECTION PANEL'
+    );
+
+    const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setCustomId('victus_link_panel_start')
+            .setLabel('Link Victus Account')
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+            .setLabel('Open Victus Cloud')
+            .setStyle(ButtonStyle.Link)
+            .setURL(config.branding.website),
+        new ButtonBuilder()
+            .setLabel('Invite Bot')
+            .setStyle(ButtonStyle.Link)
+            .setURL(INVITE_URL)
+    );
+
+    return container
+        .addActionRowComponents(buttons)
+        .addTextDisplayComponents(footerNote('Press the button once. The next message is private to you.'));
+}
+
+export function adminDmContainer(subject: string, message: string, adminEmail?: string | null): ContainerBuilder {
+    const container = premiumContainer(
+        Accents.primary,
+        subject,
+        `${message}\n\n` +
+        `### Source\n` +
+        `› Sent by **Victus Cloud Admin**${adminEmail ? ` (${adminEmail})` : ''}\n` +
+        `› Delivery channel: Discord direct message\n` +
+        `› This message was queued from the admin panel`,
+        'ADMIN DIRECT MESSAGE'
+    );
+
+    return container
+        .addActionRowComponents(commandButtons())
+        .addTextDisplayComponents(footerNote('You can configure DM notification categories with /preferences.'));
+}
+
 export function helpMenuContainer(
     username: string,
-    avatarUrl: string,
+    _avatarUrl: string,
     commandCount: number
 ): ContainerBuilder {
-    const container = baseContainer(Accents.primary)
-        .addTextDisplayComponents(
-            text(
-                `# 🛠️ Help Menu\n\n` +
-                `### ⭐ Welcome, ${username}!\n` +
-                `Use the dropdown below to explore commands.\n\n` +
-                `### 📊 Bot Statistics\n` +
-                `✅ **${commandCount}** Commands Available\n` +
-                `✅ Account Linking\n` +
-                `✅ Server Management\n` +
-                `✅ Billing Integration\n\n` +
-                `-# Select a category from the dropdown menu below`
-            )
-        );
+    const container = premiumContainer(
+        Accents.primary,
+        'Victus Cloud Help Menu',
+        `Welcome, **${username}**.\n\n` +
+        `### Live command surface\n` +
+        `› **${commandCount}** slash commands available\n` +
+        `› Account linking and role sync\n` +
+        `› Server, billing, services, and support workflows\n\n` +
+        `Use the category selector below to open a command group.`,
+        'HELP CENTER'
+    );
 
     const menu = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
         new StringSelectMenuBuilder()
             .setCustomId('help_category')
-            .setPlaceholder('🏠 Main Menu')
+            .setPlaceholder('Select a command category')
             .addOptions([
-                { label: 'Account', description: 'Link/unlink commands', value: 'account', emoji: '👤' },
-                { label: 'Servers', description: 'Server management', value: 'servers', emoji: '🖥️' },
-                { label: 'Billing', description: 'Invoices & services', value: 'billing', emoji: '💳' },
-                { label: 'Support', description: 'Get help', value: 'support', emoji: '🎫' },
+                { label: 'Account', description: 'Link, unlink, profile, preferences', value: 'account' },
+                { label: 'Servers', description: 'List, inspect, and power manage servers', value: 'servers' },
+                { label: 'Billing', description: 'Invoices, services, and account billing', value: 'billing' },
+                { label: 'Support', description: 'Support paths and Victus Cloud links', value: 'support' },
             ])
     );
 
@@ -185,26 +245,27 @@ export function helpMenuContainer(
         new ButtonBuilder()
             .setLabel('Invite')
             .setStyle(ButtonStyle.Link)
-            .setURL(`https://discord.com/api/oauth2/authorize?client_id=${config.discord.clientId}&permissions=8&scope=bot%20applications.commands`),
+            .setURL(INVITE_URL),
+        new ButtonBuilder()
+            .setLabel('Dashboard')
+            .setStyle(ButtonStyle.Link)
+            .setURL(config.branding.website),
         new ButtonBuilder()
             .setLabel('Support')
             .setStyle(ButtonStyle.Link)
             .setURL(config.branding.website)
     );
 
-    container.addActionRowComponents(menu);
-    container.addActionRowComponents(buttons);
-
-    return container;
+    return container
+        .addActionRowComponents(buttons)
+        .addActionRowComponents(menu)
+        .addTextDisplayComponents(footerNote('Select a category to reshape this panel.'));
 }
 
-// ============================================
-// Preset: Invoice List Container
-// ============================================
 export function invoiceListContainer(
     invoices: { id: string; amount: string; status: string; date: string }[]
 ): ContainerBuilder {
-    let content = `# ${Icons.invoice} Your Invoices\n\n`;
+    let content = `${panelTitle('Your Invoices', 'BILLING LEDGER')}\n\n`;
 
     if (invoices.length === 0) {
         content += `_No invoices found for your linked Victus account._`;
@@ -216,17 +277,16 @@ export function invoiceListContainer(
         });
     }
 
-    return baseContainer(Accents.primary).addTextDisplayComponents(text(content));
+    return baseContainer(Accents.primary)
+        .addMediaGalleryComponents(mediaGallery(HERO_IMAGE))
+        .addTextDisplayComponents(text(content))
+        .addTextDisplayComponents(footerNote());
 }
 
-
-// ============================================
-// Preset: Services List Container
-// ============================================
 export function servicesListContainer(
     services: { name: string; status: string; price: string; renewsAt?: string }[]
 ): ContainerBuilder {
-    let content = `# ${Icons.service} Your Services\n\n`;
+    let content = `${panelTitle('Your Services', 'SERVICE MATRIX')}\n\n`;
 
     if (services.length === 0) {
         content += `_No active services found for your linked Victus account._`;
@@ -239,13 +299,12 @@ export function servicesListContainer(
         });
     }
 
-    return baseContainer(Accents.primary).addTextDisplayComponents(text(content));
+    return baseContainer(Accents.primary)
+        .addMediaGalleryComponents(mediaGallery(HERO_IMAGE))
+        .addTextDisplayComponents(text(content))
+        .addTextDisplayComponents(footerNote());
 }
 
-
-// ============================================
-// Preset: User Info Container
-// ============================================
 export function userInfoContainer(
     username: string,
     discordId: string,
@@ -256,11 +315,11 @@ export function userInfoContainer(
     creditBalance?: { amount: number; currency: string; found: boolean; source: string }
 ): ContainerBuilder {
     const accent = isLinked ? Accents.success : Accents.warning;
-    const container = baseContainer(accent);
+    const container = baseContainer(accent).addMediaGalleryComponents(mediaGallery(HERO_IMAGE));
 
     const displayName = decodeDisplayText(profile?.username || profile?.full_name || username, username);
-    let content = `# ${Icons.crown} Victus Profile: ${displayName}\n`;
-    content += `-# ${Icons.id} Discord ID: \`${discordId}\`  ${Icons.link} Link Status: **${isLinked ? 'Connected' : 'Not linked'}**\n\n`;
+    let content = `${panelTitle(`Victus Profile: ${displayName}`, 'ACCOUNT INTELLIGENCE')}\n`;
+    content += `-# Discord ID: \`${discordId}\` • Link status: **${isLinked ? 'Connected' : 'Not linked'}**\n\n`;
 
     if (isLinked && profile) {
         const billingReady = profile.billing_account_created ?? profile.billing_panel_created;
@@ -270,17 +329,17 @@ export function userInfoContainer(
             ? `${formatCredits(creditBalance.amount, creditBalance.currency)}${creditBalance.source === 'paymenter' ? ' synced from Paymenter' : ''}`
             : formatCredits(profile.credits || profile.credit || profile.balance || 0);
 
-        content += `### ${Icons.credits} Account Ledger\n`;
+        content += `### Account Ledger\n`;
         content += `${Icons.mail} **Email:** ${profile.email || '`Hidden`'}\n`;
         content += `${Icons.credits} **Credits:** **${creditText}**\n`;
         content += `${Icons.calendar} **Joined:** ${formatDate(profile.created_at)}\n\n`;
 
-        content += `### ${Icons.spark} Provisioning\n`;
+        content += `### Provisioning\n`;
         content += `${billingReady ? Icons.success : Icons.warning} Billing account: **${billingReady ? 'Ready' : 'Not ready'}**\n`;
         content += `${panelReady ? Icons.success : Icons.warning} Game panel: **${panelReady ? 'Ready' : 'Not ready'}**\n`;
         content += `${driveReady ? Icons.success : Icons.warning} Victus Drive: **${driveReady ? 'Ready' : 'Not ready'}**\n\n`;
 
-        content += `### ${Icons.server} Servers Owned (${servers.length})\n`;
+        content += `### Servers Owned (${servers.length})\n`;
         if (servers.length > 0) {
             servers.slice(0, 6).forEach(s => {
                 const status = s.is_suspended || s.suspended ? 'suspended' : (s.status || 'offline');
@@ -292,7 +351,7 @@ export function userInfoContainer(
         }
         content += `\n`;
 
-        content += `### ${Icons.activity} Recent Admin Trace\n`;
+        content += `### Recent Admin Trace\n`;
         if (history.length > 0) {
             history.slice(0, 3).forEach(h => {
                 content += `${Icons.spark} ${formatDate(h.created_at)} - ${decodeDisplayText(h.action || 'Action')}\n`;
@@ -304,31 +363,29 @@ export function userInfoContainer(
         content += `_This user has not linked their Victus Cloud account yet._`;
     }
 
-    container.addTextDisplayComponents(text(content));
-    return container;
+    return container
+        .addTextDisplayComponents(text(content))
+        .addActionRowComponents(commandButtons())
+        .addTextDisplayComponents(footerNote());
 }
 
-// ============================================
-// Export all
-// ============================================
 export const ComponentsV2 = {
-    // Helpers
     text,
     separator,
     mediaGallery,
+    thumbnail,
     baseContainer,
-    // Presets
     successContainer,
     errorContainer,
     warningContainer,
     infoContainer,
     linkAccountContainer,
+    linkPanelContainer,
+    adminDmContainer,
     helpMenuContainer,
     invoiceListContainer,
     servicesListContainer,
     userInfoContainer,
-    // Constants
     Accents,
     IS_COMPONENTS_V2,
 };
-
