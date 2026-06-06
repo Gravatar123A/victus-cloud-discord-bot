@@ -77,8 +77,20 @@ function hasSensitiveAccountIntent(text: string): boolean {
 }
 
 function hasServerListIntent(text: string): boolean {
-    return /\b(my|mine|i)\b.{0,50}\bservers?\b/.test(text) &&
-        /\b(how many|list|show|what|which|status|statuses|have|own)\b/.test(text);
+    if (!/\bservers?\b/.test(text)) return false;
+
+    const asksForServers = /\b(how many|list|show|what|which|status|statuses|have|own|got|attached|connected)\b/.test(text);
+    const belongsToUser =
+        /\b(my|mine|i|me)\b/.test(text) ||
+        /\b(do i have|i have|i got|have i got|servers? i got|servers? do i have)\b/.test(text);
+
+    return asksForServers && belongsToUser;
+}
+
+function hasServiceIntent(text: string): boolean {
+    return /\b(my|mine|i|me)\b/.test(text) &&
+        /\b(services?|orders?|subscriptions?|hosting plans?|active hosting)\b/.test(text) &&
+        /\b(list|show|what|which|how many|have|own|got|active)\b/.test(text);
 }
 
 function parsePowerIntent(text: string): { signal: PowerSignal; serverSearch: string } | null {
@@ -131,6 +143,43 @@ async function getServers(profile: UserProfile | null): Promise<ServerRecord[]> 
     return await supabase.getUserServers(profile.email) as ServerRecord[];
 }
 
+async function getBillingUserId(email: string): Promise<string> {
+    const billingUser = await supabase.getBillingUserByEmail(email).catch(() => null);
+    return String(billingUser?.id || billingUser?.attributes?.id || '');
+}
+
+async function getUserInvoices(profile: UserProfile | null): Promise<any[]> {
+    const email = profile?.email?.toLowerCase();
+    if (!email) return [];
+
+    const [invoices, billingUserId] = await Promise.all([
+        supabase.getInvoices().catch(() => []),
+        getBillingUserId(email),
+    ]);
+
+    return invoices.filter((invoice: any) => {
+        const invoiceEmail = String(invoice.user?.email || invoice.email || invoice.customer_email || '').toLowerCase();
+        const userId = String(invoice.user_id || invoice.customer_id || invoice.user?.id || '');
+        return invoiceEmail === email || (billingUserId && userId === billingUserId);
+    });
+}
+
+async function getUserServices(profile: UserProfile | null): Promise<any[]> {
+    const email = profile?.email?.toLowerCase();
+    if (!email) return [];
+
+    const [orders, billingUserId] = await Promise.all([
+        supabase.getOrders().catch(() => []),
+        getBillingUserId(email),
+    ]);
+
+    return orders.filter((order: any) => {
+        const orderEmail = String(order.user?.email || order.email || order.customer_email || '').toLowerCase();
+        const userId = String(order.user_id || order.customer_id || order.user?.id || '');
+        return orderEmail === email || (billingUserId && userId === billingUserId);
+    });
+}
+
 function findServer(servers: ServerRecord[], search: string): { server?: ServerRecord; ambiguous?: ServerRecord[] } {
     if (servers.length === 1 && !search) return { server: servers[0] };
     if (!search) return {};
@@ -157,8 +206,44 @@ function serverListSummary(servers: ServerRecord[]): string {
         return `${index + 1}. **${serverName(server)}** \`${compactId(identifier)}\` - ${statusLabel(serverStatus(server))}`;
     });
 
-    const extra = servers.length > lines.length ? `\n…and ${servers.length - lines.length} more.` : '';
+    const extra = servers.length > lines.length ? `\nand ${servers.length - lines.length} more.` : '';
     return `You have **${servers.length}** server${servers.length === 1 ? '' : 's'} on your linked Victus account:\n${lines.join('\n')}${extra}`;
+}
+
+function invoiceListSummary(invoices: any[]): string {
+    if (invoices.length === 0) {
+        return 'I do not see any invoices attached to your linked Victus account yet.';
+    }
+
+    const lines = invoices.slice(0, 8).map((invoice, index) => {
+        const amount = invoice.total || invoice.amount || '0.00';
+        const status = invoice.status || 'pending';
+        const date = invoice.created_at ? new Date(invoice.created_at).toLocaleDateString() : 'unknown date';
+        return `${index + 1}. Invoice **#${invoice.id || '-'}** - **$${amount}** - ${status} - ${date}`;
+    });
+
+    const extra = invoices.length > lines.length ? `\nand ${invoices.length - lines.length} more.` : '';
+    return `You have **${invoices.length}** invoice${invoices.length === 1 ? '' : 's'}:\n${lines.join('\n')}${extra}`;
+}
+
+function serviceListSummary(services: any[]): string {
+    if (services.length === 0) {
+        return 'I do not see any active services attached to your linked Victus account yet.';
+    }
+
+    const lines = services.slice(0, 8).map((service, index) => {
+        const name = service.product?.name || service.product_name || `Service #${service.id || '-'}`;
+        const status = service.status || 'active';
+        const price = service.price || service.total || '0.00';
+        const renewsAt = service.renewal_date || service.due_date
+            ? new Date(service.renewal_date || service.due_date).toLocaleDateString()
+            : 'no renewal date';
+
+        return `${index + 1}. **${decodeDisplayText(name)}** - **${status}** - $${price}/mo - ${renewsAt}`;
+    });
+
+    const extra = services.length > lines.length ? `\nand ${services.length - lines.length} more.` : '';
+    return `You have **${services.length}** service${services.length === 1 ? '' : 's'}:\n${lines.join('\n')}${extra}`;
 }
 
 async function handleSensitiveAccountQuestion(text: string, context: ActionContext): Promise<VictusAiActionResult> {
@@ -168,7 +253,7 @@ async function handleSensitiveAccountQuestion(text: string, context: ActionConte
     if (!linked) {
         return {
             handled: true,
-            content: 'That is private account info. Link your Victus account with `/link`, then ask me in DMs.',
+            content: 'That is private account info. Connect your Victus account to Discord first, then ask me in DMs.',
         };
     }
 
@@ -183,7 +268,7 @@ async function handleSensitiveAccountQuestion(text: string, context: ActionConte
     }
 
     if (/\b(invoice|invoices)\b/.test(text)) {
-        privateLines.push('For invoice details, use `/invoices` in Discord or open the billing panel. I keep invoice details out of public chat.');
+        privateLines.push(invoiceListSummary(await getUserInvoices(linked.profile)));
     }
 
     if (privateLines.length === 0) {
@@ -210,7 +295,7 @@ async function handleServerQuestion(text: string, context: ActionContext): Promi
     if (!linked) {
         return {
             handled: true,
-            content: 'I can access your Victus servers after you link your account with `/link`.',
+            content: 'I can show your Victus servers after your Discord account is connected to your Victus account.',
         };
     }
 
@@ -257,6 +342,29 @@ async function handleServerQuestion(text: string, context: ActionContext): Promi
     };
 }
 
+async function handleServiceQuestion(text: string, context: ActionContext): Promise<VictusAiActionResult> {
+    if (!hasServiceIntent(text)) return { handled: false };
+
+    const linked = await getLinkedContext(context.discordId);
+    if (!linked) {
+        return {
+            handled: true,
+            content: 'I can show your Victus services after your Discord account is connected to your Victus account.',
+        };
+    }
+
+    const content = serviceListSummary(await getUserServices(linked.profile));
+    if (context.publicReply) {
+        return {
+            handled: true,
+            content: 'That is account-specific, so come to DMs for the service list. I sent what I can there.',
+            dmContent: content,
+        };
+    }
+
+    return { handled: true, content };
+}
+
 class VictusAiActionsService {
     async tryHandle(prompt: string, context: ActionContext): Promise<VictusAiActionResult> {
         const text = normalizedPrompt(prompt);
@@ -265,7 +373,10 @@ class VictusAiActionsService {
         const sensitive = await handleSensitiveAccountQuestion(text, context);
         if (sensitive.handled) return sensitive;
 
-        return handleServerQuestion(text, context);
+        const servers = await handleServerQuestion(text, context);
+        if (servers.handled) return servers;
+
+        return handleServiceQuestion(text, context);
     }
 }
 
