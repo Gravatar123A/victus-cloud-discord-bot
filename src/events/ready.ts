@@ -6,6 +6,7 @@ import { supabase } from '../services/supabase.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
 import type { Event } from '../types/index.js';
+import { registerApplicationCommands } from '../utils/registerCommands.js';
 
 let dmQueueProcessing = false;
 
@@ -49,6 +50,12 @@ export const readyEvent: Event = {
     async execute(client: Client<true>) {
         logger.info(`Logged in as ${client.user.tag}`);
         logger.info(`Serving ${client.guilds.cache.size} guilds`);
+
+        if (config.bot.autoRegisterCommands) {
+            await registerApplicationCommands('bot startup').catch((error) => {
+                logger.error('Startup slash command sync failed:', error);
+            });
+        }
 
         await syncLinkedRoles(client);
 

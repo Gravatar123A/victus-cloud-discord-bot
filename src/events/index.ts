@@ -5,10 +5,12 @@ import type { Event } from '../types/index.js';
 // Import events
 import { readyEvent } from './ready.js';
 import { interactionCreateEvent } from './interactionCreate.js';
+import { messageCreateEvent } from './messageCreate.js';
 
 const events: Event[] = [
     readyEvent,
     interactionCreateEvent,
+    messageCreateEvent,
 ];
 
 /**

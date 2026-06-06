@@ -52,6 +52,8 @@ export const config = {
         logLevel: process.env.LOG_LEVEL || 'info',
         linkedRoleId: process.env.DISCORD_LINKED_ROLE_ID || '', // Role to give when account is linked
         supportGuildId: process.env.DISCORD_SUPPORT_GUILD_ID || '', // Main support server ID
+        aiChannelId: process.env.DISCORD_AI_CHANNEL_ID || '', // Optional fallback AI support channel
+        autoRegisterCommands: process.env.DISCORD_AUTO_REGISTER_COMMANDS !== 'false',
     },
 
     // Victus Cloud Branding

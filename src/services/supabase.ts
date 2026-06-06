@@ -297,7 +297,7 @@ class SupabaseService {
     /**
      * Update bot settings
      */
-    async updateBotSettings(guildId: string, settings: { linked_role_id?: string; log_channel_id?: string }): Promise<boolean> {
+    async updateBotSettings(guildId: string, settings: { linked_role_id?: string; log_channel_id?: string; ai_channel_id?: string | null }): Promise<boolean> {
         const { error } = await this.client
             .from('bot_settings')
             .upsert({

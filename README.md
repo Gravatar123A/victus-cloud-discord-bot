@@ -107,7 +107,25 @@ GROQ_MAX_TOKENS=700
 VICTUS_AI_SYSTEM_PROMPT=
 ```
 
-After changing AI env vars, restart the bot and run `npm run register` so Discord sees `/ask`.
+After changing AI env vars, restart the bot so it can reload configuration.
+
+`GROQ_API_KEY` is the only required AI variable. The base URL and model already default to `https://api.groq.com/openai` and `llama-3.1-8b-instant`.
+
+The bot also auto-syncs slash commands on startup unless `DISCORD_AUTO_REGISTER_COMMANDS=false`, so `/ask` should appear after restart. If `DISCORD_GUILD_ID` is set, commands update instantly for that guild; global commands can take up to 1 hour.
+
+To make the AI answer normal messages in a support channel:
+
+```bash
+/config ai-channel channel:#ai-support
+```
+
+To disable automatic channel replies:
+
+```bash
+/config ai-disable
+```
+
+If your Pterodactyl panel shows `preg_match(): Unknown modifier '-'`, do not add regex validation rules for Groq values. Use plain `nullable|string` style validation, or only set `GROQ_API_KEY` and let the bot defaults handle the model/base URL.
 
 ### Admin Commands
 
