@@ -29,6 +29,7 @@ import { requireLinkedAccount, getLinkedAccount } from '../middleware/requireLin
 import { requireAdmin } from '../middleware/requireLinked.js';
 import { logger } from '../utils/logger.js';
 import { groqAi } from '../services/groqAi.js';
+import { formatAiMessage } from '../utils/aiMessages.js';
 
 // ============================================
 // Custom IDs for components
@@ -1289,7 +1290,7 @@ async function handleClaimTicket(interaction: any) {
 }
 
 async function handleAIHelp(interaction: any) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const ticketId = interaction.customId.split('_')[2];
     const ticket = await supabase.getTicket(ticketId);
@@ -1299,15 +1300,9 @@ async function handleAIHelp(interaction: any) {
         return;
     }
 
-    // Check if AI is enabled
     if (!config.ai.enabled) {
-        const container = ComponentsV2.infoContainer(
-            'AI Not Available',
-            'AI support is not currently enabled. A staff member will assist you shortly.'
-        );
         await interaction.editReply({
-            components: [container],
-            flags: ComponentsV2.IS_COMPONENTS_V2,
+            content: 'AI support is not currently enabled. A staff member will assist you shortly.',
         });
         return;
     }
@@ -1321,27 +1316,13 @@ async function handleAIHelp(interaction: any) {
             messages,
         });
 
-        const container = ComponentsV2.aiChatContainer(
-            `Ticket: ${ticket.subject}`,
-            suggestion,
-            groqAi.model,
-            true
-        );
-
         await interaction.editReply({
-            components: [container],
-            flags: ComponentsV2.IS_COMPONENTS_V2,
+            content: formatAiMessage(suggestion),
         });
     } catch (error) {
         logger.error('Ticket AI suggestion failed:', error);
-        const container = ComponentsV2.errorContainer(
-            'AI Suggestion Failed',
-            'The Groq assistant could not review this ticket right now. Staff can still continue manually.'
-        );
-
         await interaction.editReply({
-            components: [container],
-            flags: ComponentsV2.IS_COMPONENTS_V2,
+            content: 'The Groq assistant could not review this ticket right now. Staff can still continue manually.',
         });
     }
     if (Date.now() < 0) {

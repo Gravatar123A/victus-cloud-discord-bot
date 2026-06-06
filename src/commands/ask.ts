@@ -1,9 +1,9 @@
 import { MessageFlags, SlashCommandBuilder } from 'discord.js';
 import type { Command } from '../types/index.js';
-import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { supabase } from '../services/supabase.js';
 import { groqAi } from '../services/groqAi.js';
 import { logger } from '../utils/logger.js';
+import { formatAiMessage } from '../utils/aiMessages.js';
 
 export const askCommand: Command = {
     data: new SlashCommandBuilder()
@@ -28,21 +28,16 @@ export const askCommand: Command = {
     async execute(interaction) {
         const question = interaction.options.getString('question', true).trim();
         const publicReply = interaction.options.getBoolean('public') ?? false;
-        const flags = publicReply
-            ? ComponentsV2.IS_COMPONENTS_V2
-            : ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral;
 
-        await interaction.deferReply({ flags });
+        if (publicReply) {
+            await interaction.deferReply();
+        } else {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        }
 
         if (!groqAi.isEnabled()) {
             await interaction.editReply({
-                components: [
-                    ComponentsV2.warningContainer(
-                        'AI Chat Not Configured',
-                        'Groq AI is not enabled yet. Set `GROQ_API_KEY` in the bot environment, then restart and register commands.'
-                    ),
-                ],
-                flags: ComponentsV2.IS_COMPONENTS_V2,
+                content: 'AI chat is not configured yet. Set `GROQ_API_KEY` in the bot environment, then restart the bot.',
             });
             return;
         }
@@ -59,21 +54,12 @@ export const askCommand: Command = {
             });
 
             await interaction.editReply({
-                components: [
-                    ComponentsV2.aiChatContainer(question, answer, groqAi.model, !!linked),
-                ],
-                flags: ComponentsV2.IS_COMPONENTS_V2,
+                content: formatAiMessage(answer),
             });
         } catch (error) {
             logger.error('Ask command failed:', error);
             await interaction.editReply({
-                components: [
-                    ComponentsV2.errorContainer(
-                        'AI Chat Failed',
-                        'The Victus AI assistant could not answer right now. Check the Groq API key, model, base URL, or try again in a moment.'
-                    ),
-                ],
-                flags: ComponentsV2.IS_COMPONENTS_V2,
+                content: 'AI chat failed right now. Check the Groq API key/model settings or try again in a moment.',
             });
         }
     },

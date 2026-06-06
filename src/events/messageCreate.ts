@@ -1,10 +1,10 @@
 import type { Message } from 'discord.js';
 import { config } from '../config.js';
-import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { supabase } from '../services/supabase.js';
 import { groqAi } from '../services/groqAi.js';
 import type { Event } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { formatAiMessage } from '../utils/aiMessages.js';
 
 const SETTINGS_TTL_MS = 20_000;
 const USER_COOLDOWN_MS = 8_000;
@@ -78,24 +78,16 @@ export const messageCreateEvent: Event = {
                 publicReply: true,
             });
 
-            const container = ComponentsV2.aiChatContainer(prompt, answer, groqAi.model, !!linked);
             await message.reply({
-                components: [container],
-                flags: ComponentsV2.IS_COMPONENTS_V2,
+                content: formatAiMessage(answer),
                 allowedMentions: { repliedUser: false },
-            } as any);
+            });
         } catch (error) {
             logger.error('AI channel response failed:', error);
             await message.reply({
-                components: [
-                    ComponentsV2.errorContainer(
-                        'AI Support Failed',
-                        'Victus AI could not answer this message right now. A staff member can still help here.'
-                    ),
-                ],
-                flags: ComponentsV2.IS_COMPONENTS_V2,
+                content: 'Victus AI could not answer this message right now. A staff member can still help here.',
                 allowedMentions: { repliedUser: false },
-            } as any).catch(() => undefined);
+            }).catch(() => undefined);
         }
     },
 };
