@@ -12,6 +12,7 @@ import { supabase } from '../services/supabase.js';
 import { config } from '../config.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { requireLinkedAccount } from '../middleware/requireLinked.js';
+import { pterodactyl, type PowerSignal } from '../services/pterodactyl.js';
 import { formatBytes } from '../utils/pagination.js';
 import { compactId, decodeDisplayText, Icons, statusIcon, statusLabel } from '../utils/premium.js';
 import { logger } from '../utils/logger.js';
@@ -112,6 +113,55 @@ export const serversCommand: Command = {
             logger.error('Server command error:', error);
             await interaction.editReply({
                 components: [ComponentsV2.errorContainer('Server Sync Failed', 'Could not fetch server information right now.')],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+        }
+    },
+
+    async handleButton(interaction) {
+        const match = interaction.customId.match(/^server_(start|stop|restart|kill)_(.+)$/);
+        if (!match) return;
+
+        const action = match[1] as PowerSignal;
+        const serverId = match[2];
+
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
+
+        const linked = await supabase.getLinkedAccount(interaction.user.id);
+        if (!linked) {
+            await interaction.editReply({
+                components: [ComponentsV2.warningContainer('Account Not Linked', 'Link your Victus account with `/link` before managing servers.')],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+            return;
+        }
+
+        const servers = await getServersForUser(linked.user_id);
+        const server = servers.find((candidate: any) => candidate.identifier === serverId);
+
+        if (!server) {
+            await interaction.editReply({
+                components: [ComponentsV2.errorContainer('Server Not Found', `Server \`${serverId}\` is not attached to your Victus account.`)],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+            return;
+        }
+
+        try {
+            await pterodactyl.sendPowerSignal(server.identifier, action);
+            await interaction.editReply({
+                components: [
+                    ComponentsV2.successContainer(
+                        'Power Signal Sent',
+                        `Sent **${action}** to **${decodeDisplayText(server.name)}**.\n\nServer state should update shortly.`
+                    ),
+                ],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Panel power API failed.';
+            await interaction.editReply({
+                components: [ComponentsV2.errorContainer('Power Action Failed', message)],
                 flags: ComponentsV2.IS_COMPONENTS_V2,
             });
         }
@@ -290,13 +340,29 @@ async function handleServerInfo(interaction: any, userId: string) {
 
 async function handleServerPower(interaction: any, userId: string) {
     const serverId = interaction.options.getString('server', true);
-    const action = interaction.options.getString('action', true);
+    const action = interaction.options.getString('action', true) as PowerSignal;
     const servers = await getServersForUser(userId);
     const server = servers.find((candidate: any) => candidate.identifier === serverId);
 
     if (!server) {
         await interaction.editReply({
             components: [ComponentsV2.errorContainer('Server Not Found', `Server \`${serverId}\` is not attached to your Victus account.`)],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+
+    try {
+        await pterodactyl.sendPowerSignal(server.identifier, action);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Panel power API failed.';
+        await interaction.editReply({
+            components: [
+                ComponentsV2.errorContainer(
+                    'Power Action Failed',
+                    `I found **${decodeDisplayText(server.name)}**, but could not send **${action}**.\n\n${message}`
+                ),
+            ],
             flags: ComponentsV2.IS_COMPONENTS_V2,
         });
         return;
@@ -312,7 +378,7 @@ async function handleServerPower(interaction: any, userId: string) {
     await interaction.editReply({
         components: [
             ComponentsV2.successContainer(
-                `${actionIcon[action]} Power Signal Queued`,
+                `${actionIcon[action]} Power Signal Sent`,
                 `Sent **${action}** to **${decodeDisplayText(server.name)}**.\n\nServer state should update shortly.`
             ),
         ],

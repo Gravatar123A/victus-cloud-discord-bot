@@ -3,6 +3,7 @@ import type { Message } from 'discord.js';
 import { config } from '../config.js';
 import { supabase } from '../services/supabase.js';
 import { groqAi } from '../services/groqAi.js';
+import { victusAiActions } from '../services/victusAiActions.js';
 import type { Event } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
@@ -54,6 +55,30 @@ async function replyWithAi(message: Message, prompt: string, publicReply: boolea
     try {
         if ('sendTyping' in message.channel) {
             await message.channel.sendTyping().catch(() => undefined);
+        }
+
+        const actionResult = await victusAiActions.tryHandle(prompt, {
+            discordId: message.author.id,
+            publicReply,
+        });
+
+        if (actionResult.handled) {
+            let content = actionResult.content;
+            if (publicReply && actionResult.dmContent) {
+                const dmSent = await message.author.send({
+                    content: formatAiMessage(actionResult.dmContent),
+                }).then(() => true).catch(() => false);
+
+                if (!dmSent) {
+                    content = 'That is private account info, so DM me for the answer. I could not open DMs with you from here.';
+                }
+            }
+
+            await message.reply({
+                content: formatAiMessage(content),
+                allowedMentions: { repliedUser: false },
+            });
+            return;
         }
 
         const linked = await supabase.getLinkedAccount(message.author.id).catch(() => null);

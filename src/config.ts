@@ -27,6 +27,7 @@ export const config = {
     pterodactyl: {
         url: process.env.PTERODACTYL_URL || '',
         apiKey: process.env.PTERODACTYL_API_KEY || '',
+        clientApiKey: process.env.PTERODACTYL_CLIENT_API_KEY || '',
     },
 
     // Paymenter (optional - can use Supabase edge functions)

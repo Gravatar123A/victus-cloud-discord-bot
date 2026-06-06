@@ -2,6 +2,7 @@ import { MessageFlags, SlashCommandBuilder } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { supabase } from '../services/supabase.js';
 import { groqAi } from '../services/groqAi.js';
+import { victusAiActions } from '../services/victusAiActions.js';
 import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
 
@@ -43,6 +44,31 @@ export const askCommand: Command = {
         }
 
         try {
+            const actionResult = await victusAiActions.tryHandle(question, {
+                discordId: interaction.user.id,
+                publicReply,
+            });
+
+            if (actionResult.handled) {
+                let content = actionResult.content;
+                if (publicReply && actionResult.dmContent) {
+                    const dmSent = await interaction.user.send({
+                        content: formatAiMessage(actionResult.dmContent),
+                    }).then(() => true).catch(() => false);
+
+                    if (!dmSent) {
+                        content = 'That is private account info, so DM me for the answer. I could not open DMs with you from here.';
+                    }
+                } else if (!publicReply && actionResult.dmContent) {
+                    content = actionResult.dmContent;
+                }
+
+                await interaction.editReply({
+                    content: formatAiMessage(content),
+                });
+                return;
+            }
+
             const linked = await supabase.getLinkedAccount(interaction.user.id).catch(() => null);
             const profile = linked ? await supabase.getUserProfile(linked.user_id).catch(() => null) : null;
             const answer = await groqAi.askVictus(question, {

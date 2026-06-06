@@ -68,6 +68,10 @@ export function formatCredits(amount: unknown, currency = "USD"): string {
             : 0;
     const safeAmount = Number.isFinite(numeric) ? numeric : 0;
     const code = String(currency || "USD").toUpperCase();
+    if (code === "COINS") {
+        return `${safeAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })} COINS`;
+    }
+
     const symbol = currencySymbols[code] || `${code} `;
     return `${symbol}${safeAmount.toLocaleString(undefined, {
         minimumFractionDigits: safeAmount % 1 === 0 ? 0 : 2,
