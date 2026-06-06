@@ -9,6 +9,7 @@ import {
     ButtonInteraction,
 } from 'discord.js';
 import { VICTUS_COLORS } from '../types/index.js';
+import { BOT_BANNER_URL } from '../embeds/theme.js';
 
 export interface PaginationOptions<T> {
     items: T[];
@@ -30,6 +31,7 @@ export async function createPagination<T>(
     if (totalPages === 0) {
         const emptyEmbed = new EmbedBuilder()
             .setColor(VICTUS_COLORS.neutral)
+            .setImage(BOT_BANNER_URL)
             .setDescription('📭 No items to display.');
 
         await interaction.editReply({ embeds: [emptyEmbed] });
@@ -73,7 +75,7 @@ export async function createPagination<T>(
         );
     };
 
-    const embed = embedBuilder(getPageItems(currentPage), currentPage, totalPages);
+    const embed = embedBuilder(getPageItems(currentPage), currentPage, totalPages).setImage(BOT_BANNER_URL);
     const message = await interaction.editReply({
         embeds: [embed],
         components: totalPages > 1 ? [getButtons(currentPage)] : [],
@@ -111,7 +113,7 @@ export async function createPagination<T>(
                 break;
         }
 
-        const newEmbed = embedBuilder(getPageItems(currentPage), currentPage, totalPages);
+        const newEmbed = embedBuilder(getPageItems(currentPage), currentPage, totalPages).setImage(BOT_BANNER_URL);
         await buttonInteraction.update({
             embeds: [newEmbed],
             components: [getButtons(currentPage)],

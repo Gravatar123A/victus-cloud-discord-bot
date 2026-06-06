@@ -12,6 +12,7 @@ import type { Command } from '../../types/index.js';
 import { supabase } from '../../services/supabase.js';
 import { config } from '../../config.js';
 import {
+    BOT_BANNER_URL,
     createEmbed,
     successEmbed,
     errorEmbed,
@@ -221,6 +222,7 @@ async function handleAnnounce(interaction: any) {
 
     const embed = new EmbedBuilder()
         .setColor(typeColors[type as keyof typeof typeColors])
+        .setImage(BOT_BANNER_URL)
         .setAuthor({
             name: 'Victus Cloud Announcement',
             iconURL: config.branding.logo,
@@ -373,6 +375,7 @@ async function handleStats(interaction: any) {
 
     const embed = new EmbedBuilder()
         .setColor(VICTUS_COLORS.primary)
+        .setImage(BOT_BANNER_URL)
         .setAuthor({
             name: 'Platform Statistics',
             iconURL: config.branding.logo,

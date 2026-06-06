@@ -2,6 +2,8 @@ import { EmbedBuilder, ColorResolvable } from 'discord.js';
 import { config } from '../config.js';
 import { VICTUS_COLORS } from '../types/index.js';
 
+export const BOT_BANNER_URL = `${config.branding.website}/images/discord-bot-manager-banner.png`;
+
 /**
  * Base embed with Victus Cloud branding
  */
@@ -11,14 +13,16 @@ export function createEmbed(options: {
     color?: keyof typeof VICTUS_COLORS | number;
     thumbnail?: boolean;
     footer?: boolean;
+    banner?: boolean;
 }): EmbedBuilder {
-    const { title, description, color = 'primary', thumbnail = false, footer = true } = options;
+    const { title, description, color = 'primary', thumbnail = false, footer = true, banner = true } = options;
 
     const embed = new EmbedBuilder()
         .setColor((typeof color === 'number' ? color : VICTUS_COLORS[color]) as ColorResolvable);
 
     if (title) embed.setTitle(title);
     if (description) embed.setDescription(description);
+    if (banner) embed.setImage(BOT_BANNER_URL);
     if (thumbnail) embed.setThumbnail(config.branding.logo);
     if (footer) {
         embed.setFooter({

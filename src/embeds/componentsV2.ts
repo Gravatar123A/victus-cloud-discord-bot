@@ -31,7 +31,7 @@ export const Accents = {
     midnight: 0x111827,
 } as const;
 
-const HERO_IMAGE = `${config.branding.website}/images/hero/discord-bot-hero.webp`;
+const HERO_IMAGE = `${config.branding.website}/images/discord-bot-manager-banner.png`;
 const INVITE_URL = `https://discord.com/api/oauth2/authorize?client_id=${config.discord.clientId}&permissions=8&scope=bot%20applications.commands`;
 
 export function text(content: string): TextDisplayBuilder {
