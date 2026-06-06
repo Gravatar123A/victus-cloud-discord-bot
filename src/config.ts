@@ -60,10 +60,11 @@ export const config = {
     branding: {
         name: 'Victus Cloud',
         color: 0x6366f1, // Indigo
-        logo: 'https://victuscloud.xyz/favicon.png',
-        website: 'https://victuscloud.xyz',
-        billing: 'https://billing.victuscloud.xyz',
-        panel: 'https://game.victuscloud.xyz',
+        logo: 'https://victuscloud.com/favicon.png',
+        website: 'https://victuscloud.com',
+        free: 'https://victuscloud.com/free',
+        billing: 'https://victuscloud.com',
+        panel: 'https://victuscloud.com',
     },
 } as const;
 

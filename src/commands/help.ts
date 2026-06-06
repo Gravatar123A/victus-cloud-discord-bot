@@ -77,8 +77,8 @@ export const helpCommand: Command = {
                     'Support',
                     `Need help? Use the links below or open a ticket in the server.\n\n` +
                     `**Website:** ${config.branding.website}\n` +
-                    `**Billing:** ${config.branding.billing}\n` +
-                    `**Game Panel:** ${config.branding.panel}\n` +
+                    `**Free Hosting:** ${config.branding.free}\n` +
+                    `**Services:** ${config.branding.website}\n` +
                     `**Email:** support@victuscloud.com`
                 );
                 break;

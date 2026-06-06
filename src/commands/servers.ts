@@ -188,13 +188,13 @@ async function handleServerList(interaction: any, userId: string) {
 
     const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            .setLabel('Open Game Panel')
+            .setLabel('Victus Cloud')
             .setStyle(ButtonStyle.Link)
-            .setURL(config.branding.panel),
+            .setURL(config.branding.website),
         new ButtonBuilder()
-            .setLabel('Billing')
+            .setLabel('Free Hosting')
             .setStyle(ButtonStyle.Link)
-            .setURL(config.branding.billing)
+            .setURL(config.branding.free)
     );
 
     container.addActionRowComponents(menu);
@@ -275,9 +275,9 @@ async function handleServerInfo(interaction: any, userId: string) {
             .setStyle(ButtonStyle.Primary)
             .setDisabled(status !== 'running'),
         new ButtonBuilder()
-            .setLabel('Open Panel')
+            .setLabel('Victus Cloud')
             .setStyle(ButtonStyle.Link)
-            .setURL(`${config.branding.panel}/server/${serverId}`)
+            .setURL(config.branding.website)
     );
 
     container.addActionRowComponents(buttons);
@@ -313,7 +313,7 @@ async function handleServerPower(interaction: any, userId: string) {
         components: [
             ComponentsV2.successContainer(
                 `${actionIcon[action]} Power Signal Queued`,
-                `Sent **${action}** to **${decodeDisplayText(server.name)}**.\n\nServer state should update in the panel shortly.`
+                `Sent **${action}** to **${decodeDisplayText(server.name)}**.\n\nServer state should update shortly.`
             ),
         ],
         flags: ComponentsV2.IS_COMPONENTS_V2,

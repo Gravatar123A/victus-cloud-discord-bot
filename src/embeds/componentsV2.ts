@@ -82,9 +82,9 @@ function commandButtons(): ActionRowBuilder<ButtonBuilder> {
             .setStyle(ButtonStyle.Link)
             .setURL(config.branding.website),
         new ButtonBuilder()
-            .setLabel('Billing Panel')
+            .setLabel('Free Hosting')
             .setStyle(ButtonStyle.Link)
-            .setURL(config.branding.billing),
+            .setURL(config.branding.free),
         new ButtonBuilder()
             .setLabel('Support')
             .setStyle(ButtonStyle.Link)
@@ -376,7 +376,7 @@ export function userInfoContainer(
 
         content += `### Provisioning\n`;
         content += `${billingReady ? Icons.success : Icons.warning} Billing account: **${billingReady ? 'Ready' : 'Not ready'}**\n`;
-        content += `${panelReady ? Icons.success : Icons.warning} Game panel: **${panelReady ? 'Ready' : 'Not ready'}**\n`;
+        content += `${panelReady ? Icons.success : Icons.warning} Service provisioning: **${panelReady ? 'Ready' : 'Not ready'}**\n`;
         content += `${driveReady ? Icons.success : Icons.warning} Victus Drive: **${driveReady ? 'Ready' : 'Not ready'}**\n\n`;
 
         content += `### Servers Owned (${servers.length})\n`;
@@ -385,7 +385,7 @@ export function userInfoContainer(
                 const status = s.is_suspended || s.suspended ? 'suspended' : (s.status || 'offline');
                 content += `${statusIcon(status)} \`${compactId(s.identifier)}\` **${decodeDisplayText(s.name)}** - ${statusLabel(status)}\n`;
             });
-            if (servers.length > 6) content += `-# Showing 6 of ${servers.length}. Use the panel for the full fleet.\n`;
+            if (servers.length > 6) content += `-# Showing 6 of ${servers.length}. Use Victus Cloud for the full fleet.\n`;
         } else {
             content += `_No active servers found._\n`;
         }

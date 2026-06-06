@@ -1147,9 +1147,9 @@ function createTicketControlPanel(ticket: Ticket, user: any): ContainerBuilder {
             .setStyle(ButtonStyle.Secondary)
             .setEmoji('🤖'),
         new ButtonBuilder()
-            .setLabel('Open Panel')
+            .setLabel('Victus Cloud')
             .setStyle(ButtonStyle.Link)
-            .setURL(config.branding.panel)
+            .setURL(config.branding.website)
             .setEmoji('🖥️')
     );
 

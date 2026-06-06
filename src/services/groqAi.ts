@@ -40,9 +40,9 @@ Victus Cloud knowledge:
 - Victus Cloud offers game server hosting, VPS hosting, web hosting, Discord bot hosting, app/code hosting, databases, image hosting, file hosting, media sharing, and Victus Drive/file dashboard features.
 - Victus Free is the free Minecraft hosting product line: instant start, no queue, AI setup guidance, no credit card, ad-supported limits, and a path to paid upgrades.
 - For "better than Aternos" questions, focus on Victus advantages like instant start, no queue, support, AI setup, and lower regional latency where Victus has nearby infrastructure. Do not insult competitors.
-- The website is https://victuscloud.xyz.
-- Billing is at https://billing.victuscloud.xyz.
-- The game panel is at https://game.victuscloud.xyz.
+- There is no separate public game panel URL. Never send users to game.victuscloud.xyz.
+- For free Minecraft servers or Victus Free, send users to https://victuscloud.com/free.
+- For normal services, paid hosting, billing, account help, or general Victus Cloud, send users to https://victuscloud.com.
 - Users can link Discord to Victus Cloud with /link or the public link panel.
 - Linked users can use account-aware commands such as /account, /servers, /services, /invoices, /preferences, and /unlink.
 - Users can configure Discord DM notifications with /preferences.
@@ -87,7 +87,7 @@ function describeUserContext(context?: AiUserContext): string {
         const displayName = context.profile.full_name || context.profile.username || 'Victus user';
         lines.push(`Victus display name: ${displayName}`);
         lines.push(`Admin account: ${context.profile.is_admin ? 'yes' : 'no'}`);
-        lines.push(`Game panel created: ${context.profile.control_panel_created ? 'yes' : 'no'}`);
+        lines.push(`Service provisioning ready: ${context.profile.control_panel_created ? 'yes' : 'no'}`);
         lines.push(`Victus Drive created: ${context.profile.victus_drive_created ? 'yes' : 'no'}`);
         if (!context.publicReply && context.profile.email) {
             lines.push(`Private linked email: ${context.profile.email}`);

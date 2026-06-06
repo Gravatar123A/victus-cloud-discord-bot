@@ -55,15 +55,15 @@ export const accountCommand: Command = {
 
             const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
                 new ButtonBuilder()
-                    .setLabel('Billing')
+                    .setLabel('Victus Cloud')
                     .setStyle(ButtonStyle.Link)
-                    .setURL(config.branding.billing),
+                    .setURL(config.branding.website),
                 new ButtonBuilder()
-                    .setLabel('Game Panel')
+                    .setLabel('Free Hosting')
                     .setStyle(ButtonStyle.Link)
-                    .setURL(config.branding.panel),
+                    .setURL(config.branding.free),
                 new ButtonBuilder()
-                    .setLabel('Website')
+                    .setLabel('Support')
                     .setStyle(ButtonStyle.Link)
                     .setURL(config.branding.website)
             );
