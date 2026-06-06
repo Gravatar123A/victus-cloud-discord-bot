@@ -1,3 +1,4 @@
+import { ChannelType } from 'discord.js';
 import type { Message } from 'discord.js';
 import { config } from '../config.js';
 import { supabase } from '../services/supabase.js';
@@ -36,7 +37,7 @@ async function getAiChannelId(guildId: string): Promise<string> {
     return channelId;
 }
 
-function buildPromptFromMessage(message: Message<true>): string {
+function buildPromptFromMessage(message: Message): string {
     const content = message.content.trim();
     const attachments = [...message.attachments.values()]
         .slice(0, 5)
@@ -49,12 +50,57 @@ function buildPromptFromMessage(message: Message<true>): string {
     return '';
 }
 
+async function replyWithAi(message: Message, prompt: string, publicReply: boolean, fallbackMessage: string): Promise<void> {
+    try {
+        if ('sendTyping' in message.channel) {
+            await message.channel.sendTyping().catch(() => undefined);
+        }
+
+        const linked = await supabase.getLinkedAccount(message.author.id).catch(() => null);
+        const profile = linked ? await supabase.getUserProfile(linked.user_id).catch(() => null) : null;
+        const answer = await groqAi.askVictus(prompt, {
+            discordTag: message.author.tag,
+            discordId: message.author.id,
+            linked: !!linked,
+            profile,
+            publicReply,
+        });
+
+        await message.reply({
+            content: formatAiMessage(answer),
+            allowedMentions: { repliedUser: false },
+        });
+    } catch (error) {
+        logger.error(publicReply ? 'AI channel response failed:' : 'AI DM response failed:', error);
+        await message.reply({
+            content: fallbackMessage,
+            allowedMentions: { repliedUser: false },
+        }).catch(() => undefined);
+    }
+}
+
 export const messageCreateEvent: Event = {
     name: 'messageCreate',
     async execute(message: Message) {
-        if (!message.inGuild()) return;
         if (message.author.bot) return;
         if (!groqAi.isEnabled()) return;
+
+        if (message.channel.type === ChannelType.DM) {
+            const prompt = buildPromptFromMessage(message);
+            if (prompt.length < 3) return;
+
+            if (isCoolingDown(message.author.id, userCooldowns, USER_COOLDOWN_MS)) return;
+
+            await replyWithAi(
+                message,
+                prompt,
+                false,
+                'Victus AI could not answer your DM right now. Please try again in a moment or open a support ticket.'
+            );
+            return;
+        }
+
+        if (!message.inGuild()) return;
 
         const aiChannelId = await getAiChannelId(message.guildId);
         if (!aiChannelId || message.channelId !== aiChannelId) return;
@@ -65,29 +111,11 @@ export const messageCreateEvent: Event = {
         if (isCoolingDown(message.author.id, userCooldowns, USER_COOLDOWN_MS)) return;
         if (isCoolingDown(message.channelId, channelCooldowns, CHANNEL_COOLDOWN_MS)) return;
 
-        try {
-            await message.channel.sendTyping().catch(() => undefined);
-
-            const linked = await supabase.getLinkedAccount(message.author.id).catch(() => null);
-            const profile = linked ? await supabase.getUserProfile(linked.user_id).catch(() => null) : null;
-            const answer = await groqAi.askVictus(prompt, {
-                discordTag: message.author.tag,
-                discordId: message.author.id,
-                linked: !!linked,
-                profile,
-                publicReply: true,
-            });
-
-            await message.reply({
-                content: formatAiMessage(answer),
-                allowedMentions: { repliedUser: false },
-            });
-        } catch (error) {
-            logger.error('AI channel response failed:', error);
-            await message.reply({
-                content: 'Victus AI could not answer this message right now. A staff member can still help here.',
-                allowedMentions: { repliedUser: false },
-            }).catch(() => undefined);
-        }
+        await replyWithAi(
+            message,
+            prompt,
+            true,
+            'Victus AI could not answer this message right now. A staff member can still help here.'
+        );
     },
 };
