@@ -12,6 +12,9 @@ dist/
 logs/
 *.log
 
+# Runtime local fallback settings
+data/
+
 # IDE
 .vscode/
 .idea/

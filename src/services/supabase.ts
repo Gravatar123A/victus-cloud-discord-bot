@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { LinkedAccount, LinkToken, UserProfile } from '../types/index.js';
+import { localSettings } from './localSettings.js';
 
 type CreditBalance = {
     amount: number;
@@ -291,7 +292,13 @@ class SupabaseService {
         if (error && error.code !== 'PGRST116') {
             logger.error(`Failed to get bot settings for ${guildId}:`, error);
         }
-        return data;
+
+        const fallbackAiChannelId = await localSettings.getAiChannelId(guildId);
+        if (!fallbackAiChannelId) return data;
+        return {
+            ...(data || { guild_id: guildId }),
+            ai_channel_id: data?.ai_channel_id || fallbackAiChannelId,
+        };
     }
 
     /**
@@ -307,8 +314,21 @@ class SupabaseService {
             });
 
         if (error) {
+            const missingAiColumn = 'ai_channel_id' in settings && (
+                error.code === '42703' ||
+                error.code === 'PGRST204' ||
+                String(error.message || '').includes('ai_channel_id')
+            );
+            if (missingAiColumn) {
+                logger.warn('bot_settings.ai_channel_id is missing in Supabase; using local file fallback. Apply the migration when possible.');
+                return localSettings.setAiChannelId(guildId, settings.ai_channel_id ?? null);
+            }
             logger.error(`Failed to update bot settings for ${guildId}:`, error);
             return false;
+        }
+
+        if ('ai_channel_id' in settings) {
+            await localSettings.setAiChannelId(guildId, settings.ai_channel_id ?? null);
         }
         return true;
     }
