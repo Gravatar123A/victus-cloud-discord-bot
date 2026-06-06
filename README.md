@@ -90,8 +90,24 @@ Do not set `MAIN_FILE` to `index.js` unless this root launcher exists in the ser
 | `/server console` | Send console command |
 | `/services` | View active services |
 | `/invoices` | View your invoices |
+| `/ask` | Ask the Victus Cloud AI assistant |
 | `/ticket` | Create support ticket |
 | `/help` | Show help |
+
+### Groq AI Chat
+
+The bot uses Groq's OpenAI-compatible chat API for Victus Cloud support answers.
+
+```bash
+GROQ_API_KEY=your_groq_api_key
+GROQ_BASE_URL=https://api.groq.com/openai
+GROQ_MODEL=llama-3.1-8b-instant
+GROQ_TEMPERATURE=0.35
+GROQ_MAX_TOKENS=700
+VICTUS_AI_SYSTEM_PROMPT=
+```
+
+After changing AI env vars, restart the bot and run `npm run register` so Discord sees `/ask`.
 
 ### Admin Commands
 

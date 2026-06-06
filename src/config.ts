@@ -35,10 +35,15 @@ export const config = {
         apiKey: process.env.PAYMENTER_API_KEY || '',
     },
 
-    // AI Support (optional)
+    // AI Support (optional, OpenAI-compatible Groq endpoint)
     ai: {
-        openaiKey: process.env.OPENAI_API_KEY || '',
-        enabled: !!process.env.OPENAI_API_KEY,
+        apiKey: process.env.GROQ_API_KEY || '',
+        baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai',
+        model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
+        temperature: Number(process.env.GROQ_TEMPERATURE || '0.35'),
+        maxTokens: Number(process.env.GROQ_MAX_TOKENS || '700'),
+        systemPrompt: process.env.VICTUS_AI_SYSTEM_PROMPT || '',
+        enabled: !!process.env.GROQ_API_KEY,
     },
 
     // Bot Settings

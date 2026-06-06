@@ -28,6 +28,7 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { requireLinkedAccount, getLinkedAccount } from '../middleware/requireLinked.js';
 import { requireAdmin } from '../middleware/requireLinked.js';
 import { logger } from '../utils/logger.js';
+import { groqAi } from '../services/groqAi.js';
 
 // ============================================
 // Custom IDs for components
@@ -1288,7 +1289,7 @@ async function handleClaimTicket(interaction: any) {
 }
 
 async function handleAIHelp(interaction: any) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
 
     const ticketId = interaction.customId.split('_')[2];
     const ticket = await supabase.getTicket(ticketId);
@@ -1311,6 +1312,40 @@ async function handleAIHelp(interaction: any) {
         return;
     }
 
+    try {
+        const messages = await supabase.getTicketMessages(ticketId);
+        const suggestion = await groqAi.suggestForTicket({
+            subject: ticket.subject,
+            category: ticket.category?.name,
+            description: ticket.description,
+            messages,
+        });
+
+        const container = ComponentsV2.aiChatContainer(
+            `Ticket: ${ticket.subject}`,
+            suggestion,
+            groqAi.model,
+            true
+        );
+
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+    } catch (error) {
+        logger.error('Ticket AI suggestion failed:', error);
+        const container = ComponentsV2.errorContainer(
+            'AI Suggestion Failed',
+            'The Groq assistant could not review this ticket right now. Staff can still continue manually.'
+        );
+
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+    }
+    if (Date.now() < 0) {
+
     // Get ticket messages for context
     const messages = await supabase.getTicketMessages(ticketId);
 
@@ -1328,6 +1363,7 @@ async function handleAIHelp(interaction: any) {
         components: [container],
         flags: ComponentsV2.IS_COMPONENTS_V2,
     });
+    }
 }
 
 // ============================================

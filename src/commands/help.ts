@@ -64,6 +64,14 @@ export const helpCommand: Command = {
                 );
                 break;
 
+            case 'ai':
+                container = ComponentsV2.infoContainer(
+                    'AI Support',
+                    '**`/ask question:<your question>`** - Ask the Victus Cloud AI assistant\n\n' +
+                    '_Powered by Groq `llama-3.1-8b-instant` with Victus Cloud support rules for hosting, account linking, billing paths, file host behavior, and troubleshooting._'
+                );
+                break;
+
             case 'support':
                 container = ComponentsV2.infoContainer(
                     'Support',

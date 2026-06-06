@@ -92,6 +92,11 @@ function commandButtons(): ActionRowBuilder<ButtonBuilder> {
     );
 }
 
+function clampPanelText(value: string, maxLength: number): string {
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, maxLength - 24).trim()}... [message trimmed]`;
+}
+
 function createBrandedContainer(accent: number, title: string, description: string, eyebrow: string): ContainerBuilder {
     return premiumContainer(accent, title, description, eyebrow)
         .addTextDisplayComponents(footerNote());
@@ -237,6 +242,7 @@ export function helpMenuContainer(
                 { label: 'Account', description: 'Link, unlink, profile, preferences', value: 'account' },
                 { label: 'Servers', description: 'List, inspect, and power manage servers', value: 'servers' },
                 { label: 'Billing', description: 'Invoices, services, and account billing', value: 'billing' },
+                { label: 'AI Support', description: 'Ask the Victus Cloud AI assistant', value: 'ai' },
                 { label: 'Support', description: 'Support paths and Victus Cloud links', value: 'support' },
             ])
     );
@@ -260,6 +266,40 @@ export function helpMenuContainer(
         .addActionRowComponents(buttons)
         .addActionRowComponents(menu)
         .addTextDisplayComponents(footerNote('Select a category to reshape this panel.'));
+}
+
+export function aiChatContainer(
+    question: string,
+    answer: string,
+    model: string,
+    linked: boolean
+): ContainerBuilder {
+    const container = premiumContainer(
+        Accents.info,
+        'Victus Cloud AI',
+        `**Question**\n${clampPanelText(question, 900)}\n\n` +
+        `**Answer**\n${clampPanelText(answer, 2900)}`,
+        'GROQ LLAMA SUPPORT'
+    );
+
+    const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setLabel('Open Dashboard')
+            .setStyle(ButtonStyle.Link)
+            .setURL(config.branding.website),
+        new ButtonBuilder()
+            .setLabel('Support')
+            .setStyle(ButtonStyle.Link)
+            .setURL(config.branding.website),
+        new ButtonBuilder()
+            .setLabel(linked ? 'Account Linked' : 'Link Account')
+            .setStyle(ButtonStyle.Link)
+            .setURL(`${config.branding.website}/discord-link`)
+    );
+
+    return container
+        .addActionRowComponents(buttons)
+        .addTextDisplayComponents(footerNote(`Model: ${model} - Victus-focused answers, not live billing approval.`));
 }
 
 export function invoiceListContainer(
@@ -383,6 +423,7 @@ export const ComponentsV2 = {
     linkPanelContainer,
     adminDmContainer,
     helpMenuContainer,
+    aiChatContainer,
     invoiceListContainer,
     servicesListContainer,
     userInfoContainer,
