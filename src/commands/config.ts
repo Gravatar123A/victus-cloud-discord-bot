@@ -74,13 +74,26 @@ export const configCommand: Command = {
                 const roleId = settings?.linked_role_id || 'Not set';
                 const logChannelId = settings?.log_channel_id || 'Not set';
                 const aiChannelId = settings?.ai_channel_id || config.bot.aiChannelId || 'Not set';
+                const ticketPanelChannelId = settings?.ticket_panel_channel_id || 'Not set';
+                const ticketParentCategoryId = settings?.ticket_parent_category_id || 'Not set';
+                const archiveChannelId = settings?.ticket_archive_channel_id || 'Not set';
+                const staffRoleIds = [
+                    ...new Set([
+                        ...((settings?.ticket_staff_role_ids || []) as string[]),
+                        ...((settings?.ticket_admin_role_ids || []) as string[]),
+                    ]),
+                ];
 
                 const container = ComponentsV2.infoContainer(
                     'Bot Configuration',
                     `**Server:** ${interaction.guild?.name}\n\n` +
                     `**Linked Role:** ${roleId !== 'Not set' ? `<@&${roleId}>` : '`Not set`'}\n` +
                     `**Audit Logs:** ${logChannelId !== 'Not set' ? `<#${logChannelId}>` : '`Not set`'}\n` +
-                    `**AI Support Channel:** ${aiChannelId !== 'Not set' ? `<#${aiChannelId}>` : '`Not set`'}\n\n` +
+                    `**AI Support Channel:** ${aiChannelId !== 'Not set' ? `<#${aiChannelId}>` : '`Not set`'}\n` +
+                    `**Ticket Panel Channel:** ${ticketPanelChannelId !== 'Not set' ? `<#${ticketPanelChannelId}>` : '`Not set`'}\n` +
+                    `**Default Ticket Category:** ${ticketParentCategoryId !== 'Not set' ? `\`${ticketParentCategoryId}\`` : '`Not set`'}\n` +
+                    `**Ticket Archive:** ${archiveChannelId !== 'Not set' ? `<#${archiveChannelId}>` : '`Not set`'}\n` +
+                    `**Ticket Staff Roles:** ${staffRoleIds.length ? staffRoleIds.map((roleId) => `<@&${roleId}>`).join(', ') : '`Not set`'}\n\n` +
                     `**Auto Register Commands:** ${config.bot.autoRegisterCommands ? '`Enabled`' : '`Disabled`'}`
                 );
 

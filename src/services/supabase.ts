@@ -1,7 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import type { LinkedAccount, LinkToken, UserProfile } from '../types/index.js';
+import type { BotSettings, LinkedAccount, LinkToken, UserProfile } from '../types/index.js';
 import { localSettings } from './localSettings.js';
 
 type CreditBalance = {
@@ -307,7 +307,7 @@ class SupabaseService {
     /**
      * Get bot settings for a guild
      */
-    async getBotSettings(guildId: string): Promise<any | null> {
+    async getBotSettings(guildId: string): Promise<BotSettings | null> {
         const { data, error } = await this.client
             .from('bot_settings')
             .select('*')
@@ -319,17 +319,20 @@ class SupabaseService {
         }
 
         const fallbackAiChannelId = await localSettings.getAiChannelId(guildId);
-        if (!fallbackAiChannelId) return data;
+        if (!fallbackAiChannelId) return data as BotSettings | null;
         return {
             ...(data || { guild_id: guildId }),
             ai_channel_id: data?.ai_channel_id || fallbackAiChannelId,
-        };
+        } as BotSettings;
     }
 
     /**
      * Update bot settings
      */
-    async updateBotSettings(guildId: string, settings: { linked_role_id?: string; log_channel_id?: string; ai_channel_id?: string | null }): Promise<boolean> {
+    async updateBotSettings(
+        guildId: string,
+        settings: Partial<Omit<BotSettings, 'guild_id' | 'updated_at'>>
+    ): Promise<boolean> {
         const { error } = await this.client
             .from('bot_settings')
             .upsert({

@@ -17,11 +17,9 @@ import {
     ChannelType,
     PermissionFlagsBits,
     MessageFlags,
-    TextChannel,
     CategoryChannel,
-    GuildMember,
 } from 'discord.js';
-import type { Command, TicketCategory, Ticket } from '../types/index.js';
+import type { Command, TicketCategory, Ticket, BotSettings } from '../types/index.js';
 import { supabase } from '../services/supabase.js';
 import { config } from '../config.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
@@ -65,6 +63,58 @@ const pendingTickets = new Map<string, {
     priorityDefault: string;
     customQuestions: any[];
 }>();
+
+function normalizeIds(value: unknown): string[] {
+    if (!value) return [];
+    const items = Array.isArray(value) ? value : String(value).split(/[\s,]+/);
+    return Array.from(new Set(
+        items
+            .map((item) => String(item || '').trim())
+            .filter(Boolean)
+    ));
+}
+
+function combinedStaffRoleIds(settings: BotSettings | null, category?: Partial<TicketCategory> | null): string[] {
+    return normalizeIds([
+        ...normalizeIds(settings?.ticket_staff_role_ids),
+        ...normalizeIds(settings?.ticket_admin_role_ids),
+        ...normalizeIds(category?.staff_roles),
+    ]);
+}
+
+function adminRoleIds(settings: BotSettings | null): string[] {
+    return normalizeIds(settings?.ticket_admin_role_ids);
+}
+
+function memberHasAnyRole(member: any, roleIds: string[]): boolean {
+    if (!member || roleIds.length === 0) return false;
+    if (member.roles?.cache?.has) return roleIds.some((roleId) => member.roles.cache.has(roleId));
+    if (Array.isArray(member.roles)) return roleIds.some((roleId) => member.roles.includes(roleId));
+    return false;
+}
+
+function memberHasTicketStaffAccess(interaction: any, settings: BotSettings | null, category?: Partial<TicketCategory> | null): boolean {
+    const member = interaction.member;
+    if (!member) return false;
+
+    if (member.permissions?.has?.(PermissionFlagsBits.Administrator) || member.permissions?.has?.(PermissionFlagsBits.ManageChannels)) {
+        return true;
+    }
+
+    return memberHasAnyRole(member, combinedStaffRoleIds(settings, category));
+}
+
+function canCloseTicket(interaction: any, ticket: Ticket, settings: BotSettings | null): boolean {
+    if (ticket.discord_id === interaction.user.id && settings?.ticket_allow_user_close !== false) return true;
+    return memberHasTicketStaffAccess(interaction, settings, ticket.category);
+}
+
+async function denyTicketAction(interaction: any, message = 'You do not have permission to manage this ticket.') {
+    await interaction.reply({
+        content: message,
+        ephemeral: true,
+    }).catch(() => undefined);
+}
 
 export const ticketCommand: Command = {
     data: new SlashCommandBuilder()
@@ -433,6 +483,7 @@ export const ticketCommand: Command = {
 async function handlePanelSpawn(interaction: any) {
     const guildId = interaction.guildId!;
     const categories = await supabase.getTicketCategories(guildId);
+    const settings = await supabase.getBotSettings(guildId).catch(() => null);
 
     if (categories.length === 0) {
         const container = ComponentsV2.warningContainer(
@@ -449,16 +500,32 @@ async function handlePanelSpawn(interaction: any) {
 
     // Create the premium ticket panel
     const panel = createTicketPanel(categories);
+    const configuredChannelId = settings?.ticket_panel_channel_id;
+    const targetChannel = configuredChannelId
+        ? await interaction.guild.channels.fetch(configuredChannelId).catch(() => null)
+        : interaction.channel;
 
-    // Send to channel (not ephemeral)
-    await interaction.channel.send({
+    if (!targetChannel || !targetChannel.isTextBased?.()) {
+        const container = ComponentsV2.errorContainer(
+            'Invalid Panel Channel',
+            'The configured ticket panel channel ID is missing or is not a text channel.'
+        );
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+
+    // Send to configured channel (not ephemeral)
+    await targetChannel.send({
         components: [panel],
         flags: (ComponentsV2 as any).IS_COMPONENTS_V2,
     });
 
     const container = ComponentsV2.successContainer(
         'Panel Created',
-        'The premium ticket panel has been spawned in this channel.'
+        `The premium ticket panel has been spawned in <#${targetChannel.id}>.`
     );
     await interaction.editReply({
         components: [container],
@@ -964,9 +1031,16 @@ async function handleConfirmTicket(interaction: any) {
 
     // Get category for routing and staff roles
     const category = await supabase.getTicketCategory(pending.categoryId);
+    const settings = await supabase.getBotSettings(guild.id).catch(() => null);
 
     // Find or create the parent category
-    let parentId = category?.discord_category_id;
+    let parentId = category?.discord_category_id || settings?.ticket_parent_category_id || null;
+    if (parentId) {
+        const parentChannel = await guild.channels.fetch(parentId).catch(() => null);
+        if (!parentChannel || parentChannel.type !== ChannelType.GuildCategory) {
+            parentId = null;
+        }
+    }
 
     // If no parentId is set, fall back to "Tickets" category
     if (!parentId) {
@@ -982,6 +1056,11 @@ async function handleConfirmTicket(interaction: any) {
         }
         parentId = ticketsCategory!.id;
     }
+
+    const globalAdminRoleIds = adminRoleIds(settings)
+        .filter((roleId) => guild.roles.cache.has(roleId));
+    const globalStaffRoleIds = combinedStaffRoleIds(settings, category)
+        .filter((roleId) => guild.roles.cache.has(roleId) && !globalAdminRoleIds.includes(roleId));
 
     // Create the ticket channel
     const ticketChannel = await guild.channels.create({
@@ -1002,19 +1081,28 @@ async function handleConfirmTicket(interaction: any) {
                     PermissionFlagsBits.AttachFiles,
                 ],
             },
+            ...globalStaffRoleIds.map((roleId) => ({
+                id: roleId,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.AttachFiles,
+                ],
+            })),
+            ...globalAdminRoleIds.map((roleId) => ({
+                id: roleId,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.AttachFiles,
+                    PermissionFlagsBits.ManageMessages,
+                    PermissionFlagsBits.ManageChannels,
+                ],
+            })),
         ],
     });
-
-    // Category was already fetched above for routing
-    if (category?.staff_roles) {
-        for (const roleId of category.staff_roles) {
-            await ticketChannel.permissionOverwrites.create(roleId, {
-                ViewChannel: true,
-                SendMessages: true,
-                ReadMessageHistory: true,
-            }).catch(() => { });
-        }
-    }
 
     // Save ticket to database
     const ticket = await supabase.createTicket({
@@ -1163,6 +1251,23 @@ function createTicketControlPanel(ticket: Ticket, user: any): ContainerBuilder {
 // Ticket Control Handlers
 // ============================================
 
+async function sendTicketArchiveSummary(interaction: any, ticket: Ticket, settings: BotSettings | null) {
+    const archiveChannelId = settings?.ticket_archive_channel_id || settings?.log_channel_id;
+    if (!archiveChannelId) return;
+
+    const archiveChannel = await interaction.guild?.channels.fetch(archiveChannelId).catch(() => null);
+    if (!archiveChannel?.isTextBased?.()) return;
+
+    await archiveChannel.send({
+        content:
+            `**Ticket #${ticket.ticket_number} closed**\n` +
+            `Subject: ${ticket.subject}\n` +
+            `Owner: <@${ticket.discord_id}>\n` +
+            `Closed by: <@${interaction.user.id}>\n` +
+            `Channel: ${interaction.channel?.name || ticket.channel_id || 'unknown'}`,
+    }).catch(() => undefined);
+}
+
 async function handleCloseTicket(interaction: any) {
     const ticketId = interaction.customId.split('_')[2];
     const ticket = await supabase.getTicket(ticketId);
@@ -1175,11 +1280,19 @@ async function handleCloseTicket(interaction: any) {
         return;
     }
 
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    if (!canCloseTicket(interaction, ticket, settings)) {
+        await denyTicketAction(interaction, 'Only the ticket owner or configured staff roles can close this ticket.');
+        return;
+    }
+
     // Update ticket status
     await supabase.updateTicket(ticketId, {
         status: 'closed',
         closed_at: new Date().toISOString(),
     });
+
+    await sendTicketArchiveSummary(interaction, ticket, settings);
 
     // Send closing message
     const container = ComponentsV2.successContainer(
@@ -1213,6 +1326,12 @@ async function handleLockTicket(interaction: any) {
         return;
     }
 
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    if (!memberHasTicketStaffAccess(interaction, settings, ticket.category)) {
+        await denyTicketAction(interaction, 'Only configured staff roles can lock tickets.');
+        return;
+    }
+
     // Lock the channel
     await interaction.channel.permissionOverwrites.edit(ticket.discord_id, {
         SendMessages: false,
@@ -1240,6 +1359,12 @@ async function handleUnlockTicket(interaction: any) {
         return;
     }
 
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    if (!memberHasTicketStaffAccess(interaction, settings, ticket.category)) {
+        await denyTicketAction(interaction, 'Only configured staff roles can unlock tickets.');
+        return;
+    }
+
     // Unlock the channel
     await interaction.channel.permissionOverwrites.edit(ticket.discord_id, {
         SendMessages: true,
@@ -1264,6 +1389,12 @@ async function handleClaimTicket(interaction: any) {
 
     if (!ticket) {
         await interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+        return;
+    }
+
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    if (!memberHasTicketStaffAccess(interaction, settings, ticket.category)) {
+        await denyTicketAction(interaction, 'Only configured staff roles can claim tickets.');
         return;
     }
 

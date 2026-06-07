@@ -92,6 +92,21 @@ export interface UserProfile {
     created_at: string;
 }
 
+export interface BotSettings {
+    guild_id: string;
+    linked_role_id: string | null;
+    log_channel_id: string | null;
+    ai_channel_id: string | null;
+    ticket_panel_channel_id: string | null;
+    ticket_parent_category_id: string | null;
+    ticket_archive_channel_id: string | null;
+    ticket_staff_role_ids: string[];
+    ticket_admin_role_ids: string[];
+    ticket_allow_user_close: boolean;
+    ticket_allow_user_reopen: boolean;
+    updated_at: string;
+}
+
 // ============================================
 // Pterodactyl Types
 // ============================================
