@@ -1,5 +1,9 @@
 import 'dotenv/config';
 
+function victusComUrl(url: string): string {
+    return url.replace(/victuscloud\.xyz/gi, 'victuscloud.com');
+}
+
 // Validate required environment variables
 const requiredEnvVars = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY'];
 for (const envVar of requiredEnvVars) {
@@ -25,14 +29,14 @@ export const config = {
 
     // Pterodactyl (optional - can use Supabase edge functions)
     pterodactyl: {
-        url: process.env.PTERODACTYL_URL || '',
+        url: victusComUrl(process.env.PTERODACTYL_URL || ''),
         apiKey: process.env.PTERODACTYL_API_KEY || '',
         clientApiKey: process.env.PTERODACTYL_CLIENT_API_KEY || '',
     },
 
     // Paymenter (optional - can use Supabase edge functions)
     paymenter: {
-        url: process.env.PAYMENTER_URL || '',
+        url: victusComUrl(process.env.PAYMENTER_URL || ''),
         apiKey: process.env.PAYMENTER_API_KEY || '',
     },
 

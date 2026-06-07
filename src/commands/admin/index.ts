@@ -103,6 +103,40 @@ export const adminCommand: Command = {
         )
         .addSubcommand((sub) =>
             sub
+                .setName('credits')
+                .setDescription('Set, add, or remove a user credit balance in Paymenter')
+                .addStringOption((opt) =>
+                    opt
+                        .setName('target')
+                        .setDescription('Email, linked Discord ID/mention, Supabase user ID, or Paymenter user ID')
+                        .setRequired(true)
+                )
+                .addStringOption((opt) =>
+                    opt
+                        .setName('mode')
+                        .setDescription('How to edit the credit balance')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: 'Set balance', value: 'set' },
+                            { name: 'Add credits', value: 'add' },
+                            { name: 'Remove credits', value: 'remove' }
+                        )
+                )
+                .addNumberOption((opt) =>
+                    opt
+                        .setName('amount')
+                        .setDescription('Credit amount')
+                        .setMinValue(0)
+                        .setRequired(true)
+                )
+                .addStringOption((opt) =>
+                    opt
+                        .setName('currency')
+                        .setDescription('Paymenter credit currency code, default USD')
+                )
+        )
+        .addSubcommand((sub) =>
+            sub
                 .setName('servers')
                 .setDescription('View all servers across the platform')
         )
@@ -136,6 +170,9 @@ export const adminCommand: Command = {
                 case 'unlink':
                     await handleForceUnlink(interaction);
                     break;
+                case 'credits':
+                    await handleCredits(interaction);
+                    break;
                 case 'servers':
                     await handleServers(interaction);
                     break;
@@ -145,8 +182,9 @@ export const adminCommand: Command = {
             }
         } catch (error) {
             logger.error('Admin command error:', error);
+            const message = error instanceof Error ? error.message : 'An error occurred while processing the command.';
             await interaction.editReply({
-                embeds: [errorEmbed('Error', 'An error occurred while processing the command.')],
+                embeds: [errorEmbed('Error', message.slice(0, 3500))],
             });
         }
     },
@@ -337,6 +375,56 @@ async function handleForceUnlink(interaction: any) {
             embeds: [warningEmbed('Not Linked', 'This user does not have a linked account.')],
         });
     }
+}
+
+async function handleCredits(interaction: any) {
+    const target = interaction.options.getString('target', true);
+    const mode = interaction.options.getString('mode', true) as 'set' | 'add' | 'remove';
+    const amount = interaction.options.getNumber('amount', true);
+    const currency = (interaction.options.getString('currency') || 'USD').toUpperCase();
+
+    const resolvedTarget = await supabase.resolveBillingCreditTarget(target);
+    const result = await supabase.adjustPaymenterCredits({
+        email: resolvedTarget.email,
+        user_id: resolvedTarget.user_id,
+        currency,
+        mode,
+        amount,
+    });
+
+    if (!result?.success) {
+        throw new Error(result?.error || 'Paymenter did not confirm the credit update.');
+    }
+
+    const embed = successEmbed(
+        'Credits Updated',
+        [
+            `Target: **${resolvedTarget.label}**`,
+            `Currency: **${result.currency || currency}**`,
+            `Action: **${mode} ${amount}**`,
+            `Before: **${result.before}**`,
+            `After: **${result.after}**`,
+        ].join('\n')
+    );
+
+    await interaction.editReply({ embeds: [embed] });
+
+    await supabase.logAudit(
+        interaction.user.id,
+        interaction.user.tag,
+        'discord_admin_credits_adjusted',
+        'paymenter_user',
+        String(result.user_id || resolvedTarget.user_id || resolvedTarget.email || target),
+        {
+            target,
+            resolved: resolvedTarget,
+            currency: result.currency || currency,
+            mode,
+            amount,
+            before: result.before,
+            after: result.after,
+        }
+    );
 }
 
 async function handleServers(interaction: any) {

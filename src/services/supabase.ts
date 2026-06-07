@@ -71,6 +71,31 @@ function pickCurrency(resource: any): string {
     return 'USD';
 }
 
+async function describeFunctionError(error: unknown): Promise<string> {
+    const message = error instanceof Error ? error.message : String(error);
+    const context = (error as { context?: unknown; response?: unknown } | null)?.context
+        || (error as { response?: unknown } | null)?.response;
+
+    if (context && typeof (context as Response).clone === 'function') {
+        const response = context as Response;
+        const responseText = await response.clone().text().catch(() => '');
+        const parts = [`${message} (status ${response.status})`];
+
+        if (responseText.trim()) {
+            try {
+                parts.push(JSON.stringify(JSON.parse(responseText)));
+            } catch {
+                parts.push(responseText.slice(0, 500));
+            }
+        }
+
+        return parts.join(': ');
+    }
+
+    const status = (context as { status?: unknown } | null)?.status;
+    return status ? `${message} (status ${status})` : message;
+}
+
 class SupabaseService {
     private client: SupabaseClient;
 
@@ -362,6 +387,57 @@ class SupabaseService {
         return profile?.is_admin ?? false;
     }
 
+    async resolveBillingCreditTarget(target: string): Promise<{ email?: string; user_id?: string; label: string }> {
+        const cleaned = target.trim().replace(/^<@!?/, '').replace(/>$/, '');
+
+        if (cleaned.includes('@')) {
+            return { email: cleaned.toLowerCase(), label: cleaned.toLowerCase() };
+        }
+
+        const linked = await this.getLinkedAccount(cleaned).catch(() => null);
+        if (linked) {
+            const profile = await this.getUserProfile(linked.user_id).catch(() => null);
+            if (profile?.email) {
+                return { email: profile.email.toLowerCase(), label: `${profile.email} (Discord ${cleaned})` };
+            }
+        }
+
+        const { data: profile, error } = await this.client
+            .from('profiles')
+            .select('id, email')
+            .eq('id', cleaned)
+            .maybeSingle();
+
+        if (!error && profile?.email) {
+            return { email: String(profile.email).toLowerCase(), label: String(profile.email).toLowerCase() };
+        }
+
+        return { user_id: cleaned, label: `Paymenter user #${cleaned}` };
+    }
+
+    async adjustPaymenterCredits(input: {
+        email?: string;
+        user_id?: string;
+        currency?: string;
+        mode: 'set' | 'add' | 'remove';
+        amount: number;
+    }): Promise<any> {
+        const { data, error } = await this.client.functions.invoke('admin-paymenter', {
+            body: {
+                endpoint: 'credits.adjust',
+                ...input,
+            },
+        });
+
+        if (error) {
+            const message = await describeFunctionError(error);
+            logger.error(`Paymenter credit adjustment failed: ${message}`);
+            throw new Error(message);
+        }
+
+        return data;
+    }
+
     /**
      * Get detailed user activity history (simplified for now)
      */
@@ -395,10 +471,7 @@ class SupabaseService {
         });
 
         if (error) {
-            logger.error(`Pterodactyl API call failed (${endpoint}):`, error);
-            if (error instanceof Error) {
-                logger.error('Error details:', error.message);
-            }
+            logger.error(`Pterodactyl API call failed (${endpoint}): ${await describeFunctionError(error)}`);
             throw error;
         }
         return data;
@@ -600,10 +673,7 @@ class SupabaseService {
         });
 
         if (error) {
-            logger.error(`Paymenter API call failed (${endpoint}):`, error);
-            if (error instanceof Error) {
-                logger.error('Error details:', error.message);
-            }
+            logger.error(`Paymenter API call failed (${endpoint}): ${await describeFunctionError(error)}`);
             throw error;
         }
         return data;
