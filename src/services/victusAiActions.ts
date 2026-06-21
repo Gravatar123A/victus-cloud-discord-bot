@@ -69,17 +69,20 @@ function serverStatus(server: ServerRecord): string {
 }
 
 function hasSensitiveAccountIntent(text: string): boolean {
-    return [
-        /\b(my|linked|victus|account|billing)\b.{0,40}\b(e-?mail|mail address|address|phone|invoice|invoices|coins?|credits?|balance)\b/,
-        /\b(e-?mail|mail address|address|phone|invoice|invoices|coins?|credits?|balance)\b.{0,40}\b(my|linked|victus|account|billing)\b/,
-        /\bwhat('?s| is) my\b.{0,50}\b(e-?mail|address|phone|balance|coins?|credits?)\b/,
-    ].some((pattern) => pattern.test(text));
+    // Any mention of the user's own account/billing data should hit the handler
+    // (which fetches the real values) instead of falling through to a generic
+    // "go to the website" answer.
+    const topic = /\b(e-?mail|mail address|phone|invoice|invoices|bill|billing|payment|payments|owe|transactions?|coins?|credits?|balance|wallet)\b/;
+    if (!topic.test(text)) return false;
+    const personal = /\b(my|mine|i|me|linked|victus|account)\b/.test(text);
+    const verb = /\b(check|show|view|see|get|list|pull up|look ?up|what'?s?|what is|how much|how many|do i|have i|any)\b/.test(text);
+    return personal || verb;
 }
 
 function hasServerListIntent(text: string): boolean {
     if (!/\bservers?\b/.test(text)) return false;
 
-    const asksForServers = /\b(how many|list|show|what|which|status|statuses|have|own|got|attached|connected)\b/.test(text);
+    const asksForServers = /\b(how many|list|show|view|see|what|which|status|statuses|have|own|got|attached|connected|do i)\b/.test(text);
     const belongsToUser =
         /\b(my|mine|i|me)\b/.test(text) ||
         /\b(do i have|i have|i got|have i got|servers? i got|servers? do i have)\b/.test(text);
@@ -88,9 +91,11 @@ function hasServerListIntent(text: string): boolean {
 }
 
 function hasServiceIntent(text: string): boolean {
-    return /\b(my|mine|i|me)\b/.test(text) &&
-        /\b(services?|orders?|subscriptions?|hosting plans?|active hosting)\b/.test(text) &&
-        /\b(list|show|what|which|how many|have|own|got|active)\b/.test(text);
+    const topic = /\b(services?|orders?|subscriptions?|hosting plans?|active hosting|my plan)\b/;
+    if (!topic.test(text)) return false;
+    const personal = /\b(my|mine|i|me)\b/.test(text);
+    const verb = /\b(list|show|view|see|what|which|how many|have|own|got|active|check|get|do i|any)\b/.test(text);
+    return personal || verb;
 }
 
 function parsePowerIntent(text: string): { signal: PowerSignal; serverSearch: string } | null {
@@ -262,17 +267,21 @@ async function handleSensitiveAccountQuestion(text: string, context: ActionConte
         privateLines.push(`Your linked Victus account email is \`${linked.profile?.email || 'not available'}\`.`);
     }
 
-    if (/\b(balance|coins?|credits?)\b/.test(text)) {
+    if (/\b(balance|coins?|credits?|wallet)\b/.test(text)) {
         const balance = await supabase.getCreditBalance(linked.profile);
         privateLines.push(`Your current wallet balance is **${formatCredits(balance.amount, balance.currency)}**.`);
     }
 
-    if (/\b(invoice|invoices)\b/.test(text)) {
+    if (/\b(invoice|invoices|bill|billing|payment|payments|owe|transactions?)\b/.test(text)) {
         privateLines.push(invoiceListSummary(await getUserInvoices(linked.profile)));
     }
 
     if (privateLines.length === 0) {
-        privateLines.push('That is private account info. Ask me in DMs and I can help with linked account details.');
+        // Topic matched (e.g. "billing") but no specific sub-topic — default to
+        // showing invoices + balance rather than deflecting.
+        const balance = await supabase.getCreditBalance(linked.profile);
+        privateLines.push(`Your current wallet balance is **${formatCredits(balance.amount, balance.currency)}**.`);
+        privateLines.push(invoiceListSummary(await getUserInvoices(linked.profile)));
     }
 
     const dmContent = privateLines.join('\n');
