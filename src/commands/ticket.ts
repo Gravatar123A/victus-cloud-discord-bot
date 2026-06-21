@@ -819,13 +819,12 @@ async function handleCategorySelect(interaction: any) {
         customQuestions: category.custom_questions || [],
     });
 
-    // Get user's email from their profile
-    const linked = await getLinkedAccount(interaction.user.id);
-    let email = '';
-    if (linked) {
-        const profile = await supabase.getUserProfile(linked.userId);
-        email = profile?.email || '';
-    }
+    // NOTE: a modal must be shown within Discord's 3s ack window and cannot
+    // follow a defer, so we must NOT do extra DB work here. The previous email
+    // pre-fill (getLinkedAccount + getUserProfile) added two slow calls that
+    // pushed past 3s on a cold API -> "interaction failed". Leave the email
+    // blank; the form collects it.
+    const email = '';
 
     // Open the ticket form modal
     logger.info(`✨ [CategorySelect] Opening modal for ${category.name}`);
