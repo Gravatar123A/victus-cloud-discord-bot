@@ -112,12 +112,16 @@ export const interactionCreateEvent: Event = {
         else if (interaction.isStringSelectMenu()) {
             const customId = interaction.customId;
 
-            // Check if any command has a select menu handler
+            // Try each command's select handler, but only stop once one has
+            // actually acknowledged the interaction. (Several commands define
+            // handleSelectMenu; returning after the first one — even when it
+            // ignored this customId — left ticket selects unanswered ->
+            // "interaction failed".) showModal also sets `replied`.
             for (const [, command] of interaction.client.commands) {
                 if (command.handleSelectMenu) {
                     try {
                         await command.handleSelectMenu(interaction);
-                        return;
+                        if (interaction.replied || interaction.deferred) return;
                     } catch (error) {
                         logger.error(`Error handling select menu ${customId}:`, error);
                     }
@@ -131,12 +135,14 @@ export const interactionCreateEvent: Event = {
         else if (interaction.isModalSubmit()) {
             const customId = interaction.customId;
 
-            // Check if any command has a modal handler
+            // Same fix as select menus: only stop once a handler acknowledges
+            // the modal submit, so the ticket form submit isn't swallowed by
+            // another command's handleModal.
             for (const [, command] of interaction.client.commands) {
                 if (command.handleModal) {
                     try {
                         await command.handleModal(interaction);
-                        return;
+                        if (interaction.replied || interaction.deferred) return;
                     } catch (error) {
                         logger.error(`Error handling modal ${customId}:`, error);
                     }
