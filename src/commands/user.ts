@@ -35,6 +35,7 @@ export const userCommand: Command = {
 
                 let profile = null;
                 let servers: any[] = [];
+                let services: any[] = [];
                 let history: any[] = [];
                 let creditBalance = undefined;
 
@@ -42,8 +43,13 @@ export const userCommand: Command = {
                     // Fetch full profile info
                     profile = await supabase.getUserProfile(linkedAccount.user_id);
                     creditBalance = await supabase.getCreditBalance(profile);
-                    // Fetch only this user's servers
-                    servers = profile?.email ? await supabase.getUserServers(profile.email) : [];
+                    // Fetch this user's game servers (Pterodactyl) and billing services (Paymenter)
+                    if (profile?.email) {
+                        [servers, services] = await Promise.all([
+                            supabase.getUserServers(profile.email),
+                            supabase.getUserServices(profile.email),
+                        ]);
+                    }
                     // Fetch history
                     history = await supabase.getUserHistory(linkedAccount.user_id);
                 }
@@ -55,7 +61,8 @@ export const userCommand: Command = {
                     profile,
                     servers,
                     history,
-                    creditBalance
+                    creditBalance,
+                    services
                 );
 
                 await interaction.editReply({

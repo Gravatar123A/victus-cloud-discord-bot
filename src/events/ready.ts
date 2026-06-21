@@ -7,6 +7,7 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
 import type { Event } from '../types/index.js';
 import { registerApplicationCommands } from '../utils/registerCommands.js';
+import { initTicketBridge } from '../services/ticketBridge.js';
 
 let dmQueueProcessing = false;
 
@@ -88,6 +89,9 @@ export const readyEvent: Event = {
                 );
             }
         });
+
+        // Bridge website tickets <-> Discord ticket channels.
+        initTicketBridge(client);
 
         await processAdminDmQueue(client);
         setInterval(() => {

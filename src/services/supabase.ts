@@ -153,6 +153,85 @@ class SupabaseService {
         return channel;
     }
 
+    /**
+     * Subscribe to ticket + ticket_message inserts to drive the Discord bridge:
+     * new website tickets -> Discord channels, and website messages -> Discord.
+     */
+    subscribeToTicketBridge(
+        onTicketInsert: (ticket: any) => void,
+        onMessageInsert: (message: any) => void,
+    ) {
+        const channel = this.client
+            .channel('ticket-bridge')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tickets' },
+                (payload) => onTicketInsert(payload.new))
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'ticket_messages' },
+                (payload) => onMessageInsert(payload.new));
+
+        channel.subscribe((status, error) => {
+            if (status === 'SUBSCRIBED') {
+                logger.info('✅ Realtime: Ticket bridge subscribed.');
+            } else if (status === 'CHANNEL_ERROR') {
+                logger.error('❌ Realtime ticket bridge error:', error?.message || 'Unknown error');
+            } else if (status === 'TIMED_OUT') {
+                logger.warn('⚠️ Ticket bridge timed out. Ensure "supabase_realtime" includes "tickets" and "ticket_messages".');
+            }
+        });
+
+        return channel;
+    }
+
+    /**
+     * Point a website ticket at its freshly created Discord channel.
+     */
+    async setTicketChannel(ticketId: string, channelId: string): Promise<boolean> {
+        const { error } = await this.client
+            .from('tickets')
+            .update({ channel_id: channelId, updated_at: new Date().toISOString() })
+            .eq('id', ticketId);
+        if (error) {
+            logger.error('Failed to set ticket channel:', error);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Atomically claim a website message for relaying to Discord. Returns true
+     * only for the caller that wins the race (bridged_at was null), so the
+     * realtime relay and the catch-up never double-post.
+     */
+    async claimMessageForBridge(messageId: string): Promise<boolean> {
+        const { data, error } = await this.client
+            .from('ticket_messages')
+            .update({ bridged_at: new Date().toISOString() })
+            .eq('id', messageId)
+            .is('bridged_at', null)
+            .select('id');
+        if (error) {
+            logger.error('Failed to claim message for bridge:', error);
+            return false;
+        }
+        return Array.isArray(data) && data.length > 0;
+    }
+
+    /**
+     * Website messages on a ticket that have not yet been relayed to Discord.
+     */
+    async getUnbridgedMessages(ticketId: string): Promise<any[]> {
+        const { data, error } = await this.client
+            .from('ticket_messages')
+            .select('*')
+            .eq('ticket_id', ticketId)
+            .is('bridged_at', null)
+            .order('created_at', { ascending: true });
+        if (error) {
+            logger.error('Failed to load unbridged messages:', error);
+            return [];
+        }
+        return data || [];
+    }
+
     // ============================================
     // Account Linking
     // ============================================
@@ -696,6 +775,46 @@ class SupabaseService {
     async getInvoices(): Promise<any[]> {
         const result = await this.paymenterApi('invoices');
         return result?.data || [];
+    }
+
+    /**
+     * Get the billing services (Paymenter) belonging to a user, by email.
+     * Returns a normalized shape: { name, status, price, renewsAt }.
+     */
+    async getUserServices(email: string): Promise<any[]> {
+        if (!email) return [];
+        try {
+            const billingUser = await this.getBillingUserByEmail(email);
+            if (!billingUser) return [];
+            const userId = String(getResourceRecord(billingUser).id ?? '');
+            if (!userId) return [];
+
+            const [servicesRes, productsRes] = await Promise.all([
+                this.paymenterApi('services').catch(() => null),
+                this.paymenterApi('products').catch(() => null),
+            ]);
+            const services = servicesRes?.data || [];
+            const products = productsRes?.data || [];
+
+            const productName: Record<string, string> = {};
+            for (const p of products) {
+                const r = getResourceRecord(p);
+                if (r?.id != null) productName[String(r.id)] = r.name || r.title || `Product #${r.id}`;
+            }
+
+            return services
+                .map((s: any) => getResourceRecord(s))
+                .filter((r: any) => String(r?.user_id ?? r?.client_id ?? '') === userId)
+                .map((r: any) => ({
+                    name: r.name || productName[String(r.product_id)] || `Service #${r.id}`,
+                    status: String(r.status ?? 'unknown'),
+                    price: r.price != null ? String(r.price) : '',
+                    renewsAt: r.expires_at || r.due_date || r.renews_at || undefined,
+                }));
+        } catch (error) {
+            logger.error('Failed to get user services:', error);
+            return [];
+        }
     }
 
     /**

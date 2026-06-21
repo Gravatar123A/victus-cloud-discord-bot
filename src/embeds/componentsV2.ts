@@ -352,7 +352,8 @@ export function userInfoContainer(
     profile?: any,
     servers: any[] = [],
     history: any[] = [],
-    creditBalance?: { amount: number; currency: string; found: boolean; source: string }
+    creditBalance?: { amount: number; currency: string; found: boolean; source: string },
+    services: any[] = []
 ): ContainerBuilder {
     const accent = isLinked ? Accents.success : Accents.warning;
     const container = baseContainer(accent).addMediaGalleryComponents(mediaGallery(HERO_IMAGE));
@@ -388,6 +389,18 @@ export function userInfoContainer(
             if (servers.length > 6) content += `-# Showing 6 of ${servers.length}. Use Victus Cloud for the full fleet.\n`;
         } else {
             content += `_No active servers found._\n`;
+        }
+        content += `\n`;
+
+        content += `### Services (${services.length})\n`;
+        if (services.length > 0) {
+            services.slice(0, 6).forEach(s => {
+                const priceText = s.price ? ` — ${s.price}` : '';
+                content += `${statusIcon(s.status)} **${decodeDisplayText(s.name)}** - ${statusLabel(s.status)}${priceText}\n`;
+            });
+            if (services.length > 6) content += `-# Showing 6 of ${services.length}. Use Victus Cloud for all services.\n`;
+        } else {
+            content += `_No active services found._\n`;
         }
         content += `\n`;
 

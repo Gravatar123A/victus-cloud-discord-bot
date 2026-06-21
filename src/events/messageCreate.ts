@@ -7,6 +7,7 @@ import { victusAiActions } from '../services/victusAiActions.js';
 import type { Event } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
+import { handleTicketChannelMessage } from '../services/ticketBridge.js';
 
 const SETTINGS_TTL_MS = 20_000;
 const USER_COOLDOWN_MS = 8_000;
@@ -108,6 +109,11 @@ export const messageCreateEvent: Event = {
     name: 'messageCreate',
     async execute(message: Message) {
         if (message.author.bot) return;
+
+        // Mirror messages in ticket channels to the website ticket (runs even if
+        // the AI is disabled). If handled, don't also treat it as an AI prompt.
+        if (await handleTicketChannelMessage(message)) return;
+
         if (!groqAi.isEnabled()) return;
 
         if (message.channel.type === ChannelType.DM) {
