@@ -10,19 +10,27 @@ import { formatAiMessage } from '../utils/aiMessages.js';
 import { handleTicketChannelMessage } from '../services/ticketBridge.js';
 
 const SETTINGS_TTL_MS = 20_000;
-const USER_COOLDOWN_MS = 8_000;
-const CHANNEL_COOLDOWN_MS = 2_500;
+const MAX_QUEUE_DEPTH = 3;
 
 const aiChannelCache = new Map<string, { channelId: string; expiresAt: number }>();
-const userCooldowns = new Map<string, number>();
-const channelCooldowns = new Map<string, number>();
 
-function isCoolingDown(key: string, store: Map<string, number>, cooldownMs: number): boolean {
-    const now = Date.now();
-    const expiresAt = store.get(key) || 0;
-    if (expiresAt > now) return true;
-    store.set(key, now + cooldownMs);
-    return false;
+// Per-user serial queue: a message that arrives while the previous one is still
+// being answered (slow free AI key) is queued and answered in order, instead of
+// being silently dropped by a cooldown.
+const userChains = new Map<string, Promise<unknown>>();
+const userQueueDepth = new Map<string, number>();
+
+function enqueuePerUser(userId: string, task: () => Promise<void>): boolean {
+    const depth = userQueueDepth.get(userId) || 0;
+    if (depth >= MAX_QUEUE_DEPTH) return false; // too many already pending; drop the overflow
+    userQueueDepth.set(userId, depth + 1);
+    const prev = userChains.get(userId) || Promise.resolve();
+    const next = prev
+        .then(task)
+        .catch(() => { /* errors are handled inside the task */ })
+        .finally(() => userQueueDepth.set(userId, Math.max(0, (userQueueDepth.get(userId) || 1) - 1)));
+    userChains.set(userId, next);
+    return true;
 }
 
 async function getAiChannelId(guildId: string): Promise<string> {
@@ -120,14 +128,12 @@ export const messageCreateEvent: Event = {
             const prompt = buildPromptFromMessage(message);
             if (prompt.length < 3) return;
 
-            if (isCoolingDown(message.author.id, userCooldowns, USER_COOLDOWN_MS)) return;
-
-            await replyWithAi(
+            enqueuePerUser(message.author.id, () => replyWithAi(
                 message,
                 prompt,
                 false,
                 'Victus AI could not answer your DM right now. Please try again in a moment or open a support ticket.'
-            );
+            ));
             return;
         }
 
@@ -139,14 +145,11 @@ export const messageCreateEvent: Event = {
         const prompt = buildPromptFromMessage(message);
         if (prompt.length < 3) return;
 
-        if (isCoolingDown(message.author.id, userCooldowns, USER_COOLDOWN_MS)) return;
-        if (isCoolingDown(message.channelId, channelCooldowns, CHANNEL_COOLDOWN_MS)) return;
-
-        await replyWithAi(
+        enqueuePerUser(message.author.id, () => replyWithAi(
             message,
             prompt,
             true,
             'Victus AI could not answer this message right now. A staff member can still help here.'
-        );
+        ));
     },
 };
