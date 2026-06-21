@@ -1004,7 +1004,7 @@ class SupabaseService {
     async createTicket(ticketData: {
         guild_id: string;
         channel_id: string;
-        user_id: string;
+        user_id: string | null;
         discord_id: string;
         category_id: string;
         subject: string;

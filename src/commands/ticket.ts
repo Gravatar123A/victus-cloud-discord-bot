@@ -395,6 +395,10 @@ export const ticketCommand: Command = {
                 await handleAIHelp(interaction);
                 return;
             }
+            if (customId.startsWith('ticket_addmember_')) {
+                await handleAddMemberButton(interaction);
+                return;
+            }
 
             // Custom Question Add button
             if (customId.startsWith('ticket_question_add_')) {
@@ -453,6 +457,10 @@ export const ticketCommand: Command = {
         try {
             if (customId.startsWith(CUSTOM_IDS.TICKET_FORM)) {
                 await handleTicketFormSubmit(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_addmember_modal_')) {
+                await handleAddMemberModal(interaction);
                 return;
             }
 
@@ -1010,18 +1018,9 @@ async function handleConfirmTicket(interaction: any) {
         return;
     }
 
+    // Allow ticket creation even when the account isn't linked — we remind the
+    // user to /link inside the ticket instead of blocking support entirely.
     const linked = await getLinkedAccount(interaction.user.id);
-    if (!linked) {
-        const container = ComponentsV2.errorContainer(
-            'Account Not Linked',
-            'Your account is no longer linked. Please link again.'
-        );
-        await interaction.editReply({
-            components: [container],
-            flags: ComponentsV2.IS_COMPONENTS_V2,
-        });
-        return;
-    }
 
     // Create ticket channel
     const guild = interaction.guild!;
@@ -1107,7 +1106,7 @@ async function handleConfirmTicket(interaction: any) {
     const ticket = await supabase.createTicket({
         guild_id: guild.id,
         channel_id: ticketChannel.id,
-        user_id: linked.userId,
+        user_id: linked?.userId ?? null,
         discord_id: interaction.user.id,
         category_id: pending.categoryId,
         subject: pending.subject,
@@ -1130,12 +1129,17 @@ async function handleConfirmTicket(interaction: any) {
         return;
     }
 
-    // Send control panel to ticket channel
-    const controlPanel = createTicketControlPanel(ticket, interaction.user);
+    // Ping the staff/admin roles + the owner, then post the control panel that
+    // includes the user's entered details and a /link reminder if needed.
+    const staffPing = [...globalStaffRoleIds, ...globalAdminRoleIds]
+        .map((id: string) => `<@&${id}>`)
+        .join(' ');
+    const controlPanel = createTicketControlPanel(ticket, interaction.user, linked);
     await ticketChannel.send({
-        content: `<@${interaction.user.id}>`,
+        content: `${staffPing} <@${interaction.user.id}>`.trim(),
         components: [controlPanel],
         flags: ComponentsV2.IS_COMPONENTS_V2,
+        allowedMentions: { parse: ['roles', 'users'] },
     });
 
     // Clean up pending data
@@ -1157,10 +1161,60 @@ async function handleConfirmTicket(interaction: any) {
 }
 
 // ============================================
+// Add member to ticket
+// ============================================
+
+async function handleAddMemberButton(interaction: any) {
+    const ticketId = interaction.customId.split('_')[2];
+    const modal = new ModalBuilder()
+        .setCustomId(`ticket_addmember_modal_${ticketId}`)
+        .setTitle('Add a member to this ticket');
+    const input = new TextInputBuilder()
+        .setCustomId('user')
+        .setLabel('User ID or @mention')
+        .setPlaceholder('e.g. 123456789012345678')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+    await interaction.showModal(modal);
+}
+
+async function handleAddMemberModal(interaction: any) {
+    await interaction.deferReply({ flags: 1 << 6 }); // ephemeral
+    const raw = String(interaction.fields.getTextInputValue('user') || '').trim();
+    const userId = (raw.match(/\d{15,20}/) || [])[0];
+    if (!userId) {
+        await interaction.editReply({ content: '❌ Could not read a user ID. Paste their Discord user ID or mention.' });
+        return;
+    }
+    const channel = interaction.channel;
+    const member = await interaction.guild?.members.fetch(userId).catch(() => null);
+    if (!member) {
+        await interaction.editReply({ content: '❌ That user is not in this server.' });
+        return;
+    }
+    try {
+        await channel.permissionOverwrites.edit(userId, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+            AttachFiles: true,
+        });
+        await interaction.editReply({ content: `✅ Added <@${userId}> to this ticket.` });
+        await channel.send({
+            content: `➕ <@${userId}> was added to the ticket by <@${interaction.user.id}>.`,
+            allowedMentions: { users: [userId] },
+        }).catch(() => undefined);
+    } catch {
+        await interaction.editReply({ content: '❌ Failed to add the member (do I have Manage Channels here?).' });
+    }
+}
+
+// ============================================
 // Ticket Control Panel
 // ============================================
 
-function createTicketControlPanel(ticket: Ticket, user: any): ContainerBuilder {
+function createTicketControlPanel(ticket: Ticket, user: any, linked?: any): ContainerBuilder {
     const statusEmoji = ticket.status === 'open' ? '🟢' : ticket.status === 'claimed' ? '🟡' : '🔴';
     const priorityEmoji = {
         low: '🟢',
@@ -1174,6 +1228,13 @@ function createTicketControlPanel(ticket: Ticket, user: any): ContainerBuilder {
 
     const createdAt = new Date(ticket.created_at);
     const createdAgo = getTimeAgo(createdAt);
+
+    const customAnswers = (ticket as any).custom_answers && typeof (ticket as any).custom_answers === 'object'
+        ? Object.entries((ticket as any).custom_answers)
+            .filter(([k, v]) => v && !['source', 'page_url', 'guest_id', 'user_agent', 'name', 'support_group'].includes(k))
+            .map(([k, v]) => `» **${k}:** ${String(v).slice(0, 300)}`)
+            .join('\n')
+        : '';
 
     const container = new ContainerBuilder()
         .setAccentColor(ComponentsV2.Accents.purple)
@@ -1190,6 +1251,12 @@ function createTicketControlPanel(ticket: Ticket, user: any): ContainerBuilder {
                 `» **Priority:** ${priorityEmoji} ${ticket.priority.charAt(0).toUpperCase() + ticket.priority.slice(1)}\n` +
                 `» **Created:** ${createdAgo}\n` +
                 (ticket.claimed_by ? `» **Assigned:** <@${ticket.claimed_by}>\n` : '') +
+                `━━━━━━━━━━━━━━━━━━\n` +
+                `### 📝 Issue Details\n` +
+                `» **Subject:** ${(ticket as any).subject || '—'}\n` +
+                `» **Details:**\n${String((ticket as any).description || '—').slice(0, 1400)}\n` +
+                (customAnswers ? customAnswers + '\n' : '') +
+                (linked ? '' : `\n⚠️ **Not linked yet?** Run \`/link\` to connect your Victus Cloud account so staff can see your services.\n`) +
                 `━━━━━━━━━━━━━━━━━━`
             )
         );
@@ -1233,6 +1300,11 @@ function createTicketControlPanel(ticket: Ticket, user: any): ContainerBuilder {
             .setLabel('Ask AI')
             .setStyle(ButtonStyle.Secondary)
             .setEmoji('🤖'),
+        new ButtonBuilder()
+            .setCustomId(`ticket_addmember_${ticket.id}`)
+            .setLabel('Add Member')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('➕'),
         new ButtonBuilder()
             .setLabel('Victus Cloud')
             .setStyle(ButtonStyle.Link)
