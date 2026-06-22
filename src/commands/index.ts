@@ -19,6 +19,7 @@ import { accountCommand } from './account.js';
 import { linkPanelAliasCommand, linkPanelCommand } from './link-panel.js';
 import { createAccountCommand } from './create-account.js';
 import { askCommand } from './ask.js';
+import { summonCommand } from './summon.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -42,6 +43,7 @@ const allCommands: Command[] = [
     linkPanelAliasCommand,
     createAccountCommand,
     askCommand,
+    summonCommand,
 ];
 
 for (const command of allCommands) {

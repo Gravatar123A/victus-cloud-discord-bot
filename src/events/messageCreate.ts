@@ -8,6 +8,7 @@ import type { Event } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
 import { handleTicketChannelMessage } from '../services/ticketBridge.js';
+import { isChannelSummoned } from '../services/summonedChannels.js';
 
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
@@ -118,9 +119,13 @@ export const messageCreateEvent: Event = {
     async execute(message: Message) {
         if (message.author.bot) return;
 
+        const summoned = message.inGuild() ? isChannelSummoned(message.channelId) : false;
+
         // Mirror messages in ticket channels to the website ticket (runs even if
-        // the AI is disabled). If handled, don't also treat it as an AI prompt.
-        if (await handleTicketChannelMessage(message)) return;
+        // the AI is disabled). Normally that's the end of it — but if staff have
+        // /summon-ed this channel, fall through so the AI also answers.
+        const ticketHandled = await handleTicketChannelMessage(message);
+        if (ticketHandled && !summoned) return;
 
         if (!groqAi.isEnabled()) return;
 
@@ -139,10 +144,22 @@ export const messageCreateEvent: Event = {
 
         if (!message.inGuild()) return;
 
+        // The AI answers in a guild channel when ANY of these is true:
+        //  - the bot is directly @mentioned (works in any channel, configured or not)
+        //  - the channel has been /summon-ed by staff
+        //  - it's the configured AI support channel
+        const botId = message.client.user?.id;
+        const isMentioned = !!botId && message.mentions.users.has(botId);
         const aiChannelId = await getAiChannelId(message.guildId);
-        if (!aiChannelId || message.channelId !== aiChannelId) return;
+        const isAiChannel = !!aiChannelId && message.channelId === aiChannelId;
 
-        const prompt = buildPromptFromMessage(message);
+        if (!isMentioned && !summoned && !isAiChannel) return;
+
+        let prompt = buildPromptFromMessage(message);
+        // Strip the bot mention so the AI doesn't see a raw "<@id>" token.
+        if (isMentioned && botId) {
+            prompt = prompt.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim();
+        }
         if (prompt.length < 3) return;
 
         enqueuePerUser(message.author.id, () => replyWithAi(
