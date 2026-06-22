@@ -59,6 +59,9 @@ export const config = {
         supportGuildId: process.env.DISCORD_SUPPORT_GUILD_ID || '', // Main support server ID
         aiChannelId: process.env.DISCORD_AI_CHANNEL_ID || '', // Optional fallback AI support channel
         autoRegisterCommands: process.env.DISCORD_AUTO_REGISTER_COMMANDS !== 'false',
+        // Uptime Kuma push monitor — the bot pings this on an interval so the
+        // "Discord Bot Heartbeat" monitor stays green. Override via env.
+        uptimePushUrl: process.env.UPTIME_KUMA_PUSH_URL || 'https://status.victuscloud.com/api/push/KPHJ8IOmDd',
     },
 
     // Victus Cloud Branding
