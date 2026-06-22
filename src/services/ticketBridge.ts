@@ -7,6 +7,8 @@ import {
 import { supabase } from './supabase.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { ComponentsV2 } from '../embeds/componentsV2.js';
+import { createTicketControlPanel } from '../commands/ticket.js';
 
 const WEB_GUILD_ID = 'victus-web';
 const DC_PREFIX = 'dc:'; // marks a ticket_message that originated from Discord
@@ -95,16 +97,31 @@ async function handleNewWebTicket(client: Client<true>, ticket: any): Promise<vo
 
     await supabase.setTicketChannel(ticket.id, channel.id);
 
-    const staffPing = staffRoleIds.map((id: string) => `<@&${id}>`).join(' ');
-    const opener = linked?.discord_id ? `<@${linked.discord_id}>` : (ticket.email ?? 'A website user');
-    await channel.send({
-        content:
-            `${staffPing}\n` +
-            `🎫 **Website ticket #${ticket.ticket_number ?? ''}** from ${opener}\n` +
-            `**Subject:** ${truncate(ticket.subject, 200)}\n\n` +
-            `_Reply in this channel to answer — messages sync to the website ticket._`,
-        allowedMentions: { parse: ['roles', 'users'] },
-    }).catch(() => undefined);
+    // First message = the full ticket control panel (entered details, custom
+    // answers, /link reminder, Close / Add Member / etc. buttons) + staff ping —
+    // the same panel the Discord /ticket flow posts.
+    const staffPing = [...adminRoleIds, ...staffRoleIds].map((id: string) => `<@&${id}>`).join(' ');
+    const ownerPing = linked?.discord_id ? `<@${linked.discord_id}>` : '';
+    try {
+        const controlPanel = createTicketControlPanel(ticket, null, linked);
+        await channel.send({
+            content: `${staffPing} ${ownerPing}`.trim() || `🎫 New website ticket #${ticket.ticket_number ?? ''}`,
+            components: [controlPanel],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+            allowedMentions: { parse: ['roles', 'users'] },
+        });
+    } catch (e) {
+        logger.error('ticketBridge: control panel send failed, falling back to text:', e);
+        const opener = linked?.discord_id ? `<@${linked.discord_id}>` : (ticket.email ?? 'A website user');
+        await channel.send({
+            content:
+                `${staffPing}\n` +
+                `🎫 **Website ticket #${ticket.ticket_number ?? ''}** from ${opener}\n` +
+                `**Subject:** ${truncate(ticket.subject, 200)}\n\n` +
+                `_Reply in this channel to answer — messages sync to the website ticket._`,
+            allowedMentions: { parse: ['roles', 'users'] },
+        }).catch(() => undefined);
+    }
 
     // Catch-up: relay any messages that already exist (e.g. the opening message,
     // whose realtime event fired before this channel existed).

@@ -1214,20 +1214,27 @@ async function handleAddMemberModal(interaction: any) {
 // Ticket Control Panel
 // ============================================
 
-function createTicketControlPanel(ticket: Ticket, user: any, linked?: any): ContainerBuilder {
-    const statusEmoji = ticket.status === 'open' ? '🟢' : ticket.status === 'claimed' ? '🟡' : '🔴';
-    const priorityEmoji = {
+export function createTicketControlPanel(ticket: Ticket, user: any, linked?: any): ContainerBuilder {
+    // Robust against website-originated tickets which may not carry every field.
+    const status: string = String((ticket as any).status || 'open');
+    const priority: string = String((ticket as any).priority || 'medium');
+    const statusEmoji = status === 'open' ? '🟢' : status === 'claimed' ? '🟡' : '🔴';
+    const priorityEmoji = ({
         low: '🟢',
         medium: '🟡',
         high: '🟠',
         urgent: '🔴',
-    }[ticket.priority] || '⚪';
+    } as Record<string, string>)[priority] || '⚪';
 
     const categoryEmoji = ticket.category?.emoji || '🎫';
     const categoryName = ticket.category?.name || 'General';
 
-    const createdAt = new Date(ticket.created_at);
+    const createdAt = (ticket as any).created_at ? new Date((ticket as any).created_at) : new Date();
     const createdAgo = getTimeAgo(createdAt);
+
+    const ownerMention = (ticket as any).discord_id
+        ? `<@${(ticket as any).discord_id}>`
+        : (linked?.discord_id ? `<@${linked.discord_id}>` : ((ticket as any).email || 'Website user'));
 
     const customAnswers = (ticket as any).custom_answers && typeof (ticket as any).custom_answers === 'object'
         ? Object.entries((ticket as any).custom_answers)
@@ -1245,10 +1252,10 @@ function createTicketControlPanel(ticket: Ticket, user: any, linked?: any): Cont
                 `Please wait for a staff member to assist you. Use the buttons below to manage your ticket.\n\n` +
                 `━━━━━━━━━━━━━━━━━━\n` +
                 `### 📊 Ticket Info\n` +
-                `» **Owner:** <@${ticket.discord_id}>\n` +
+                `» **Owner:** ${ownerMention}\n` +
                 `» **Category:** ${categoryEmoji} ${categoryName}\n` +
-                `» **Status:** ${statusEmoji} ${ticket.status.charAt(0).toUpperCase() + ticket.status.slice(1)}\n` +
-                `» **Priority:** ${priorityEmoji} ${ticket.priority.charAt(0).toUpperCase() + ticket.priority.slice(1)}\n` +
+                `» **Status:** ${statusEmoji} ${status.charAt(0).toUpperCase() + status.slice(1)}\n` +
+                `» **Priority:** ${priorityEmoji} ${priority.charAt(0).toUpperCase() + priority.slice(1)}\n` +
                 `» **Created:** ${createdAgo}\n` +
                 (ticket.claimed_by ? `» **Assigned:** <@${ticket.claimed_by}>\n` : '') +
                 `━━━━━━━━━━━━━━━━━━\n` +
