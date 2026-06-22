@@ -461,6 +461,63 @@ class SupabaseService {
         return data;
     }
 
+    // ── VCCRS / CP economy ────────────────────────────────────────────────
+
+    /** Top profiles by CP (for the leaderboard). */
+    async getCpLeaderboard(limit = 10, offset = 0): Promise<any[]> {
+        const { data, error } = await this.client
+            .from('profiles')
+            .select('*')
+            .order('total_cp', { ascending: false, nullsFirst: false })
+            .range(offset, offset + limit - 1);
+        if (error) {
+            logger.error('getCpLeaderboard failed:', error);
+            return [];
+        }
+        return data || [];
+    }
+
+    /** The user's 1-based CP rank (how many profiles have more CP, +1). */
+    async getCpRank(userId: string): Promise<number | null> {
+        const profile = await this.getUserProfile(userId);
+        if (!profile) return null;
+        const myCp = Number((profile as any).total_cp ?? 0);
+        const { count, error } = await this.client
+            .from('profiles')
+            .select('id', { count: 'exact', head: true })
+            .gt('total_cp', myCp);
+        if (error) {
+            logger.error('getCpRank failed:', error);
+            return null;
+        }
+        return (count ?? 0) + 1;
+    }
+
+    /** Recent CP ledger entries for a user. */
+    async getCpTransactions(userId: string, limit = 6, offset = 0): Promise<any[]> {
+        const { data, error } = await this.client
+            .from('cp_transactions')
+            .select('action_type, cp_earned, created_at')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+        if (error) {
+            logger.error('getCpTransactions failed:', error);
+            return [];
+        }
+        return data || [];
+    }
+
+    /** Total CP ledger entries for a user (for pagination). */
+    async getCpTransactionCount(userId: string): Promise<number> {
+        const { count, error } = await this.client
+            .from('cp_transactions')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', userId);
+        if (error) return 0;
+        return count ?? 0;
+    }
+
     /**
      * Check if user is admin
      */
