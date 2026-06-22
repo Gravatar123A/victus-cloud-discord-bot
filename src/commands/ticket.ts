@@ -1136,11 +1136,19 @@ async function handleConfirmTicket(interaction: any) {
         .join(' ');
     const controlPanel = createTicketControlPanel(ticket, interaction.user, linked);
     await ticketChannel.send({
-        content: `${staffPing} <@${interaction.user.id}>`.trim(),
         components: [controlPanel],
         flags: ComponentsV2.IS_COMPONENTS_V2,
         allowedMentions: { parse: ['roles', 'users'] },
     });
+    // Components V2 messages can't carry a `content` field, so ping staff + the
+    // owner in a separate plain message.
+    const ticketPing = `${staffPing} <@${interaction.user.id}>`.trim();
+    if (ticketPing) {
+        await ticketChannel.send({
+            content: ticketPing,
+            allowedMentions: { parse: ['roles', 'users'] },
+        }).catch(() => undefined);
+    }
 
     // Clean up pending data
     pendingTickets.delete(interaction.user.id);

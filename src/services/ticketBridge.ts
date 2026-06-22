@@ -105,11 +105,16 @@ async function handleNewWebTicket(client: Client<true>, ticket: any): Promise<vo
     try {
         const controlPanel = createTicketControlPanel(ticket, null, linked);
         await channel.send({
-            content: `${staffPing} ${ownerPing}`.trim() || `🎫 New website ticket #${ticket.ticket_number ?? ''}`,
             components: [controlPanel],
             flags: ComponentsV2.IS_COMPONENTS_V2,
             allowedMentions: { parse: ['roles', 'users'] },
         });
+        // Components V2 messages can't carry a `content` field — ping separately.
+        const webPing = `${staffPing} ${ownerPing}`.trim();
+        await channel.send({
+            content: webPing || `🎫 New website ticket #${ticket.ticket_number ?? ''}`,
+            allowedMentions: { parse: ['roles', 'users'] },
+        }).catch(() => undefined);
     } catch (e) {
         logger.error('ticketBridge: control panel send failed, falling back to text:', e);
         const opener = linked?.discord_id ? `<@${linked.discord_id}>` : (ticket.email ?? 'A website user');
