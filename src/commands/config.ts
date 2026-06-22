@@ -56,6 +56,18 @@ export const configCommand: Command = {
             sub
                 .setName('ai-disable')
                 .setDescription('Disable automatic AI replies to normal messages')
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('transcript-channel')
+                .setDescription('Set the channel where ticket transcripts are posted on close')
+                .addChannelOption((opt) =>
+                    opt
+                        .setName('channel')
+                        .setDescription('Channel for ticket transcripts')
+                        .addChannelTypes(ChannelType.GuildText)
+                        .setRequired(true)
+                )
         ),
 
     async execute(interaction) {
@@ -92,7 +104,7 @@ export const configCommand: Command = {
                     `**AI Support Channel:** ${aiChannelId !== 'Not set' ? `<#${aiChannelId}>` : '`Not set`'}\n` +
                     `**Ticket Panel Channel:** ${ticketPanelChannelId !== 'Not set' ? `<#${ticketPanelChannelId}>` : '`Not set`'}\n` +
                     `**Default Ticket Category:** ${ticketParentCategoryId !== 'Not set' ? `\`${ticketParentCategoryId}\`` : '`Not set`'}\n` +
-                    `**Ticket Archive:** ${archiveChannelId !== 'Not set' ? `<#${archiveChannelId}>` : '`Not set`'}\n` +
+                    `**Ticket Transcripts:** ${archiveChannelId !== 'Not set' ? `<#${archiveChannelId}>` : '`Not set`'}\n` +
                     `**Ticket Staff Roles:** ${staffRoleIds.length ? staffRoleIds.map((roleId) => `<@&${roleId}>`).join(', ') : '`Not set`'}\n\n` +
                     `**Auto Register Commands:** ${config.bot.autoRegisterCommands ? '`Enabled`' : '`Disabled`'}`
                 );
@@ -158,6 +170,26 @@ export const configCommand: Command = {
                             'AI Channel Enabled',
                             `Victus AI will now reply to normal messages in <#${channel.id}>.\n\n` +
                             'Keep this to one focused support channel so it helps users without flooding chat.'
+                        ),
+                    ],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+
+            if (subcommand === 'transcript-channel') {
+                const channel = interaction.options.getChannel('channel', true);
+                const success = await supabase.updateBotSettings(interaction.guildId, {
+                    ticket_archive_channel_id: channel.id,
+                });
+
+                if (!success) throw new Error('Database update failed');
+
+                await interaction.editReply({
+                    components: [
+                        ComponentsV2.successContainer(
+                            'Transcript Channel Set',
+                            `📄 Ticket transcripts will now be posted to <#${channel.id}> whenever a ticket is closed.`
                         ),
                     ],
                     flags: ComponentsV2.IS_COMPONENTS_V2,

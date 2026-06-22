@@ -103,19 +103,19 @@ function createBrandedContainer(accent: number, title: string, description: stri
 }
 
 export function successContainer(title: string, description: string): ContainerBuilder {
-    return createBrandedContainer(Accents.success, `◇ ${title}`, description, 'SUCCESS SIGNAL');
+    return createBrandedContainer(Accents.success, `✅ ${title}`, description, 'SUCCESS SIGNAL');
 }
 
 export function errorContainer(title: string, description: string): ContainerBuilder {
-    return createBrandedContainer(Accents.danger, `△ ${title}`, description, 'ERROR SIGNAL');
+    return createBrandedContainer(Accents.danger, `⛔ ${title}`, description, 'ERROR SIGNAL');
 }
 
 export function warningContainer(title: string, description: string): ContainerBuilder {
-    return createBrandedContainer(Accents.warning, `△ ${title}`, description, 'ATTENTION REQUIRED');
+    return createBrandedContainer(Accents.warning, `⚠️ ${title}`, description, 'ATTENTION REQUIRED');
 }
 
 export function infoContainer(title: string, description: string): ContainerBuilder {
-    return createBrandedContainer(Accents.info, `◆ ${title}`, description, 'INFORMATION NODE');
+    return createBrandedContainer(Accents.info, `💠 ${title}`, description, 'INFORMATION NODE');
 }
 
 export function linkAccountContainer(

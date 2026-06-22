@@ -18,6 +18,7 @@ import {
     PermissionFlagsBits,
     MessageFlags,
     CategoryChannel,
+    AttachmentBuilder,
 } from 'discord.js';
 import type { Command, TicketCategory, Ticket, BotSettings } from '../types/index.js';
 import { supabase } from '../services/supabase.js';
@@ -1234,7 +1235,7 @@ export function createTicketControlPanel(ticket: Ticket, user: any, linked?: any
         urgent: '🔴',
     } as Record<string, string>)[priority] || '⚪';
 
-    const categoryEmoji = ticket.category?.emoji || '🎫';
+    const categoryEmoji = ticket.category?.emoji || '🗂️';
     const categoryName = ticket.category?.name || 'General';
 
     const createdAt = (ticket as any).created_at ? new Date((ticket as any).created_at) : new Date();
@@ -1255,7 +1256,7 @@ export function createTicketControlPanel(ticket: Ticket, user: any, linked?: any
         .setAccentColor(ComponentsV2.Accents.purple)
         .addTextDisplayComponents(
             ComponentsV2.text(
-                `# 🎫 Support Ticket\n\n` +
+                `# 🎟️ Support Ticket\n\n` +
                 `Ticket #${ticket.ticket_number} • ${categoryEmoji} ${categoryName}\n\n` +
                 `Please wait for a staff member to assist you. Use the buttons below to manage your ticket.\n\n` +
                 `━━━━━━━━━━━━━━━━━━\n` +
@@ -1314,7 +1315,7 @@ export function createTicketControlPanel(ticket: Ticket, user: any, linked?: any
             .setCustomId(`ticket_ai_${ticket.id}`)
             .setLabel('Ask AI')
             .setStyle(ButtonStyle.Secondary)
-            .setEmoji('🤖'),
+            .setEmoji('✨'),
         new ButtonBuilder()
             .setCustomId(`ticket_addmember_${ticket.id}`)
             .setLabel('Add Member')
@@ -1341,16 +1342,69 @@ async function sendTicketArchiveSummary(interaction: any, ticket: Ticket, settin
     const archiveChannelId = settings?.ticket_archive_channel_id || settings?.log_channel_id;
     if (!archiveChannelId) return;
 
-    const archiveChannel = await interaction.guild?.channels.fetch(archiveChannelId).catch(() => null);
-    if (!archiveChannel?.isTextBased?.()) return;
+    const transcriptChannel = await interaction.guild?.channels.fetch(archiveChannelId).catch(() => null);
+    if (!transcriptChannel?.isTextBased?.()) return;
 
-    await archiveChannel.send({
+    // Build a full transcript from the live Discord channel history (newest →
+    // oldest, paged), then render it chronologically.
+    const lines: string[] = [];
+    try {
+        const source = interaction.channel;
+        const collected: any[] = [];
+        let beforeId: string | undefined;
+        for (let page = 0; page < 5; page++) { // up to ~500 messages
+            const batch = await source?.messages?.fetch({ limit: 100, before: beforeId }).catch(() => null);
+            if (!batch || batch.size === 0) break;
+            collected.push(...batch.values());
+            beforeId = batch.last()?.id;
+            if (batch.size < 100) break;
+        }
+        collected.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+        for (const m of collected) {
+            const ts = new Date(m.createdTimestamp).toISOString().replace('T', ' ').slice(0, 19);
+            const author = m.author?.bot
+                ? `${m.author.username} [BOT]`
+                : (m.member?.displayName || m.author?.username || 'Unknown');
+            let body = (m.content || '').trim();
+            if (!body && m.components?.length) body = '[panel / buttons]';
+            else if (!body && m.embeds?.length) body = '[embed]';
+            lines.push(`[${ts} UTC] ${author}: ${body}`);
+            for (const att of m.attachments?.values?.() || []) lines.push(`        ↳ ${att.url}`);
+        }
+    } catch {
+        // Fall back to the header only if history can't be read.
+    }
+
+    const ownerLine = ticket.discord_id ? `@${ticket.discord_id}` : ((ticket as any).email || 'Website user');
+    const header = [
+        'Victus Cloud — Ticket Transcript',
+        `Ticket #${ticket.ticket_number}`,
+        `Subject:   ${ticket.subject || '—'}`,
+        `Category:  ${ticket.category?.name || 'General'}`,
+        `Owner:     ${ownerLine}`,
+        `Closed by: ${interaction.user?.tag || interaction.user?.id || 'unknown'}`,
+        `Opened:    ${ticket.created_at || '—'}`,
+        `Closed:    ${new Date().toISOString()}`,
+        `Messages:  ${lines.length}`,
+        '='.repeat(64),
+        '',
+    ].join('\n');
+
+    const file = new AttachmentBuilder(Buffer.from(header + lines.join('\n') + '\n', 'utf8'), {
+        name: `transcript-ticket-${ticket.ticket_number}.txt`,
+    });
+
+    const unix = Math.floor(Date.now() / 1000);
+    await transcriptChannel.send({
         content:
-            `**Ticket #${ticket.ticket_number} closed**\n` +
-            `Subject: ${ticket.subject}\n` +
-            `Owner: <@${ticket.discord_id}>\n` +
-            `Closed by: <@${interaction.user.id}>\n` +
-            `Channel: ${interaction.channel?.name || ticket.channel_id || 'unknown'}`,
+            `## 🧾 Ticket Transcript — #${ticket.ticket_number}\n` +
+            `🎟️ **Category:** ${ticket.category?.emoji || '🗂️'} ${ticket.category?.name || 'General'}\n` +
+            `📝 **Subject:** ${ticket.subject || '—'}\n` +
+            `👤 **Owner:** ${ticket.discord_id ? `<@${ticket.discord_id}>` : ownerLine}\n` +
+            `🛡️ **Closed by:** <@${interaction.user.id}>  •  🕒 <t:${unix}:F>\n` +
+            `💬 **Messages:** ${lines.length}`,
+        files: [file],
+        allowedMentions: { parse: [] },
     }).catch(() => undefined);
 }
 
