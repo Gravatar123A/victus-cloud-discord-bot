@@ -150,6 +150,30 @@ async function relayWebMessageToDiscord(client: Client<true>, message: any): Pro
     await postWebMessage(channel as any, message).catch(() => undefined);
 }
 
+/**
+ * Mirror a Victus AI reply posted in a Discord ticket channel back into the
+ * website ticket thread, so the web user sees the answer (e.g. after staff
+ * /summon the AI into the ticket). Logged as a Discord-origin staff message so
+ * it appears on the website but is never relayed back to Discord (no loop).
+ * No-op if the channel isn't a ticket channel.
+ */
+export async function mirrorAiReplyToTicket(channelId: string, botId: string, content: string): Promise<void> {
+    const text = (content || '').trim();
+    if (!text) return;
+
+    const ticket = await supabase.getTicketByChannel(channelId).catch(() => null);
+    if (!ticket) return;
+
+    await supabase.logTicketMessage({
+        ticket_id: ticket.id,
+        author_discord_id: DC_PREFIX + botId, // Discord-origin → not relayed back
+        author_username: 'Victus AI',
+        author_is_staff: true,
+        content: truncate(text, 1800),
+        attachments: [],
+    }).catch(() => undefined);
+}
+
 async function postWebMessage(channel: any, msg: any): Promise<void> {
     const tag = msg.author_is_staff ? '🛡️ ' : '';
     const who = msg.author_username || (msg.author_is_staff ? 'Staff' : 'User');

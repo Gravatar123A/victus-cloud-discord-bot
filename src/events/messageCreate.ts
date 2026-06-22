@@ -7,7 +7,7 @@ import { victusAiActions } from '../services/victusAiActions.js';
 import type { Event } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
-import { handleTicketChannelMessage } from '../services/ticketBridge.js';
+import { handleTicketChannelMessage, mirrorAiReplyToTicket } from '../services/ticketBridge.js';
 import { isChannelSummoned } from '../services/summonedChannels.js';
 
 const SETTINGS_TTL_MS = 20_000;
@@ -61,6 +61,15 @@ function buildPromptFromMessage(message: Message): string {
     return '';
 }
 
+// When the AI answers publicly inside a ticket channel (e.g. staff /summon-ed
+// it), mirror the answer into the website ticket thread so the web user sees it.
+async function mirrorPublicReply(message: Message, publicReply: boolean, text: string): Promise<void> {
+    if (!publicReply || !message.inGuild() || !text) return;
+    const botId = message.client.user?.id;
+    if (!botId) return;
+    await mirrorAiReplyToTicket(message.channelId, botId, text).catch(() => undefined);
+}
+
 async function replyWithAi(message: Message, prompt: string, publicReply: boolean, fallbackMessage: string): Promise<void> {
     try {
         if ('sendTyping' in message.channel) {
@@ -88,6 +97,7 @@ async function replyWithAi(message: Message, prompt: string, publicReply: boolea
                 content: formatAiMessage(content),
                 allowedMentions: { repliedUser: false },
             });
+            await mirrorPublicReply(message, publicReply, content);
             return;
         }
 
@@ -105,6 +115,7 @@ async function replyWithAi(message: Message, prompt: string, publicReply: boolea
             content: formatAiMessage(answer),
             allowedMentions: { repliedUser: false },
         });
+        await mirrorPublicReply(message, publicReply, answer);
     } catch (error) {
         logger.error(publicReply ? 'AI channel response failed:' : 'AI DM response failed:', error);
         await message.reply({
