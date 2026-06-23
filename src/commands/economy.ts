@@ -62,6 +62,13 @@ async function loadCtx(discordId: string): Promise<Ctx | null> {
     return { discordId, userId: linked.user_id, profile, isAdmin: Boolean((profile as any).is_admin) };
 }
 
+// Mirror a user's economy coins balance (Supabase profiles.total_cp) back to
+// their Paymenter coins, so Paymenter stays the synced source of truth.
+async function pushCoins(userId: string): Promise<void> {
+    const p = await supabase.getUserProfile(userId).catch(() => null);
+    if ((p as any)?.email) await supabase.setPaymenterCoins({ email: (p as any).email }, Number((p as any).total_cp ?? 0));
+}
+
 function notLinked(): ContainerBuilder {
     return ComponentsV2.warningContainer(
         'Link your Victus Cloud account',
@@ -88,8 +95,16 @@ async function buildView(view: string, discordId: string, page = 0): Promise<Con
     if (!ctx) return notLinked();
     const { userId, profile, isAdmin } = ctx;
 
-    const coins = (profile as any).coins ?? (profile as any).free_credits ?? null;
-    const credits = (profile as any).credits ?? null;
+    // Coins are the unified currency, sourced from Paymenter. Pull the live
+    // balances and reconcile the Supabase mirror (profiles.total_cp) so the
+    // economy, leaderboard and levels stay in sync with Paymenter.
+    const bal = await supabase.getPaymenterBalances(profile.email).catch(() => ({ coins: 0, credits: 0, found: false }));
+    if (bal.found) {
+        await supabase.setProfileCoins(userId, bal.coins).catch(() => undefined);
+        (profile as any).total_cp = bal.coins;
+    }
+    const coins = bal.found ? bal.coins : Number((profile as any).total_cp ?? 0);
+    const credits = bal.found ? bal.credits : null;
 
     switch (view) {
         case 'bank':
@@ -146,7 +161,7 @@ function amountModal(customId: string, title: string, label: string, placeholder
 export const economyCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('economy')
-        .setDescription('Manage your Victus economy — CP, bank, transfers, conversions, leaderboard & more')
+        .setDescription('Manage your Victus economy — Coins, bank, transfers, conversions, leaderboard & more')
         .setDMPermission(false),
 
     async execute(interaction: ChatInputCommandInteraction) {
@@ -185,15 +200,15 @@ export const economyCommand: Command = {
         if (action === 'hist') return void (await interaction.update({ components: [await buildView('history', discordId, Math.max(0, parseInt(parts[3] || '0', 10) || 0))], flags: V2 }));
 
         // Bank
-        if (action === 'bankdep') return interaction.showModal(amountModal(`econ:m:bankdep:${discordId}`, 'Deposit CP', 'Amount of CP to deposit'));
-        if (action === 'bankwd') return interaction.showModal(amountModal(`econ:m:bankwd:${discordId}`, 'Withdraw CP', 'Amount of CP to withdraw'));
+        if (action === 'bankdep') return interaction.showModal(amountModal(`econ:m:bankdep:${discordId}`, 'Deposit Coins', 'Amount of Coins to deposit'));
+        if (action === 'bankwd') return interaction.showModal(amountModal(`econ:m:bankwd:${discordId}`, 'Withdraw Coins', 'Amount of Coins to withdraw'));
 
         // Transfer → modal (recipient + amount + reason)
         if (action === 'xfer') {
             const cur = parts[3];
             const modal = new ModalBuilder()
                 .setCustomId(`econ:m:xfer:${discordId}:${cur}`)
-                .setTitle(cur === 'cp' ? 'Send CP' : 'Send Credits')
+                .setTitle(cur === 'cp' ? 'Send Coins' : 'Send Credits')
                 .addComponents(
                     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('to').setLabel('Recipient (@mention or user ID)').setStyle(TextInputStyle.Short).setRequired(true)),
                     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('amount').setLabel('Amount').setPlaceholder('e.g. 250').setStyle(TextInputStyle.Short).setRequired(true)),
@@ -209,10 +224,10 @@ export const economyCommand: Command = {
         if (action === 'adjadj') {
             const modal = new ModalBuilder()
                 .setCustomId(`econ:m:adjadj:${discordId}`)
-                .setTitle('Adjust CP (admin)')
+                .setTitle('Adjust Coins (admin)')
                 .addComponents(
                     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('to').setLabel('Member (@mention or user ID)').setStyle(TextInputStyle.Short).setRequired(true)),
-                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('delta').setLabel('CP change (e.g. 500 or -200)').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('delta').setLabel('Coins change (e.g. 500 or -200)').setStyle(TextInputStyle.Short).setRequired(true)),
                     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Reason').setStyle(TextInputStyle.Short).setRequired(false)),
                 );
             return interaction.showModal(modal);
@@ -264,11 +279,12 @@ export const economyCommand: Command = {
         // ── Bank deposit / withdraw (direct, low-risk) ──
         if (op === 'bankdep' || op === 'bankwd') {
             const amount = parseAmount(val('amount'));
-            if (!amount) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Invalid amount', 'Enter a positive whole number of CP.', ctx.isAdmin)], flags: V2 }));
+            if (!amount) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Invalid amount', 'Enter a positive whole number of Coins.', ctx.isAdmin)], flags: V2 }));
             const r = await supabase.econBank(ctx.userId, op === 'bankdep' ? 'deposit' : 'withdraw', amount);
             const ok = !!r?.ok;
+            if (ok) await pushCoins(ctx.userId);
             const body = ok
-                ? `${op === 'bankdep' ? '📥 Deposited' : '📤 Withdrew'} **${fmt(amount)} CP**.\n💼 Wallet: **${fmt(r.wallet)} CP** · 🏦 Bank: **${fmt(r.bank)} CP**`
+                ? `${op === 'bankdep' ? '📥 Deposited' : '📤 Withdrew'} **${fmt(amount)} Coins**.\n💼 Wallet: **${fmt(r.wallet)} Coins** · 🏦 Bank: **${fmt(r.bank)} Coins**`
                 : (r?.error || 'Something went wrong.');
             return void (await interaction.update({ components: [resultContainer(discordId, ok, ok ? 'Bank updated' : 'Bank action failed', body, ctx.isAdmin)], flags: V2 }));
         }
@@ -289,9 +305,10 @@ export const economyCommand: Command = {
             const token = stashOp(async () => {
                 if (cur === 'cp') {
                     const r = await supabase.econTransferCp(ctx.userId, toUserId, amount, reason);
-                    return r?.ok
-                        ? { ok: true, title: 'Transfer complete', body: `⭐ Sent **${fmt(amount)} CP** to <@${toDiscordId}>.\nNew balance: **${fmt(r.from_balance)} CP**.` }
-                        : { ok: false, title: 'Transfer failed', body: r?.error || 'Something went wrong.' };
+                    if (!r?.ok) return { ok: false, title: 'Transfer failed', body: r?.error || 'Something went wrong.' };
+                    await pushCoins(ctx.userId);
+                    await pushCoins(toUserId);
+                    return { ok: true, title: 'Transfer complete', body: `⭐ Sent **${fmt(amount)} Coins** to <@${toDiscordId}>.\nNew balance: **${fmt(r.from_balance)} Coins**.` };
                 }
                 // Credits via Paymenter — debit sender, credit receiver, refund on failure.
                 try {
@@ -323,21 +340,22 @@ export const economyCommand: Command = {
             const rates = await supabase.getEconomyRates().catch(() => []);
             const rate = rates.find((r: any) => r.from_currency === from && r.to_currency === to);
             if (!rate) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Unavailable', 'That conversion is not available right now.', ctx.isAdmin)], flags: V2 }));
-            if (amount < Number(rate.min_amount)) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Below minimum', `Minimum to convert is **${fmt(rate.min_amount)} ${from.toUpperCase()}**.`, ctx.isAdmin)], flags: V2 }));
+            if (amount < Number(rate.min_amount)) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Below minimum', `Minimum to convert is **${fmt(rate.min_amount)} ${from === 'cp' ? 'Coins' : 'Credits'}**.`, ctx.isAdmin)], flags: V2 }));
             const out = Math.floor(amount * Number(rate.rate));
             if (out <= 0) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Too small', 'That amount converts to 0 — try a larger amount.', ctx.isAdmin)], flags: V2 }));
 
             const token = stashOp(async () => {
                 if (from === 'cp' && to === 'credits') {
-                    const spent = await supabase.econSpendCp(ctx.userId, amount, `Convert ${amount} CP → ${out} credits`, { to: 'credits', out });
-                    if (!spent?.ok) return { ok: false, title: 'Conversion failed', body: spent?.error || 'Could not deduct CP.' };
+                    const spent = await supabase.econSpendCp(ctx.userId, amount, `Convert ${amount} Coins → ${out} credits`, { to: 'credits', out });
+                    if (!spent?.ok) return { ok: false, title: 'Conversion failed', body: spent?.error || 'Could not deduct Coins.' };
                     try {
                         await supabase.adjustPaymenterCredits({ user_id: ctx.userId, mode: 'add', amount: out });
                     } catch (e) {
                         await supabase.econGrantCp(ctx.userId, amount, 'convert_in', 'Refund failed credit conversion').catch(() => undefined);
-                        return { ok: false, title: 'Conversion failed', body: `Could not add credits — your CP was refunded. (${(e as Error).message})` };
+                        return { ok: false, title: 'Conversion failed', body: `Could not add credits — your Coins was refunded. (${(e as Error).message})` };
                     }
-                    return { ok: true, title: 'Converted', body: `🔁 **${fmt(amount)} CP → ${fmt(out)} Credits**.\nNew CP balance: **${fmt(spent.balance)} CP**.` };
+                    await pushCoins(ctx.userId);
+                    return { ok: true, title: 'Converted', body: `🔁 **${fmt(amount)} Coins → ${fmt(out)} Credits**.\nNew Coins balance: **${fmt(spent.balance)} Coins**.` };
                 }
                 // credits → cp
                 try {
@@ -345,40 +363,41 @@ export const economyCommand: Command = {
                 } catch (e) {
                     return { ok: false, title: 'Conversion failed', body: (e as Error).message || 'Could not deduct credits.' };
                 }
-                const granted = await supabase.econGrantCp(ctx.userId, out, 'convert_in', `Convert ${amount} credits → ${out} CP`, { from: 'credits' });
+                const granted = await supabase.econGrantCp(ctx.userId, out, 'convert_in', `Convert ${amount} credits → ${out} Coins`, { from: 'credits' });
                 if (!granted?.ok) {
                     await supabase.adjustPaymenterCredits({ user_id: ctx.userId, mode: 'add', amount }).catch(() => undefined);
-                    return { ok: false, title: 'Conversion failed', body: 'Could not grant CP — your credits were refunded.' };
+                    return { ok: false, title: 'Conversion failed', body: 'Could not grant Coins — your credits were refunded.' };
                 }
-                return { ok: true, title: 'Converted', body: `🔁 **${fmt(amount)} Credits → ${fmt(out)} CP**.\nNew CP balance: **${fmt(granted.balance)} CP**.` };
+                await pushCoins(ctx.userId);
+                return { ok: true, title: 'Converted', body: `🔁 **${fmt(amount)} Credits → ${fmt(out)} Coins**.\nNew Coins balance: **${fmt(granted.balance)} Coins**.` };
             });
 
             return void (await interaction.update({
-                components: [confirmContainer(discordId, token, 'Confirm conversion?', `**${fmt(amount)} ${from.toUpperCase()}** → **${fmt(out)} ${to.toUpperCase()}**\n-# Rate: 1 ${from.toUpperCase()} = ${rate.rate} ${to.toUpperCase()}`)],
+                components: [confirmContainer(discordId, token, 'Confirm conversion?', `**${fmt(amount)} ${from === 'cp' ? 'Coins' : 'Credits'}** → **${fmt(out)} ${to === 'cp' ? 'Coins' : 'Credits'}**\n-# Rate: 1 ${from === 'cp' ? 'Coins' : 'Credits'} = ${rate.rate} ${to === 'cp' ? 'Coins' : 'Credits'}`)],
                 flags: V2,
             }));
         }
 
-        // ── Admin: adjust CP (confirm) ──
+        // ── Admin: adjust Coins (confirm) ──
         if (op === 'adjadj') {
             if (!ctx.isAdmin) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Staff only', 'You are not an admin.', false)], flags: V2 }));
             const targetDiscordId = parseDiscordId(val('to'));
             const delta = Math.floor(Number(String(val('delta')).replace(/[, ]/g, '')));
             const reason = val('reason')?.slice(0, 140) || undefined;
             if (!targetDiscordId || !Number.isFinite(delta) || delta === 0) {
-                return void (await interaction.update({ components: [resultContainer(discordId, false, 'Invalid input', 'Enter a member and a non-zero CP change (e.g. 500 or -200).', true)], flags: V2 }));
+                return void (await interaction.update({ components: [resultContainer(discordId, false, 'Invalid input', 'Enter a member and a non-zero Coins change (e.g. 500 or -200).', true)], flags: V2 }));
             }
             const targetLinked = await supabase.getLinkedAccount(targetDiscordId).catch(() => null);
             if (!targetLinked?.user_id) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Member not linked', `<@${targetDiscordId}> has not linked their account.`, true)], flags: V2 }));
             const targetUserId = targetLinked.user_id;
             const token = stashOp(async () => {
                 const r = await supabase.econAdminAdjustCp(ctx.userId, targetUserId, delta, reason);
-                return r?.ok
-                    ? { ok: true, title: 'Adjustment applied', body: `⚖️ ${delta >= 0 ? 'Added' : 'Removed'} **${fmt(Math.abs(delta))} CP** ${delta >= 0 ? 'to' : 'from'} <@${targetDiscordId}>.\nTheir new balance: **${fmt(r.balance)} CP**.` }
-                    : { ok: false, title: 'Adjustment failed', body: r?.error || 'Something went wrong.' };
+                if (!r?.ok) return { ok: false, title: 'Adjustment failed', body: r?.error || 'Something went wrong.' };
+                await pushCoins(targetUserId);
+                return { ok: true, title: 'Adjustment applied', body: `⚖️ ${delta >= 0 ? 'Added' : 'Removed'} **${fmt(Math.abs(delta))} Coins** ${delta >= 0 ? 'to' : 'from'} <@${targetDiscordId}>.\nTheir new balance: **${fmt(r.balance)} Coins**.` };
             });
             return void (await interaction.update({
-                components: [confirmContainer(discordId, token, 'Confirm CP adjustment?', `${delta >= 0 ? '➕' : '➖'} **${fmt(Math.abs(delta))} CP** ${delta >= 0 ? 'to' : 'from'} <@${targetDiscordId}>${reason ? `\nReason: ${reason}` : ''}`)],
+                components: [confirmContainer(discordId, token, 'Confirm Coins adjustment?', `${delta >= 0 ? '➕' : '➖'} **${fmt(Math.abs(delta))} Coins** ${delta >= 0 ? 'to' : 'from'} <@${targetDiscordId}>${reason ? `\nReason: ${reason}` : ''}`)],
                 flags: V2,
             }));
         }

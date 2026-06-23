@@ -612,6 +612,72 @@ class SupabaseService {
         return { user_id: cleaned, label: `Paymenter user #${cleaned}` };
     }
 
+    private sumCreditRows(rows: any[]): Record<string, number> {
+        return rows.reduce((acc: Record<string, number>, c: any) => {
+            const a = pickAmount(c);
+            const cur = String(pickCurrency(c) || 'USD').toUpperCase();
+            if (a !== null) acc[cur] = (acc[cur] || 0) + a;
+            return acc;
+        }, {});
+    }
+
+    /**
+     * Live Paymenter balances split by currency: coins (VICTUS_COINS_CURRENCY)
+     * and credits (VICTUS_COINS_PAYMENT_CURRENCY). This is the source of truth
+     * for a user's Coins balance.
+     */
+    async getPaymenterBalances(email: string): Promise<{ coins: number; credits: number; found: boolean }> {
+        const coinsCur = (process.env.VICTUS_COINS_CURRENCY || 'COINS').toUpperCase();
+        const creditCur = (process.env.VICTUS_COINS_PAYMENT_CURRENCY || 'USD').toUpperCase();
+        const out = (totals: Record<string, number>, found: boolean) => ({ coins: totals[coinsCur] || 0, credits: totals[creditCur] || 0, found });
+        if (!email) return out({}, false);
+
+        const enc = encodeURIComponent(email);
+        let userId: string | number | null = null;
+        for (const path of [
+            `/api/v1/admin/users?filter[email]=${enc}&include=credits&per_page=5`,
+            `/api/admin/users?filter[email]=${enc}&include=credits&per_page=5`,
+        ]) {
+            const payload = await this.paymenterDirect(path);
+            const user = asArray(payload?.data ?? payload).find(
+                (u) => String(getResourceRecord(u).email || '').toLowerCase() === email.toLowerCase(),
+            );
+            if (!user) continue;
+            userId = getResourceRecord(user).id ?? user.id;
+            const inc = asArray(payload?.included).filter((it) => ['credit', 'credits'].includes(String(it.type || '').toLowerCase()));
+            const totals = this.sumCreditRows(inc);
+            if (Object.keys(totals).length) return out(totals, true);
+            break;
+        }
+        if (!userId) return out({}, false);
+
+        for (const path of [
+            `/api/v1/admin/credits?filter[user_id]=${encodeURIComponent(String(userId))}&per_page=100`,
+            `/api/admin/credits?filter[user_id]=${encodeURIComponent(String(userId))}&per_page=100`,
+        ]) {
+            const payload = await this.paymenterDirect(path);
+            const totals = this.sumCreditRows(asArray(payload?.data ?? payload));
+            if (Object.keys(totals).length) return out(totals, true);
+        }
+        return out({}, true);
+    }
+
+    /** Set a user's Paymenter coins balance (mirror of the economy wallet). */
+    async setPaymenterCoins(target: { email?: string; user_id?: string }, amount: number): Promise<void> {
+        await this.adjustPaymenterCredits({
+            ...target,
+            currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
+            mode: 'set',
+            amount: Math.max(0, Math.round(amount)),
+        }).catch((e) => logger.warn(`setPaymenterCoins failed: ${(e as Error).message}`));
+    }
+
+    /** Directly set the Supabase coins mirror (profiles.total_cp). */
+    async setProfileCoins(userId: string, amount: number): Promise<void> {
+        const { error } = await this.client.from('profiles').update({ total_cp: Math.max(0, Math.round(amount)) }).eq('id', userId);
+        if (error) logger.warn(`setProfileCoins failed: ${error.message}`);
+    }
+
     async adjustPaymenterCredits(input: {
         email?: string;
         user_id?: string;

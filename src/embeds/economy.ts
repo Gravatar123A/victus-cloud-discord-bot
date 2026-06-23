@@ -32,9 +32,9 @@ function profileName(p: any): string {
 // driven from one message.
 function navRow(ownerId: string, current: string, isAdmin = false): ActionRowBuilder<StringSelectMenuBuilder> {
     const opts = [
-        { label: 'Wallet', value: 'wallet', emoji: '💼', description: 'CP, level & balances' },
-        { label: 'Bank', value: 'bank', emoji: '🏦', description: 'Deposit / withdraw CP' },
-        { label: 'Transfer', value: 'transfer', emoji: '💸', description: 'Send CP or credits' },
+        { label: 'Wallet', value: 'wallet', emoji: '💼', description: 'Coins, level & balances' },
+        { label: 'Bank', value: 'bank', emoji: '🏦', description: 'Deposit / withdraw Coins' },
+        { label: 'Transfer', value: 'transfer', emoji: '💸', description: 'Send Coins or credits' },
         { label: 'Convert', value: 'convert', emoji: '🔁', description: 'Swap between currencies' },
         { label: 'Leaderboard', value: 'leaderboard', emoji: '🏆', description: 'Top contributors' },
         { label: 'History', value: 'history', emoji: '🧾', description: 'Your transactions' },
@@ -84,10 +84,10 @@ export function cpDashboardContainer(o: DashboardOpts): ContainerBuilder {
                 `<@${o.discordId}> · **${tier.name}** · Level **${lp.level}**${o.rank ? ` · Rank **#${o.rank}**` : ''}` +
                 (frozen ? '  ·  🧊 **FROZEN**' : '') +
                 `\n${HR}\n` +
-                `### ⭐ Contribution Points\n` +
-                `**${fmt(cp)} CP**  ·  🏦 Bank **${fmt(bank)} CP**\n` +
+                `### ⭐ Coins\n` +
+                `**${fmt(cp)} Coins**  ·  🏦 Bank **${fmt(bank)} Coins**\n` +
                 `${progressBar(lp.progress)}  \`${lp.progress.toFixed(0)}%\`\n` +
-                `-# ${fmt(lp.cpToNext)} CP to reach Level ${lp.level + 1}\n` +
+                `-# ${fmt(lp.cpToNext)} Coins to reach Level ${lp.level + 1}\n` +
                 `${HR}\n` +
                 `### 💼 Wallet\n` +
                 `🟡 **Coins** — ${o.coins == null ? '`—`' : `**${fmt(o.coins)}**`}\n` +
@@ -98,7 +98,7 @@ export function cpDashboardContainer(o: DashboardOpts): ContainerBuilder {
     if (o.recent?.length) {
         const lines = o.recent.slice(0, 5).map((t) => {
             const amt = Number(t.cp_earned);
-            return `\`${amt >= 0 ? '+' : ''}${fmt(amt)} CP\` · ${actionLabel(t.action_type)} · ${rel(t.created_at)}`;
+            return `\`${amt >= 0 ? '+' : ''}${fmt(amt)} Coins\` · ${actionLabel(t.action_type)} · ${rel(t.created_at)}`;
         }).join('\n');
         c.addTextDisplayComponents(ComponentsV2.text(`### 🧾 Recent Activity\n${lines}`));
     }
@@ -122,11 +122,11 @@ export function bankContainer(discordId: string, profile: any, isAdmin = false):
         .setAccentColor(ComponentsV2.Accents.primary)
         .addTextDisplayComponents(
             ComponentsV2.text(
-                `# 🏦 CP Bank\n` +
-                `Keep your CP safe in the bank — banked CP is held separately from your spendable wallet.\n${HR}\n` +
-                `💼 **Wallet:** ${fmt(cp)} CP\n` +
-                `🏦 **Bank:** ${fmt(bank)} CP\n` +
-                `🧮 **Total:** ${fmt(cp + bank)} CP`,
+                `# 🏦 Coins Bank\n` +
+                `Keep your Coins safe in the bank — banked Coins are held separately from your spendable wallet.\n${HR}\n` +
+                `💼 **Wallet:** ${fmt(cp)} Coins\n` +
+                `🏦 **Bank:** ${fmt(bank)} Coins\n` +
+                `🧮 **Total:** ${fmt(cp + bank)} Coins`,
             ),
         );
     c.addActionRowComponents(navRow(discordId, 'bank', isAdmin));
@@ -146,14 +146,14 @@ export function transferContainer(discordId: string, profile: any, isAdmin = fal
             ComponentsV2.text(
                 `# 💸 Transfer\n` +
                 `Send currency to another **linked** member. Pick what to send:\n${HR}\n` +
-                `⭐ **CP** — ${fmt(profile?.total_cp)} available · instant, on-platform\n` +
+                `⭐ **Coins** — ${fmt(profile?.total_cp)} available · instant, on-platform\n` +
                 `💳 **Credits** — billing credits, sent via Paymenter\n` +
                 `-# Recipients must have linked their Victus Cloud account with /link.`,
             ),
         );
     c.addActionRowComponents(navRow(discordId, 'transfer', isAdmin));
     c.addActionRowComponents(btnRow(
-        new ButtonBuilder().setCustomId(`econ:xfer:${discordId}:cp`).setLabel('Send CP').setStyle(ButtonStyle.Primary).setEmoji('⭐'),
+        new ButtonBuilder().setCustomId(`econ:xfer:${discordId}:cp`).setLabel('Send Coins').setStyle(ButtonStyle.Primary).setEmoji('⭐'),
         new ButtonBuilder().setCustomId(`econ:xfer:${discordId}:credits`).setLabel('Send Credits').setStyle(ButtonStyle.Secondary).setEmoji('💳'),
         new ButtonBuilder().setCustomId(`econ:dash:${discordId}`).setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('🏠'),
     ));
@@ -174,18 +174,18 @@ export function convertContainer(discordId: string, rates: any[], profile: any, 
         .addTextDisplayComponents(
             ComponentsV2.text(
                 `# 🔁 Convert Currency\n` +
-                `Swap between CP and billing Credits at the live rate.\n${HR}\n` +
-                `⭐ **You have:** ${fmt(profile?.total_cp)} CP · 💳 ${credits == null ? '—' : fmt(credits)} Credits\n${HR}\n` +
+                `Swap between Coins and billing Credits at the live rate.\n${HR}\n` +
+                `⭐ **You have:** ${fmt(profile?.total_cp)} Coins · 💳 ${credits == null ? '—' : fmt(credits)} Credits\n${HR}\n` +
                 `### 📈 Live Rates\n` +
-                `${rateLine(cpToCredits, 'CP', 'Credit')}\n` +
-                `${rateLine(creditsToCp, 'Credit', 'CP')}\n` +
+                `${rateLine(cpToCredits, 'Coins', 'Credit')}\n` +
+                `${rateLine(creditsToCp, 'Credit', 'Coins')}\n` +
                 `-# 🟡 Coins conversions are coming soon.`,
             ),
         );
     c.addActionRowComponents(navRow(discordId, 'convert', isAdmin));
     c.addActionRowComponents(btnRow(
-        new ButtonBuilder().setCustomId(`econ:conv:${discordId}:cp_credits`).setLabel('CP → Credits').setStyle(ButtonStyle.Primary).setEmoji('💳').setDisabled(!cpToCredits),
-        new ButtonBuilder().setCustomId(`econ:conv:${discordId}:credits_cp`).setLabel('Credits → CP').setStyle(ButtonStyle.Secondary).setEmoji('⭐').setDisabled(!creditsToCp),
+        new ButtonBuilder().setCustomId(`econ:conv:${discordId}:cp_credits`).setLabel('Coins → Credits').setStyle(ButtonStyle.Primary).setEmoji('💳').setDisabled(!cpToCredits),
+        new ButtonBuilder().setCustomId(`econ:conv:${discordId}:credits_cp`).setLabel('Credits → Coins').setStyle(ButtonStyle.Secondary).setEmoji('⭐').setDisabled(!creditsToCp),
         new ButtonBuilder().setCustomId(`econ:dash:${discordId}`).setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('🏠'),
     ));
     return c;
@@ -199,13 +199,13 @@ export function adminContainer(discordId: string): ContainerBuilder {
             ComponentsV2.text(
                 `# 🛠️ Admin Economy Controls\n` +
                 `Staff-only tools. Every action is written to the economy audit ledger.\n${HR}\n` +
-                `• **Adjust CP** — add or remove CP from a member.\n` +
+                `• **Adjust Coins** — add or remove Coins from a member.\n` +
                 `• **Freeze / Unfreeze** — block or restore a member's economy actions.`,
             ),
         );
     c.addActionRowComponents(navRow(discordId, 'admin', true));
     c.addActionRowComponents(btnRow(
-        new ButtonBuilder().setCustomId(`econ:adjadj:${discordId}`).setLabel('Adjust CP').setStyle(ButtonStyle.Primary).setEmoji('⚖️'),
+        new ButtonBuilder().setCustomId(`econ:adjadj:${discordId}`).setLabel('Adjust Coins').setStyle(ButtonStyle.Primary).setEmoji('⚖️'),
         new ButtonBuilder().setCustomId(`econ:adjfreeze:${discordId}:1`).setLabel('Freeze').setStyle(ButtonStyle.Danger).setEmoji('🧊'),
         new ButtonBuilder().setCustomId(`econ:adjfreeze:${discordId}:0`).setLabel('Unfreeze').setStyle(ButtonStyle.Success).setEmoji('🔥'),
         new ButtonBuilder().setCustomId(`econ:dash:${discordId}`).setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('🏠'),
@@ -253,15 +253,15 @@ export function leaderboardContainer(o: LeaderboardOpts): ContainerBuilder {
         const badge = pos <= 3 && o.page === 0 ? medals[pos - 1] : `\`#${pos}\``;
         const lp = getLevelProgress(Number(p.total_cp ?? 0));
         const me = o.viewerId && p.id === o.viewerId ? ' ⬅️ **you**' : '';
-        return `${badge} ${lp.tier.emoji} **${profileName(p)}** — ${fmt(p.total_cp)} CP · Lv ${lp.level}${me}`;
+        return `${badge} ${lp.tier.emoji} **${profileName(p)}** — ${fmt(p.total_cp)} Coins · Lv ${lp.level}${me}`;
     }).join('\n') || '*No ranked members yet.*';
 
     const c = new ContainerBuilder()
         .setAccentColor(ComponentsV2.Accents.primary)
         .addTextDisplayComponents(
             ComponentsV2.text(
-                `# 🏆 CP Leaderboard\nTop contributors across Victus Cloud.\n${HR}\n${lines}\n${HR}\n` +
-                (o.viewerRank ? `Your position — **#${o.viewerRank}** · ${fmt(o.viewerCp)} CP\n` : '') +
+                `# 🏆 Coins Leaderboard\nTop contributors across Victus Cloud.\n${HR}\n${lines}\n${HR}\n` +
+                (o.viewerRank ? `Your position — **#${o.viewerRank}** · ${fmt(o.viewerCp)} Coins\n` : '') +
                 `-# Page ${o.page + 1}`,
             ),
         );
@@ -295,7 +295,7 @@ export function historyContainer(o: HistoryOpts): ContainerBuilder {
     const lines = o.rows.map((t) => {
         const meta = LEDGER_KIND[t.kind] || { emoji: '•', label: t.kind };
         const amt = Number(t.amount);
-        const cur = String(t.currency || 'cp').toUpperCase();
+        const cur = String(t.currency || 'cp').toLowerCase() === 'cp' ? 'Coins' : String(t.currency).toUpperCase();
         return `${meta.emoji} **\`${amt >= 0 ? '+' : ''}${fmt(amt)} ${cur}\`** · ${meta.label}${t.reason ? ` — ${t.reason}` : ''}\n-# ${rel(t.created_at)}`;
     }).join('\n') || '*No economy activity yet.*';
 
