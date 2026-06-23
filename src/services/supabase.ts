@@ -518,6 +518,64 @@ class SupabaseService {
         return count ?? 0;
     }
 
+    // ── Economy money-movement RPCs (all atomic, server-side) ─────────────
+
+    private async econRpc(fn: string, params: Record<string, unknown>): Promise<any> {
+        const { data, error } = await this.client.rpc(fn, params);
+        if (error) {
+            logger.error(`${fn} failed:`, error);
+            return { ok: false, error: error.message || 'Database error' };
+        }
+        return data;
+    }
+
+    econTransferCp(fromUserId: string, toUserId: string, amount: number, reason?: string) {
+        return this.econRpc('econ_transfer_cp', { p_from: fromUserId, p_to: toUserId, p_amount: amount, p_reason: reason ?? null });
+    }
+
+    econBank(userId: string, op: 'deposit' | 'withdraw', amount: number) {
+        return this.econRpc('econ_bank', { p_user: userId, p_op: op, p_amount: amount });
+    }
+
+    econSpendCp(userId: string, amount: number, reason?: string, meta?: Record<string, unknown>) {
+        return this.econRpc('econ_spend_cp', { p_user: userId, p_amount: amount, p_reason: reason ?? null, p_meta: meta ?? {} });
+    }
+
+    econGrantCp(userId: string, amount: number, kind = 'convert_in', reason?: string, meta?: Record<string, unknown>) {
+        return this.econRpc('econ_grant_cp', { p_user: userId, p_amount: amount, p_kind: kind, p_reason: reason ?? null, p_meta: meta ?? {} });
+    }
+
+    econAdminAdjustCp(adminUserId: string, userId: string, delta: number, reason?: string) {
+        return this.econRpc('econ_admin_adjust_cp', { p_admin: adminUserId, p_user: userId, p_delta: delta, p_reason: reason ?? null });
+    }
+
+    econAdminSetFrozen(adminUserId: string, userId: string, frozen: boolean) {
+        return this.econRpc('econ_admin_set_frozen', { p_admin: adminUserId, p_user: userId, p_frozen: frozen });
+    }
+
+    async getEconomyRates(): Promise<any[]> {
+        const { data, error } = await this.client.from('economy_rates').select('*').eq('enabled', true);
+        if (error) {
+            logger.error('getEconomyRates failed:', error);
+            return [];
+        }
+        return data || [];
+    }
+
+    async getEconomyLedger(userId: string, limit = 8, offset = 0): Promise<any[]> {
+        const { data, error } = await this.client
+            .from('economy_ledger')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+        if (error) {
+            logger.error('getEconomyLedger failed:', error);
+            return [];
+        }
+        return data || [];
+    }
+
     /**
      * Check if user is admin
      */
