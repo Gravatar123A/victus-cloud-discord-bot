@@ -72,8 +72,11 @@ export interface DashboardOpts {
 export function cpDashboardContainer(o: DashboardOpts): ContainerBuilder {
     const cp = Number(o.profile?.total_cp ?? 0);
     const bank = Number(o.profile?.cp_bank ?? 0);
+    const xp = Number(o.profile?.total_xp ?? 0);
     const frozen = Boolean(o.profile?.economy_frozen);
-    const lp = getLevelProgress(cp);
+    // Level/rank are driven by XP so they match the website exactly. Coins stay
+    // the spendable economy currency.
+    const lp = getLevelProgress(xp);
     const tier = lp.tier;
 
     const c = new ContainerBuilder()
@@ -84,13 +87,12 @@ export function cpDashboardContainer(o: DashboardOpts): ContainerBuilder {
                 `<@${o.discordId}> · **${tier.name}** · Level **${lp.level}**${o.rank ? ` · Rank **#${o.rank}**` : ''}` +
                 (frozen ? '  ·  🧊 **FROZEN**' : '') +
                 `\n${HR}\n` +
-                `### ⭐ Coins\n` +
-                `**${fmt(cp)} Coins**  ·  🏦 Bank **${fmt(bank)} Coins**\n` +
+                `### 🌟 Level ${lp.level} · ${tier.name}\n` +
                 `${progressBar(lp.progress)}  \`${lp.progress.toFixed(0)}%\`\n` +
-                `-# ${fmt(lp.cpToNext)} Coins to reach Level ${lp.level + 1}\n` +
+                `-# ${fmt(xp)} XP · ${fmt(lp.cpToNext)} XP to reach Level ${lp.level + 1} · synced with victuscloud.com\n` +
                 `${HR}\n` +
-                `### 💼 Wallet\n` +
-                `🟡 **Coins** — ${o.coins == null ? '`—`' : `**${fmt(o.coins)}**`}\n` +
+                `### ⭐ Coins\n` +
+                `💼 **Wallet** ${fmt(cp)} Coins  ·  🏦 **Bank** ${fmt(bank)} Coins\n` +
                 `💳 **Credits** — ${o.credits == null ? '`—`' : `**${fmt(o.credits)}**`}`,
             ),
         );
@@ -131,7 +133,7 @@ export function bankContainer(discordId: string, profile: any, isAdmin = false):
         );
     c.addActionRowComponents(navRow(discordId, 'bank', isAdmin));
     c.addActionRowComponents(btnRow(
-        new ButtonBuilder().setCustomId(`econ:bankdep:${discordId}`).setLabel('Deposit').setStyle(ButtonStyle.Success).setEmoji('📥').setDisabled(cp <= 0),
+        new ButtonBuilder().setCustomId(`econ:bankdep:${discordId}`).setLabel('Deposit').setStyle(ButtonStyle.Success).setEmoji('📥'),
         new ButtonBuilder().setCustomId(`econ:bankwd:${discordId}`).setLabel('Withdraw').setStyle(ButtonStyle.Primary).setEmoji('📤').setDisabled(bank <= 0),
         new ButtonBuilder().setCustomId(`econ:dash:${discordId}`).setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('🏠'),
     ));
@@ -251,7 +253,7 @@ export function leaderboardContainer(o: LeaderboardOpts): ContainerBuilder {
     const lines = o.rows.map((p, i) => {
         const pos = start + i + 1;
         const badge = pos <= 3 && o.page === 0 ? medals[pos - 1] : `\`#${pos}\``;
-        const lp = getLevelProgress(Number(p.total_cp ?? 0));
+        const lp = getLevelProgress(Number(p.total_xp ?? 0));
         const me = o.viewerId && p.id === o.viewerId ? ' ⬅️ **you**' : '';
         return `${badge} ${lp.tier.emoji} **${profileName(p)}** — ${fmt(p.total_cp)} Coins · Lv ${lp.level}${me}`;
     }).join('\n') || '*No ranked members yet.*';

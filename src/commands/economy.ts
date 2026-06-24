@@ -280,6 +280,11 @@ export const economyCommand: Command = {
         if (op === 'bankdep' || op === 'bankwd') {
             const amount = parseAmount(val('amount'));
             if (!amount) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Invalid amount', 'Enter a positive whole number of Coins.', ctx.isAdmin)], flags: V2 }));
+            const walletCp = Number((ctx.profile as any)?.total_cp ?? 0);
+            const bankCp = Number((ctx.profile as any)?.cp_bank ?? 0);
+            if (op === 'bankdep' && walletCp <= 0) return void (await interaction.update({ components: [resultContainer(discordId, false, 'No Coins to deposit', 'Your wallet has **0 Coins** right now. Earn Coins through activity, or add Coins on victuscloud.com, then deposit them into your bank.', ctx.isAdmin)], flags: V2 }));
+            if (op === 'bankdep' && amount > walletCp) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Not enough Coins', `You only have **${fmt(walletCp)} Coins** in your wallet to deposit.`, ctx.isAdmin)], flags: V2 }));
+            if (op === 'bankwd' && amount > bankCp) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Not enough banked', `You only have **${fmt(bankCp)} Coins** in your bank to withdraw.`, ctx.isAdmin)], flags: V2 }));
             const r = await supabase.econBank(ctx.userId, op === 'bankdep' ? 'deposit' : 'withdraw', amount);
             const ok = !!r?.ok;
             if (ok) await pushCoins(ctx.userId);
