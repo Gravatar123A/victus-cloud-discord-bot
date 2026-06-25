@@ -188,6 +188,7 @@ export function convertContainer(discordId: string, rates: any[], profile: any, 
     c.addActionRowComponents(btnRow(
         new ButtonBuilder().setCustomId(`econ:conv:${discordId}:cp_credits`).setLabel('Coins → Credits').setStyle(ButtonStyle.Primary).setEmoji('💳').setDisabled(!cpToCredits),
         new ButtonBuilder().setCustomId(`econ:conv:${discordId}:credits_cp`).setLabel('Credits → Coins').setStyle(ButtonStyle.Secondary).setEmoji('⭐').setDisabled(!creditsToCp),
+        new ButtonBuilder().setLabel('Deposit Credits').setStyle(ButtonStyle.Link).setURL(`${config.branding.billing}/account/credits`).setEmoji('💰'),
         new ButtonBuilder().setCustomId(`econ:dash:${discordId}`).setLabel('Back').setStyle(ButtonStyle.Secondary).setEmoji('🏠'),
     ));
     return c;

@@ -71,8 +71,8 @@ export const config = {
         logo: 'https://victuscloud.com/favicon.png',
         website: 'https://victuscloud.com',
         free: 'https://victuscloud.com/free',
-        billing: 'https://victuscloud.com',
-        panel: 'https://victuscloud.com',
+        billing: 'https://billing.victuscloud.com',
+        panel: 'https://control.victuscloud.com',
     },
 } as const;
 
