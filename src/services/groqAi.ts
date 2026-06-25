@@ -2,16 +2,83 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { UserProfile } from '../types/index.js';
 
+type ToolCall = {
+    id: string;
+    type?: string;
+    function: {
+        name: string;
+        arguments: string;
+    };
+};
+
 type ChatMessage = {
-    role: 'system' | 'user' | 'assistant';
-    content: string;
+    role: 'system' | 'user' | 'assistant' | 'tool';
+    content: string | null;
+    tool_calls?: ToolCall[];
+    tool_call_id?: string;
+};
+
+type GroqResponseMessage = {
+    content?: string | null;
+    tool_calls?: ToolCall[];
 };
 
 type GroqChatResponse = {
     error?: { message?: string };
     message?: string;
-    choices?: { message?: { content?: string } }[];
+    choices?: { message?: GroqResponseMessage }[];
 };
+
+type SearchResult = {
+    title: string;
+    url: string;
+};
+
+type ToolResult =
+    | { results: SearchResult[]; query: string }
+    | { text: string; url: string }
+    | { error: string };
+
+// OpenAI-style tool definitions exposed to the Groq model. Both are keyless and
+// rely on public DuckDuckGo HTML scraping + plain page fetches.
+const AI_TOOLS = [
+    {
+        type: 'function',
+        function: {
+            name: 'web_search',
+            description: 'Search the public web for current info; returns top results (title + url)',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: {
+                        type: 'string',
+                        description: 'The search query.',
+                    },
+                },
+                required: ['query'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'fetch_url',
+            description: 'Fetch a public web page and return its readable text',
+            parameters: {
+                type: 'object',
+                properties: {
+                    url: {
+                        type: 'string',
+                        description: 'The absolute http(s) URL of the page to fetch.',
+                    },
+                },
+                required: ['url'],
+            },
+        },
+    },
+] as const;
+
+const MAX_TOOL_ROUNDS = 4;
 
 type AiUserContext = {
     discordTag: string;
@@ -52,6 +119,12 @@ Victus Cloud knowledge:
 - File hosting uploads and pulled files are intended to store file contents on Nextcloud/WebDAV, with Supabase used for auth, metadata, and edge-function coordination.
 - For account-specific data you cannot see in the provided context, ask the user to continue in DMs if the current reply is public; in DMs, say you cannot see that data right now and route to support or the web panel. Do not invent live account data.
 - For outages, refunds, pricing changes, legal questions, or policy decisions, give general guidance and route to staff/support instead of pretending you can approve actions.
+
+Web access:
+- You CAN search the live web and open links using your web_search and fetch_url tools.
+- USE these tools whenever a question needs current information you do not already know for sure: prices, software/plugin/mod versions, news, dates, documentation, error messages, or anything outside your built-in knowledge. Then answer from what the results actually say.
+- Never claim you cannot access the web or that you lack live/internet access. You can. If a search or fetch fails, say the lookup did not work and offer what you do know.
+- Never fabricate links, quotes, prices, or facts. Only cite URLs that came back from your tools, and only state things the fetched pages or results actually contain.
 
 Style:
 - Sound friendly, casual, and human. Use "bro", "hey", or light conversational wording when it fits the user's vibe.
@@ -117,6 +190,149 @@ function buildSystemPrompt(): string {
     return customPrompt ? `${VICTUS_SYSTEM_PROMPT}\n\nExtra Victus operator instructions:\n${customPrompt}` : VICTUS_SYSTEM_PROMPT;
 }
 
+const BROWSER_USER_AGENT =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
+
+function decodeHtmlEntities(value: string): string {
+    return value
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#0?39;/g, "'")
+        .replace(/&#x27;/gi, "'")
+        .replace(/&apos;/g, "'")
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&#(\d+);/g, (_match, code: string) => String.fromCharCode(Number(code)))
+        .replace(/&#x([0-9a-f]+);/gi, (_match, code: string) => String.fromCharCode(parseInt(code, 16)));
+}
+
+function stripHtmlTags(value: string): string {
+    return value.replace(/<[^>]*>/g, '');
+}
+
+// Replicates the panel's AiActionExecutor::webSearch(): scrape DuckDuckGo HTML,
+// pull result__a anchors, decode the uddg= redirect to the real URL, return a
+// compact list of {title, url}. Keyless, no API key required.
+async function webSearch(query: string): Promise<ToolResult> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+        return { error: 'Search query is required.' };
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    try {
+        const response = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(trimmed)}`, {
+            method: 'GET',
+            headers: {
+                'User-Agent': BROWSER_USER_AGENT,
+            },
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            return { error: `Search provider returned an error (${response.status}).` };
+        }
+
+        const html = await response.text();
+        const results: SearchResult[] = [];
+        const anchorRegex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+        let match: RegExpExecArray | null;
+
+        while ((match = anchorRegex.exec(html)) !== null && results.length < 8) {
+            let url = match[1];
+            const uddg = /[?&]uddg=([^&]+)/.exec(url);
+            if (uddg) {
+                url = decodeURIComponent(uddg[1]);
+            }
+
+            const title = decodeHtmlEntities(stripHtmlTags(match[2])).replace(/\s+/g, ' ').trim();
+            if (!url || !title) continue;
+
+            results.push({ title, url });
+        }
+
+        if (results.length === 0) {
+            return { error: 'No results found.' };
+        }
+
+        return { query: trimmed, results };
+    } catch (error) {
+        logger.warn('AI web_search failed:', error);
+        return { error: `Search failed: ${error instanceof Error ? error.message : 'unknown error'}` };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+// Fetch a public page, strip scripts/styles/tags, decode entities, collapse
+// whitespace and truncate. Never throws; returns an {error} object on failure.
+async function fetchUrl(url: string): Promise<ToolResult> {
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed)) {
+        return { error: 'Only http(s) URLs can be fetched.' };
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    try {
+        const response = await fetch(trimmed, {
+            method: 'GET',
+            headers: {
+                'User-Agent': BROWSER_USER_AGENT,
+            },
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            return { error: `Page returned an error (${response.status}).` };
+        }
+
+        const html = await response.text();
+        const text = decodeHtmlEntities(
+            stripHtmlTags(
+                html
+                    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+                    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+                    .replace(/<!--[\s\S]*?-->/g, ' ')
+            )
+        )
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (!text) {
+            return { error: 'No readable text found on the page.' };
+        }
+
+        return { url: trimmed, text: truncate(text, 3000) };
+    } catch (error) {
+        logger.warn('AI fetch_url failed:', error);
+        return { error: `Fetch failed: ${error instanceof Error ? error.message : 'unknown error'}` };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function runTool(name: string, rawArguments: string): Promise<ToolResult> {
+    let parsed: { query?: unknown; url?: unknown };
+    try {
+        parsed = rawArguments ? JSON.parse(rawArguments) : {};
+    } catch {
+        return { error: 'Invalid tool arguments (not valid JSON).' };
+    }
+
+    if (name === 'web_search') {
+        return webSearch(typeof parsed.query === 'string' ? parsed.query : '');
+    }
+    if (name === 'fetch_url') {
+        return fetchUrl(typeof parsed.url === 'string' ? parsed.url : '');
+    }
+    return { error: `Unknown tool: ${name}` };
+}
+
 class GroqAiService {
     isEnabled(): boolean {
         return config.ai.enabled;
@@ -168,11 +384,9 @@ class GroqAiService {
         return this.complete(messages);
     }
 
-    private async complete(messages: ChatMessage[]): Promise<string> {
-        if (!config.ai.apiKey) {
-            throw new Error('Groq AI is not configured. Set GROQ_API_KEY in the bot environment.');
-        }
-
+    // Single HTTP round-trip to the Groq chat completions endpoint. Tools are
+    // attached when web access is enabled so the model can request searches.
+    private async callModel(messages: ChatMessage[], withTools: boolean): Promise<GroqResponseMessage> {
         const endpoint = normalizeEndpoint(config.ai.baseUrl);
         const maxTokens = clampNumber(config.ai.maxTokens, 700, 128, 1500);
         const temperature = clampNumber(config.ai.temperature, 0.35, 0, 1.5);
@@ -180,18 +394,24 @@ class GroqAiService {
         const timeout = setTimeout(() => controller.abort(), 25000);
 
         try {
+            const body: Record<string, unknown> = {
+                model: config.ai.model,
+                messages,
+                temperature,
+                max_tokens: maxTokens,
+            };
+            if (withTools) {
+                body.tools = AI_TOOLS;
+                body.tool_choice = 'auto';
+            }
+
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     Authorization: `Bearer ${config.ai.apiKey}`,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    model: config.ai.model,
-                    messages,
-                    temperature,
-                    max_tokens: maxTokens,
-                }),
+                body: JSON.stringify(body),
                 signal: controller.signal,
             });
 
@@ -201,17 +421,63 @@ class GroqAiService {
                 throw new Error(`Groq request failed (${response.status}): ${detail}`);
             }
 
-            const answer = payload?.choices?.[0]?.message?.content;
-            if (typeof answer !== 'string' || !answer.trim()) {
+            const message = payload?.choices?.[0]?.message;
+            if (!message) {
                 throw new Error('Groq returned an empty response.');
             }
 
-            return truncate(answer.trim(), 3200);
+            return message;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    private async complete(messages: ChatMessage[]): Promise<string> {
+        if (!config.ai.apiKey) {
+            throw new Error('Groq AI is not configured. Set GROQ_API_KEY in the bot environment.');
+        }
+
+        const withTools = config.ai.webSearchEnabled;
+        const conversation: ChatMessage[] = [...messages];
+
+        try {
+            for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+                // Stop offering tools once the round budget is spent so the model
+                // is forced to answer from what it already gathered.
+                const allowTools = withTools && round < MAX_TOOL_ROUNDS;
+                const message = await this.callModel(conversation, allowTools);
+
+                const toolCalls = message.tool_calls;
+                if (allowTools && Array.isArray(toolCalls) && toolCalls.length > 0) {
+                    conversation.push({
+                        role: 'assistant',
+                        content: message.content ?? null,
+                        tool_calls: toolCalls,
+                    });
+
+                    for (const toolCall of toolCalls) {
+                        const result = await runTool(toolCall.function.name, toolCall.function.arguments);
+                        conversation.push({
+                            role: 'tool',
+                            tool_call_id: toolCall.id,
+                            content: JSON.stringify(result),
+                        });
+                    }
+                    continue;
+                }
+
+                const answer = message.content;
+                if (typeof answer !== 'string' || !answer.trim()) {
+                    throw new Error('Groq returned an empty response.');
+                }
+
+                return truncate(answer.trim(), 3200);
+            }
+
+            throw new Error('Groq returned an empty response.');
         } catch (error) {
             logger.error('Groq AI request failed:', error);
             throw error;
-        } finally {
-            clearTimeout(timeout);
         }
     }
 }

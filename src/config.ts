@@ -49,6 +49,9 @@ export const config = {
         maxTokens: Number(process.env.GROQ_MAX_TOKENS || '700'),
         systemPrompt: process.env.VICTUS_AI_SYSTEM_PROMPT || '',
         enabled: !!process.env.GROQ_API_KEY,
+        // Keyless web access (DuckDuckGo HTML scrape) exposed to the AI as tools.
+        // Defaults to true unless AI_WEB_SEARCH is explicitly set to "false".
+        webSearchEnabled: process.env.AI_WEB_SEARCH !== 'false',
     },
 
     // Bot Settings
