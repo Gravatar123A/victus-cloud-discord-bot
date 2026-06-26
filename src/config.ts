@@ -27,6 +27,20 @@ export const config = {
         serviceKey: process.env.SUPABASE_SERVICE_KEY!,
     },
 
+    // Lavalink (music) — the dedicated Victus Cloud Lavalink node on DE-1.
+    // YouTube + SoundCloud + Bandcamp/Twitch/Vimeo + direct URLs are enabled.
+    lavalink: {
+        id: process.env.LAVALINK_ID || 'victus-de1',
+        host: process.env.LAVALINK_HOST || '135.125.222.36',
+        port: parseInt(process.env.LAVALINK_PORT || '25578', 10),
+        password: process.env.LAVALINK_PASSWORD || 'youshallnotpass',
+        secure: process.env.LAVALINK_SECURE === 'true',
+        // ytsearch (YouTube) is the default; users can paste SoundCloud/Bandcamp/
+        // direct URLs too. Override with LAVALINK_SEARCH (e.g. scsearch).
+        defaultSource: process.env.LAVALINK_SEARCH || 'ytsearch',
+        defaultVolume: parseInt(process.env.LAVALINK_VOLUME || '80', 10),
+    },
+
     // Pterodactyl (optional - can use Supabase edge functions)
     pterodactyl: {
         url: victusComUrl(process.env.PTERODACTYL_URL || ''),

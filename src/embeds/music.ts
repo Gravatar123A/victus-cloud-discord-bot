@@ -1,0 +1,194 @@
+/**
+ * Music UI for the Victus Cloud bot — Components v2 panels for the Lavalink
+ * music feature (Now Playing, queue, "added" confirmations) plus the shared
+ * transport-control button row used by /play and the music button handler.
+ */
+import {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ContainerBuilder,
+} from 'discord.js';
+import type { Player, Track, UnresolvedTrack } from 'lavalink-client';
+import { ComponentsV2 } from './componentsV2.js';
+
+type AnyTrack = Track | UnresolvedTrack;
+
+const SOURCE_ICON: Record<string, string> = {
+    youtube: '▶️',
+    soundcloud: '🟠',
+    bandcamp: '🔵',
+    twitch: '🟣',
+    vimeo: '🎬',
+    http: '🔗',
+};
+
+export function sourceIcon(source?: string): string {
+    return SOURCE_ICON[(source || '').toLowerCase()] || '🎵';
+}
+
+/** Escape Discord markdown so track titles can't break the layout. */
+export function escapeMd(value: string | undefined | null): string {
+    return String(value ?? '').replace(/([\\`*_~|>\[\]()])/g, '\\$1').slice(0, 230);
+}
+
+/** Format a millisecond duration as `m:ss` / `h:mm:ss`. */
+export function formatDuration(ms?: number): string {
+    if (!ms || ms <= 0 || !Number.isFinite(ms)) return '0:00';
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function trackInfo(t: AnyTrack) {
+    // Track and UnresolvedTrack both expose `.info`.
+    return (t as Track).info;
+}
+
+function requesterId(t: AnyTrack): string | null {
+    const r = (t as Track).requester as { id?: string } | undefined;
+    return r?.id ?? null;
+}
+
+function repeatLabel(mode: string | undefined): string {
+    if (mode === 'track') return '🔂 Track';
+    if (mode === 'queue') return '🔁 Queue';
+    return '➡️ Off';
+}
+
+function progressBar(player: Player): string {
+    const cur = player.queue.current;
+    if (!cur) return '';
+    const info = trackInfo(cur);
+    const dur = info?.duration ?? 0;
+    if (!dur || info?.isStream) return '🔴 LIVE';
+    const pos = Math.min(player.position ?? 0, dur);
+    const slots = 18;
+    const filled = Math.max(0, Math.min(slots - 1, Math.floor((pos / dur) * slots)));
+    const bar = '▬'.repeat(filled) + '🔘' + '▬'.repeat(slots - 1 - filled);
+    return `${formatDuration(pos)} ${bar} ${formatDuration(dur)}`;
+}
+
+/** Transport controls. Buttons are validated by the music button handler. */
+export function controlRow(player?: Player): ActionRowBuilder<ButtonBuilder> {
+    const paused = !!player?.paused;
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setCustomId('music:pause')
+            .setLabel(paused ? 'Resume' : 'Pause')
+            .setStyle(paused ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:skip').setLabel('Skip').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('music:stop').setLabel('Stop').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('music:loop').setLabel('Loop').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:queue').setLabel('Queue').setStyle(ButtonStyle.Secondary),
+    );
+}
+
+/** The public "Now Playing" panel with live transport controls. */
+export function nowPlayingContainer(player: Player): ContainerBuilder {
+    const track = player.queue.current;
+    const c = ComponentsV2.baseContainer(ComponentsV2.Accents.purple);
+
+    if (!track) {
+        c.addTextDisplayComponents(ComponentsV2.text('### 🎵 Now Playing\n_Nothing is playing right now._'));
+        return c;
+    }
+
+    const info = trackInfo(track);
+    const art = info?.artworkUrl;
+    if (art) c.addMediaGalleryComponents(ComponentsV2.mediaGallery(art));
+
+    let body = `-# ${sourceIcon(info?.sourceName)} VICTUS CLOUD MUSIC • ${info?.sourceName ?? 'stream'}\n`;
+    body += `### 🎵 Now Playing\n`;
+    body += `**[${escapeMd(info?.title)}](${info?.uri})**\n`;
+    body += `-# by ${escapeMd(info?.author || 'Unknown artist')}\n\n`;
+    body += `\`${progressBar(player)}\`\n\n`;
+    body += `${player.paused ? '⏸️ Paused' : '▶️ Playing'} • 🔊 ${player.volume}% • ${repeatLabel(player.repeatMode)}`;
+    const reqId = requesterId(track);
+    if (reqId) body += ` • requested by <@${reqId}>`;
+
+    const upNext = player.queue.tracks.slice(0, 4) as AnyTrack[];
+    if (upNext.length) {
+        body += `\n\n### Up Next\n`;
+        body += upNext
+            .map((t, i) => `\`${i + 1}.\` ${escapeMd(trackInfo(t)?.title)} \`${formatDuration(trackInfo(t)?.duration)}\``)
+            .join('\n');
+        const remaining = player.queue.tracks.length - upNext.length;
+        if (remaining > 0) body += `\n-# +${remaining} more in the queue`;
+    }
+
+    c.addTextDisplayComponents(ComponentsV2.text(body));
+    c.addActionRowComponents(controlRow(player));
+    return c;
+}
+
+/** Confirmation shown when a track (or playlist) is queued. */
+export function addedContainer(
+    tracks: AnyTrack[],
+    playlistName: string | null,
+    position: number,
+): ContainerBuilder {
+    const c = ComponentsV2.baseContainer(ComponentsV2.Accents.success);
+    if (playlistName && tracks.length > 1) {
+        const totalMs = tracks.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
+        let body = `### ✅ Added Playlist\n`;
+        body += `**${escapeMd(playlistName)}**\n`;
+        body += `-# ${tracks.length} tracks • ${formatDuration(totalMs)} total\n\n`;
+        body += tracks
+            .slice(0, 5)
+            .map((t, i) => `\`${i + 1}.\` ${escapeMd(trackInfo(t)?.title)}`)
+            .join('\n');
+        if (tracks.length > 5) body += `\n-# +${tracks.length - 5} more`;
+        c.addTextDisplayComponents(ComponentsV2.text(body));
+        return c;
+    }
+
+    const t = tracks[0];
+    const info = trackInfo(t);
+    const art = info?.artworkUrl;
+    if (art) c.addMediaGalleryComponents(ComponentsV2.mediaGallery(art));
+    let body = `### ✅ Added to Queue\n`;
+    body += `**[${escapeMd(info?.title)}](${info?.uri})**\n`;
+    body += `-# by ${escapeMd(info?.author || 'Unknown artist')} • \`${formatDuration(info?.duration)}\``;
+    if (position > 0) body += ` • position **#${position}** in queue`;
+    c.addTextDisplayComponents(ComponentsV2.text(body));
+    return c;
+}
+
+const QUEUE_PAGE_SIZE = 10;
+
+/** Full queue listing, paginated. */
+export function queueContainer(player: Player, page = 0): ContainerBuilder {
+    const c = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
+    const current = player.queue.current;
+    const upcoming = player.queue.tracks as AnyTrack[];
+
+    let body = `### 🎶 Queue\n`;
+    if (current) {
+        body += `**Now Playing**\n${sourceIcon(trackInfo(current)?.sourceName)} ${escapeMd(trackInfo(current)?.title)} \`${formatDuration(trackInfo(current)?.duration)}\`\n\n`;
+    }
+
+    if (!upcoming.length) {
+        body += `_The queue is empty — add more with_ \`/play\`.`;
+    } else {
+        const pages = Math.max(1, Math.ceil(upcoming.length / QUEUE_PAGE_SIZE));
+        const safePage = Math.max(0, Math.min(page, pages - 1));
+        const start = safePage * QUEUE_PAGE_SIZE;
+        const slice = upcoming.slice(start, start + QUEUE_PAGE_SIZE);
+        const totalMs = upcoming.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
+        body += `**Up Next — ${upcoming.length} tracks • ${formatDuration(totalMs)}**\n`;
+        body += slice
+            .map((t, i) => {
+                const reqId = requesterId(t);
+                return `\`${start + i + 1}.\` ${escapeMd(trackInfo(t)?.title)} \`${formatDuration(trackInfo(t)?.duration)}\`${reqId ? ` • <@${reqId}>` : ''}`;
+            })
+            .join('\n');
+        body += `\n\n-# Page ${safePage + 1}/${pages} • 🔁 ${repeatLabel(player.repeatMode).replace(/^.. /, '')} • 🔊 ${player.volume}%`;
+    }
+
+    c.addTextDisplayComponents(ComponentsV2.text(body));
+    return c;
+}

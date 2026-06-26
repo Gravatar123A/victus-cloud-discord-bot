@@ -21,6 +21,7 @@ import { createAccountCommand } from './create-account.js';
 import { askCommand } from './ask.js';
 import { summonCommand } from './summon.js';
 import { economyCommand } from './economy.js';
+import { musicCommands } from './music/index.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -46,6 +47,7 @@ const allCommands: Command[] = [
     askCommand,
     summonCommand,
     economyCommand,
+    ...musicCommands,
 ];
 
 for (const command of allCommands) {

@@ -53,6 +53,14 @@ export const readyEvent: Event = {
         logger.info(`Logged in as ${client.user.tag}`);
         logger.info(`Serving ${client.guilds.cache.size} guilds`);
 
+        // Connect to the Lavalink music node now that the gateway is ready.
+        try {
+            await client.lavalink.init({ id: client.user.id, username: client.user.username });
+            logger.info('🎵 Lavalink manager initialized');
+        } catch (error) {
+            logger.error('🎵 Lavalink init failed:', error);
+        }
+
         if (config.bot.autoRegisterCommands) {
             await registerApplicationCommands('bot startup').catch((error) => {
                 logger.error('Startup slash command sync failed:', error);
