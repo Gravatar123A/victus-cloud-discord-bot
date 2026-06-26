@@ -8,7 +8,9 @@ import {
     ButtonBuilder,
     ButtonStyle,
     ContainerBuilder,
+    StringSelectMenuBuilder,
 } from 'discord.js';
+import type { MessageActionRowComponentBuilder } from 'discord.js';
 import type { Player, Track, UnresolvedTrack } from 'lavalink-client';
 import { ComponentsV2 } from './componentsV2.js';
 
@@ -78,29 +80,81 @@ function loopShort(mode: string | undefined): string {
     return 'Loop: Off';
 }
 
-/** Full transport control grid (3 rows). Buttons are validated by the handler. */
-export function controlRows(player?: Player): ActionRowBuilder<ButtonBuilder>[] {
+function isLiveTrack(player: Player): boolean {
+    return !!player.queue.current && !!trackInfo(player.queue.current)?.isStream;
+}
+
+/**
+ * Full transport control grid for the live panel: four button rows grouped by
+ * function plus a string-select for less-common actions. All ids use the
+ * `music:` prefix and are validated by `playCommand.handleButton` /
+ * `handleSelectMenu`. A Discord message allows up to 5 action rows; we use
+ * exactly 5 (4 button rows + 1 select).
+ */
+export function controlRows(
+    player?: Player,
+): ActionRowBuilder<MessageActionRowComponentBuilder>[] {
     const paused = !!player?.paused;
-    const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('music:restart').setLabel('Restart').setStyle(ButtonStyle.Secondary),
+    const live = player ? isLiveTrack(player) : false;
+    const hasPrev = !!player && (player.queue.previous?.length ?? 0) > 0;
+    const hasQueue = !!player && player.queue.tracks.length > 0;
+
+    // Row 1 — primary transport: Previous, Play/Pause, Skip, Stop.
+    const transport = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setCustomId('music:previous')
+            .setLabel('Previous')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!hasPrev),
         new ButtonBuilder()
             .setCustomId('music:pause')
             .setLabel(paused ? 'Resume' : 'Pause')
-            .setStyle(paused ? ButtonStyle.Success : ButtonStyle.Secondary),
+            .setStyle(paused ? ButtonStyle.Success : ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('music:skip').setLabel('Skip').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('music:stop').setLabel('Stop').setStyle(ButtonStyle.Danger),
     );
-    const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+
+    // Row 2 — seeking: Restart, −10s, +10s (disabled for live streams).
+    const seekRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:restart').setLabel('Restart').setStyle(ButtonStyle.Secondary).setDisabled(live),
+        new ButtonBuilder().setCustomId('music:seekback').setLabel('-10s').setStyle(ButtonStyle.Secondary).setDisabled(live),
+        new ButtonBuilder().setCustomId('music:seekfwd').setLabel('+10s').setStyle(ButtonStyle.Secondary).setDisabled(live),
+    );
+
+    // Row 3 — volume: Vol −, Vol +.
+    const volumeRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId('music:voldown').setLabel('Vol −').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('music:volup').setLabel('Vol +').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('music:loop').setLabel(loopShort(player?.repeatMode)).setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('music:shuffle').setLabel('Shuffle').setStyle(ButtonStyle.Secondary),
     );
-    const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+
+    // Row 4 — queue/loop controls.
+    const queueRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:loop').setLabel(loopShort(player?.repeatMode)).setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:shuffle').setLabel('Shuffle').setStyle(ButtonStyle.Secondary).setDisabled(!hasQueue),
         new ButtonBuilder().setCustomId('music:queue').setLabel('Queue').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('music:refresh').setLabel('Refresh').setStyle(ButtonStyle.Secondary),
     );
-    return [row1, row2, row3];
+
+    // Row 5 — overflow menu for less-common actions.
+    const mode = player?.repeatMode ?? 'off';
+    const menu = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('music:select')
+            .setPlaceholder('More controls…')
+            .addOptions([
+                { label: 'Volume 25%', description: 'Set playback volume to 25%', value: 'vol:25' },
+                { label: 'Volume 50%', description: 'Set playback volume to 50%', value: 'vol:50' },
+                { label: 'Volume 75%', description: 'Set playback volume to 75%', value: 'vol:75' },
+                { label: 'Volume 100%', description: 'Set playback volume to 100%', value: 'vol:100' },
+                { label: 'Loop: Off', description: 'Disable looping', value: 'loop:off', default: mode === 'off' },
+                { label: 'Loop: Track', description: 'Repeat the current track', value: 'loop:track', default: mode === 'track' },
+                { label: 'Loop: Queue', description: 'Repeat the whole queue', value: 'loop:queue', default: mode === 'queue' },
+                { label: 'Clear queue', description: 'Remove every upcoming track', value: 'clear' },
+            ]),
+    );
+
+    const rows = [transport, seekRow, volumeRow, queueRow, menu];
+    return rows as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }
 
 /** Idle control panel shown by /music when nothing is playing. */
@@ -127,29 +181,50 @@ export function nowPlayingContainer(player: Player): ContainerBuilder {
     }
 
     const info = trackInfo(track);
+    const live = !!info?.isStream;
     const art = info?.artworkUrl;
     if (art) c.addMediaGalleryComponents(ComponentsV2.mediaGallery(art));
 
-    let body = `-# ${sourceIcon(info?.sourceName)} VICTUS CLOUD MUSIC • ${info?.sourceName ?? 'stream'}\n`;
+    const source = info?.sourceName ?? 'stream';
+    const badge = live ? '🔴 LIVE' : player.paused ? '⏸️ PAUSED' : '▶️ PLAYING';
+
+    // Header: branded eyebrow with source icon + live/playing badge.
+    let body = `-# ${sourceIcon(info?.sourceName)} VICTUS CLOUD MUSIC • ${source.toUpperCase()} • ${badge}\n`;
     body += `### 🎵 Now Playing\n`;
     body += `**[${escapeMd(info?.title)}](${info?.uri})**\n`;
-    body += `-# by ${escapeMd(info?.author || 'Unknown artist')}\n\n`;
-    body += `\`${progressBar(player)}\`\n\n`;
-    body += `${player.paused ? '⏸️ Paused' : '▶️ Playing'} • 🔊 ${player.volume}% • ${repeatLabel(player.repeatMode)}`;
-    const reqId = requesterId(track);
-    if (reqId) body += ` • requested by <@${reqId}>`;
+    body += `-# by ${escapeMd(info?.author || 'Unknown artist')}`;
+    if (!live && info?.duration) body += ` • \`${formatDuration(info.duration)}\``;
+    body += `\n\n`;
 
-    const upNext = player.queue.tracks.slice(0, 4) as AnyTrack[];
+    // Progress bar (or LIVE marker for streams).
+    body += `\`${progressBar(player)}\`\n\n`;
+
+    // Status line: playback state • volume • loop • requester.
+    const statusBits = [
+        player.paused ? '⏸️ Paused' : live ? '🔴 Live' : '▶️ Playing',
+        `🔊 ${player.volume}%`,
+        repeatLabel(player.repeatMode),
+    ];
+    body += statusBits.join('  •  ');
+    const reqId = requesterId(track);
+    if (reqId) body += `\n-# requested by <@${reqId}>`;
+
+    // Up Next list.
+    const upNext = player.queue.tracks.slice(0, 5) as AnyTrack[];
     if (upNext.length) {
-        body += `\n\n### Up Next\n`;
+        const totalMs = (player.queue.tracks as AnyTrack[]).reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
+        body += `\n\n### Up Next — ${player.queue.tracks.length} in queue • ${formatDuration(totalMs)}\n`;
         body += upNext
             .map((t, i) => `\`${i + 1}.\` ${escapeMd(trackInfo(t)?.title)} \`${formatDuration(trackInfo(t)?.duration)}\``)
             .join('\n');
         const remaining = player.queue.tracks.length - upNext.length;
-        if (remaining > 0) body += `\n-# +${remaining} more in the queue`;
+        if (remaining > 0) body += `\n-# +${remaining} more — open **Queue** for the full list`;
+    } else {
+        body += `\n\n-# Queue is empty — add more with \`/play\``;
     }
 
     c.addTextDisplayComponents(ComponentsV2.text(body));
+    c.addSeparatorComponents(ComponentsV2.separator());
     for (const row of controlRows(player)) c.addActionRowComponents(row);
     return c;
 }

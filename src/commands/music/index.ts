@@ -16,6 +16,7 @@ import {
 import type {
     ButtonInteraction,
     ChatInputCommandInteraction,
+    StringSelectMenuInteraction,
     VoiceBasedChannel,
 } from 'discord.js';
 import type { Player } from 'lavalink-client';
@@ -229,6 +230,28 @@ export const playCommand: Command = {
                 await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
                 return;
             }
+            case 'previous': {
+                const prev = player.queue.previous?.[0];
+                if (!prev) {
+                    await interaction.reply({ ...info('No previous track', 'There is no track to go back to.'), flags: EPH | V2 });
+                    return;
+                }
+                await player.play({ clientTrack: prev });
+                await interaction.reply({ ...info('Previous track', 'Playing the previous track again.'), flags: EPH | V2 });
+                return;
+            }
+            case 'seekback':
+            case 'seekfwd': {
+                if (player.queue.current?.info.isStream) {
+                    await interaction.reply({ ...info('Live stream', 'You can not seek within a live stream.'), flags: EPH | V2 });
+                    return;
+                }
+                const delta = action === 'seekfwd' ? 10_000 : -10_000;
+                const target = Math.max(0, (player.position || 0) + delta);
+                await player.seek(target);
+                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+                return;
+            }
             case 'voldown': {
                 await player.setVolume(Math.max(0, player.volume - 10));
                 await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
@@ -265,6 +288,51 @@ export const playCommand: Command = {
             default:
                 await interaction.reply({ content: 'Unknown control.', flags: EPH });
         }
+    },
+
+    // Overflow controls from the `music:select` string-select menu.
+    async handleSelectMenu(interaction: StringSelectMenuInteraction) {
+        if (interaction.customId !== 'music:select') return;
+
+        const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
+        if (!player) {
+            await interaction.reply({ components: [ComponentsV2.warningContainer('Nothing is playing', 'This panel is no longer active. Use `/play` to start again.')], flags: EPH | V2 });
+            return;
+        }
+        const member = interaction.member as GuildMember | null;
+        if (member?.voice?.channelId !== player.voiceChannelId) {
+            await interaction.reply({ components: [ComponentsV2.warningContainer('Wrong voice channel', 'Join my voice channel to control playback.')], flags: EPH | V2 });
+            return;
+        }
+
+        const value = interaction.values[0] ?? '';
+
+        if (value.startsWith('vol:')) {
+            const level = Math.max(0, Math.min(150, Number(value.slice(4)) || 0));
+            await player.setVolume(level);
+            await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+            return;
+        }
+        if (value.startsWith('loop:')) {
+            const mode = value.slice(5) as 'off' | 'track' | 'queue';
+            await player.setRepeatMode(mode);
+            await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+            return;
+        }
+        if (value === 'clear') {
+            if (!player.queue.tracks.length) {
+                await interaction.reply({ ...info('Queue already empty', 'There are no upcoming tracks to clear.'), flags: EPH | V2 });
+                return;
+            }
+            const removed = player.queue.tracks.length;
+            await player.queue.splice(0, player.queue.tracks.length);
+            await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+            await interaction.followUp({ ...info('Queue cleared', `Removed **${removed}** upcoming track${removed === 1 ? '' : 's'}.`), flags: EPH | V2 });
+            return;
+        }
+
+        // Unknown option — acknowledge silently to avoid "interaction failed".
+        await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
     },
 };
 
