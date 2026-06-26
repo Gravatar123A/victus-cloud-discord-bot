@@ -28,6 +28,7 @@ import { logger } from '../../utils/logger.js';
 import { ComponentsV2 } from '../../embeds/componentsV2.js';
 import {
     addedContainer,
+    musicIdleContainer,
     nowPlayingContainer,
     queueContainer,
 } from '../../embeds/music.js';
@@ -223,9 +224,37 @@ export const playCommand: Command = {
                 await interaction.update({ components: [ComponentsV2.infoContainer('Stopped', 'Playback stopped and the queue was cleared. 👋')], flags: V2 });
                 return;
             }
+            case 'restart': {
+                await player.seek(0);
+                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+                return;
+            }
+            case 'voldown': {
+                await player.setVolume(Math.max(0, player.volume - 10));
+                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+                return;
+            }
+            case 'volup': {
+                await player.setVolume(Math.min(150, player.volume + 10));
+                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+                return;
+            }
             case 'loop': {
                 const next = player.repeatMode === 'off' ? 'track' : player.repeatMode === 'track' ? 'queue' : 'off';
                 await player.setRepeatMode(next);
+                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+                return;
+            }
+            case 'shuffle': {
+                if (player.queue.tracks.length < 2) {
+                    await interaction.reply({ ...info('Not enough tracks', 'Add at least two tracks to shuffle.'), flags: EPH | V2 });
+                    return;
+                }
+                await player.queue.shuffle();
+                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+                return;
+            }
+            case 'refresh': {
                 await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
                 return;
             }
@@ -435,7 +464,29 @@ export const disconnectCommand: Command = {
     },
 };
 
+// ── /music (control panel) ───────────────────────────────────────────────────
+
+export const musicCommand: Command = {
+    data: new SlashCommandBuilder()
+        .setName('music')
+        .setDescription('Open the live music control panel')
+        .setDMPermission(false),
+    async execute(interaction) {
+        await interaction.deferReply();
+        const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
+        if (!player || !player.queue.current) {
+            await interaction.editReply({ components: [musicIdleContainer()], flags: V2 });
+            return;
+        }
+        await interaction.editReply({ components: [nowPlayingContainer(player)], flags: V2 });
+        // Re-anchor the live panel to this fresh message so controls keep updating it.
+        const sent = await interaction.fetchReply().catch(() => null);
+        if (sent) player.set('npMessage', sent);
+    },
+};
+
 export const musicCommands: Command[] = [
+    musicCommand,
     playCommand,
     skipCommand,
     stopCommand,

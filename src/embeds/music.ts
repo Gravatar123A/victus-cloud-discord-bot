@@ -72,18 +72,47 @@ function progressBar(player: Player): string {
     return `${formatDuration(pos)} ${bar} ${formatDuration(dur)}`;
 }
 
-/** Transport controls. Buttons are validated by the music button handler. */
-export function controlRow(player?: Player): ActionRowBuilder<ButtonBuilder> {
+function loopShort(mode: string | undefined): string {
+    if (mode === 'track') return 'Loop: Track';
+    if (mode === 'queue') return 'Loop: Queue';
+    return 'Loop: Off';
+}
+
+/** Full transport control grid (3 rows). Buttons are validated by the handler. */
+export function controlRows(player?: Player): ActionRowBuilder<ButtonBuilder>[] {
     const paused = !!player?.paused;
-    return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:restart').setLabel('Restart').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId('music:pause')
             .setLabel(paused ? 'Resume' : 'Pause')
             .setStyle(paused ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('music:skip').setLabel('Skip').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('music:stop').setLabel('Stop').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId('music:loop').setLabel('Loop').setStyle(ButtonStyle.Secondary),
+    );
+    const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:voldown').setLabel('Vol −').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:volup').setLabel('Vol +').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:loop').setLabel(loopShort(player?.repeatMode)).setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:shuffle').setLabel('Shuffle').setStyle(ButtonStyle.Secondary),
+    );
+    const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId('music:queue').setLabel('Queue').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:refresh').setLabel('Refresh').setStyle(ButtonStyle.Secondary),
+    );
+    return [row1, row2, row3];
+}
+
+/** Idle control panel shown by /music when nothing is playing. */
+export function musicIdleContainer(): ContainerBuilder {
+    return ComponentsV2.baseContainer(ComponentsV2.Accents.primary).addTextDisplayComponents(
+        ComponentsV2.text(
+            `-# 🎵 VICTUS CLOUD MUSIC\n` +
+                `### Music Control Panel\n` +
+                `Nothing is playing right now.\n\n` +
+                `Use \`/play <song or link>\` to start — YouTube, SoundCloud, Bandcamp and direct links all work. ` +
+                `Then \`/music\` opens this live control panel with full transport controls.`,
+        ),
     );
 }
 
@@ -121,7 +150,7 @@ export function nowPlayingContainer(player: Player): ContainerBuilder {
     }
 
     c.addTextDisplayComponents(ComponentsV2.text(body));
-    c.addActionRowComponents(controlRow(player));
+    for (const row of controlRows(player)) c.addActionRowComponents(row);
     return c;
 }
 
