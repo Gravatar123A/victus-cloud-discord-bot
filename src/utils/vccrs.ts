@@ -99,6 +99,8 @@ const ACTION_LABELS: Record<string, string> = {
     daily_login: 'Daily login',
     invite: 'Invite reward',
     referral: 'Referral reward',
+    discord_message: 'Discord chat',
+    discord_voice: 'Discord voice',
 };
 
 export function actionLabel(action: string): string {

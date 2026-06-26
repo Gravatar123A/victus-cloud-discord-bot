@@ -13,9 +13,11 @@ import type {
     ModalSubmitInteraction,
     StringSelectMenuInteraction,
 } from 'discord.js';
+import type { Client } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { supabase } from '../services/supabase.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
+import { logger } from '../utils/logger.js';
 import {
     ECONOMY_PAGE_SIZE,
     adminContainer,
@@ -67,6 +69,34 @@ async function loadCtx(discordId: string): Promise<Ctx | null> {
 async function pushCoins(userId: string): Promise<void> {
     const p = await supabase.getUserProfile(userId).catch(() => null);
     if ((p as any)?.email) await supabase.setPaymenterCoins({ email: (p as any).email }, Number((p as any).total_cp ?? 0));
+}
+
+// Notify the recipient of a completed transfer via DM. Fails gracefully if the
+// recipient has DMs closed — never lets a DM error break the transfer flow.
+async function dmTransferRecipient(opts: {
+    client: Client;
+    toDiscordId: string;
+    fromDiscordId: string;
+    amount: number;
+    currencyLabel: string;
+    reason?: string;
+    newBalance?: number | null;
+}): Promise<void> {
+    try {
+        const user = await opts.client.users.fetch(opts.toDiscordId).catch(() => null);
+        if (!user) return;
+        const lines =
+            `You just received **${fmt(opts.amount)} ${opts.currencyLabel}** from <@${opts.fromDiscordId}>.\n\n` +
+            (opts.reason ? `> 📝 ${opts.reason}\n\n` : '') +
+            (opts.newBalance == null ? '' : `💼 Your new ${opts.currencyLabel} balance: **${fmt(opts.newBalance)}**\n\n`) +
+            `Open \`/economy\` any time to manage your wallet.`;
+        await user.send({
+            components: [ComponentsV2.successContainer('Incoming Transfer', lines)],
+            flags: V2,
+        });
+    } catch (error) {
+        logger.warn(`Transfer DM to ${opts.toDiscordId} failed (DMs likely closed):`, error);
+    }
 }
 
 function notLinked(): ContainerBuilder {
@@ -307,12 +337,24 @@ export const economyCommand: Command = {
 
             const toUserId = toLinked.user_id;
             const curLabel = cur === 'cp' ? 'CP' : 'Credits';
+            const client = interaction.client;
             const token = stashOp(async () => {
                 if (cur === 'cp') {
                     const r = await supabase.econTransferCp(ctx.userId, toUserId, amount, reason);
                     if (!r?.ok) return { ok: false, title: 'Transfer failed', body: r?.error || 'Something went wrong.' };
                     await pushCoins(ctx.userId);
                     await pushCoins(toUserId);
+                    // Notify the recipient (don't let a closed-DM error break the transfer).
+                    const recipient = await supabase.getUserProfile(toUserId).catch(() => null);
+                    await dmTransferRecipient({
+                        client,
+                        toDiscordId,
+                        fromDiscordId: discordId,
+                        amount,
+                        currencyLabel: 'Coins',
+                        reason,
+                        newBalance: recipient ? Number((recipient as any).total_cp ?? 0) : null,
+                    });
                     return { ok: true, title: 'Transfer complete', body: `⭐ Sent **${fmt(amount)} Coins** to <@${toDiscordId}>.\nNew balance: **${fmt(r.from_balance)} Coins**.` };
                 }
                 // Credits via Paymenter — debit sender, credit receiver, refund on failure.
@@ -327,6 +369,14 @@ export const economyCommand: Command = {
                     await supabase.adjustPaymenterCredits({ user_id: ctx.userId, mode: 'add', amount }).catch(() => undefined);
                     return { ok: false, title: 'Transfer failed', body: `Could not credit the recipient — your credits were refunded. (${(e as Error).message})` };
                 }
+                await dmTransferRecipient({
+                    client,
+                    toDiscordId,
+                    fromDiscordId: discordId,
+                    amount,
+                    currencyLabel: 'Credits',
+                    reason,
+                });
                 return { ok: true, title: 'Transfer complete', body: `💳 Sent **${fmt(amount)} Credits** to <@${toDiscordId}>.` };
             });
 

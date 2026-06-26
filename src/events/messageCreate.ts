@@ -9,6 +9,7 @@ import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
 import { handleTicketChannelMessage, mirrorAiReplyToTicket } from '../services/ticketBridge.js';
 import { isChannelSummoned } from '../services/summonedChannels.js';
+import { awardMessageXp } from '../services/activityXp.js';
 
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
@@ -129,6 +130,17 @@ export const messageCreateEvent: Event = {
     name: 'messageCreate',
     async execute(message: Message) {
         if (message.author.bot) return;
+
+        // Award XP for guild activity to linked users (per-user cooldown applied
+        // inside awardMessageXp). Skip DMs, system messages and command-like
+        // messages (slash commands aren't messageCreate, but ignore "!"/"/" too).
+        if (message.inGuild() && !message.system) {
+            const content = message.content.trim();
+            const looksLikeCommand = content.startsWith('/') || content.startsWith('!');
+            if (!looksLikeCommand) {
+                void awardMessageXp(message.author.id).catch(() => undefined);
+            }
+        }
 
         const summoned = message.inGuild() ? isChannelSummoned(message.channelId) : false;
 

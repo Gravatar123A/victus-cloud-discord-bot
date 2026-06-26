@@ -508,6 +508,29 @@ class SupabaseService {
         return data || [];
     }
 
+    /**
+     * Award XP to a linked user, mirroring how the website grants upload XP:
+     * bump profiles.total_xp via the increment_xp RPC and write a row to the XP
+     * ledger (cp_transactions). action_type drives the friendly label shown in
+     * the wallet's "Recent Activity (XP)" panel. Returns true on success.
+     */
+    async grantXp(userId: string, amount: number, actionType: string, metadata: Record<string, unknown> = {}): Promise<boolean> {
+        if (!userId || !Number.isFinite(amount) || amount <= 0) return false;
+        const { error: rpcError } = await this.client.rpc('increment_xp', { uid: userId, amount });
+        if (rpcError) {
+            logger.error('grantXp increment_xp failed:', rpcError);
+            return false;
+        }
+        const { error: ledgerError } = await this.client
+            .from('cp_transactions')
+            .insert({ user_id: userId, action_type: actionType, cp_earned: Math.floor(amount), metadata });
+        if (ledgerError) {
+            // XP already credited; ledger row is cosmetic, so don't fail hard.
+            logger.warn(`grantXp ledger insert failed: ${ledgerError.message}`);
+        }
+        return true;
+    }
+
     /** Total CP ledger entries for a user (for pagination). */
     async getCpTransactionCount(userId: string): Promise<number> {
         const { count, error } = await this.client

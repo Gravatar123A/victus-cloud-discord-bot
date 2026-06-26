@@ -81,6 +81,17 @@ export const config = {
         uptimePushUrl: process.env.UPTIME_KUMA_PUSH_URL || 'https://status.victuscloud.com/api/push/KPHJ8IOmDd',
     },
 
+    // Economy / XP rewards for Discord activity (mirrors website upload XP into
+    // profiles.total_xp via the increment_xp RPC + cp_transactions ledger).
+    economy: {
+        // XP awarded per eligible guild message (bots/DMs/commands ignored).
+        xpPerMessage: parseInt(process.env.ECON_XP_PER_MESSAGE || '15', 10),
+        // Per-user cooldown (seconds) between message XP awards, to curb spam.
+        messageXpCooldownSec: parseInt(process.env.ECON_MESSAGE_XP_COOLDOWN_SEC || '60', 10),
+        // XP awarded per full minute spent active in a voice channel.
+        xpPerVoiceMinute: parseInt(process.env.ECON_XP_PER_VOICE_MINUTE || '8', 10),
+    },
+
     // Victus Cloud Branding
     branding: {
         name: 'Victus Cloud',

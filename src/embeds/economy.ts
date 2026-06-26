@@ -98,11 +98,13 @@ export function cpDashboardContainer(o: DashboardOpts): ContainerBuilder {
         );
 
     if (o.recent?.length) {
+        // cp_transactions is the XP ledger (action_type + cp_earned mirrored into
+        // profiles.total_xp by the website), NOT the Coins ledger. Label as XP.
         const lines = o.recent.slice(0, 5).map((t) => {
             const amt = Number(t.cp_earned);
-            return `\`${amt >= 0 ? '+' : ''}${fmt(amt)} Coins\` · ${actionLabel(t.action_type)} · ${rel(t.created_at)}`;
+            return `\`${amt >= 0 ? '+' : ''}${fmt(amt)} XP\` · ${actionLabel(t.action_type)} · ${rel(t.created_at)}`;
         }).join('\n');
-        c.addTextDisplayComponents(ComponentsV2.text(`### 🧾 Recent Activity\n${lines}`));
+        c.addTextDisplayComponents(ComponentsV2.text(`### 🧾 Recent Activity (XP)\n${lines}`));
     }
 
     c.addTextDisplayComponents(ComponentsV2.text(`-# 🔄 Synced with victuscloud.com · updated ${clockNow()}`));
