@@ -9,10 +9,14 @@ import {
     ButtonStyle,
     ContainerBuilder,
     StringSelectMenuBuilder,
+    AttachmentBuilder,
 } from 'discord.js';
 import type { MessageActionRowComponentBuilder } from 'discord.js';
 import type { Player, Track, UnresolvedTrack } from 'lavalink-client';
 import { ComponentsV2 } from './componentsV2.js';
+import { Bloom } from 'musicard';
+import { logger } from '../utils/logger.js';
+import { config } from '../config.js';
 
 type AnyTrack = Track | UnresolvedTrack;
 
@@ -171,46 +175,68 @@ export function musicIdleContainer(): ContainerBuilder {
 }
 
 /** The public "Now Playing" panel with live transport controls. */
-export function nowPlayingContainer(player: Player): ContainerBuilder {
+export async function nowPlayingContainer(player: Player): Promise<{ container: ContainerBuilder; files: AttachmentBuilder[] }> {
     const track = player.queue.current;
     const c = ComponentsV2.baseContainer(ComponentsV2.Accents.purple);
 
     if (!track) {
         c.addTextDisplayComponents(ComponentsV2.text('### 🎵 Now Playing\n_Nothing is playing right now._'));
-        return c;
+        return { container: c, files: [] };
     }
 
     const info = trackInfo(track);
     const live = !!info?.isStream;
-    const art = info?.artworkUrl;
-    if (art) c.addMediaGalleryComponents(ComponentsV2.mediaGallery(art));
+    const duration = info?.duration ?? 0;
+    const pos = Math.min(player.position ?? 0, duration);
+
+    // Generate musicard Bloom image
+    let cardBuffer: Buffer;
+    try {
+        cardBuffer = await Bloom({
+            trackName: info?.title || 'Unknown Title',
+            artistName: info?.author || 'Unknown Artist',
+            albumArt: info?.artworkUrl || config.branding.logo,
+            fallbackArt: config.branding.logo,
+            isExplicit: false,
+            timeAdjust: {
+                timeStart: formatDuration(pos),
+                timeEnd: live ? 'LIVE' : formatDuration(duration)
+            },
+            progressBar: live ? 100 : (duration > 0 ? (pos / duration) * 100 : 0)
+        });
+    } catch (err) {
+        logger.error('Failed to generate musicard:', err);
+        const art = info?.artworkUrl;
+        if (art) c.addMediaGalleryComponents(ComponentsV2.mediaGallery(art));
+        cardBuffer = Buffer.alloc(0);
+    }
+
+    const files: AttachmentBuilder[] = [];
+    if (cardBuffer.length > 0) {
+        files.push(new AttachmentBuilder(cardBuffer, { name: 'musicard.png' }));
+        c.addMediaGalleryComponents(ComponentsV2.mediaGallery('attachment://musicard.png'));
+    }
 
     const source = info?.sourceName ?? 'stream';
     const badge = live ? '🔴 LIVE' : player.paused ? '⏸️ PAUSED' : '▶️ PLAYING';
 
-    // Header: branded eyebrow with source icon + live/playing badge.
-    let body = `-# ${sourceIcon(info?.sourceName)} VICTUS CLOUD MUSIC • ${source.toUpperCase()} • ${badge}\n`;
-    body += `### 🎵 Now Playing\n`;
-    body += `**[${escapeMd(info?.title)}](${info?.uri})**\n`;
-    body += `-# by ${escapeMd(info?.author || 'Unknown artist')}`;
-    if (!live && info?.duration) body += ` • \`${formatDuration(info.duration)}\``;
-    body += `\n\n`;
+    const reqId = requesterId(track);
+    let body = `-# ${sourceIcon(info?.sourceName)} VICTUS CLOUD MUSIC • ${source.toUpperCase()} • ${badge}\n` +
+        `### 🎵 Now Playing\n` +
+        `**[${escapeMd(info?.title)}](${info?.uri})**\n` +
+        `-# by ${escapeMd(info?.author || 'Unknown Artist')}\n\n`;
 
-    // Progress bar (or LIVE marker for streams).
-    body += `\`${progressBar(player)}\`\n\n`;
-
-    // Status line: playback state • volume • loop • requester.
     const statusBits = [
         player.paused ? '⏸️ Paused' : live ? '🔴 Live' : '▶️ Playing',
         `🔊 ${player.volume}%`,
-        repeatLabel(player.repeatMode),
+        `Loop: ${repeatLabel(player.repeatMode).replace(/^.. /, '')}`,
+        `Queue: ${player.queue.tracks.length}`,
     ];
-    body += statusBits.join('  •  ');
-    const reqId = requesterId(track);
-    if (reqId) body += `\n-# requested by <@${reqId}>`;
+    if (reqId) statusBits.push(`👤 <@${reqId}>`);
 
-    // Up Next list.
-    const upNext = player.queue.tracks.slice(0, 5) as AnyTrack[];
+    body += statusBits.join('  •  ');
+
+    const upNext = player.queue.tracks.slice(0, 3) as AnyTrack[];
     if (upNext.length) {
         const totalMs = (player.queue.tracks as AnyTrack[]).reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
         body += `\n\n### Up Next — ${player.queue.tracks.length} in queue • ${formatDuration(totalMs)}\n`;
@@ -226,7 +252,8 @@ export function nowPlayingContainer(player: Player): ContainerBuilder {
     c.addTextDisplayComponents(ComponentsV2.text(body));
     c.addSeparatorComponents(ComponentsV2.separator());
     for (const row of controlRows(player)) c.addActionRowComponents(row);
-    return c;
+
+    return { container: c, files };
 }
 
 /** Confirmation shown when a track (or playlist) is queued. */

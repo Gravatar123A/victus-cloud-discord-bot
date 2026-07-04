@@ -22,6 +22,11 @@ import { askCommand } from './ask.js';
 import { summonCommand } from './summon.js';
 import { economyCommand } from './economy.js';
 import { musicCommands } from './music/index.js';
+import { prefixCommand, setprefixCommand } from './prefix.js';
+import { embedCommand, embedListActionButtons, embedLinksRouter } from './embed.js';
+import { suggestCommand, suggestionCommand } from './suggest.js';
+import { giveawayCommand } from './giveaway.js';
+import { customcmdCommand } from './customcmd.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -47,6 +52,15 @@ const allCommands: Command[] = [
     askCommand,
     summonCommand,
     economyCommand,
+    prefixCommand,
+    setprefixCommand,
+    embedCommand,
+    embedListActionButtons,
+    embedLinksRouter,
+    suggestCommand,
+    suggestionCommand,
+    giveawayCommand,
+    customcmdCommand,
     ...musicCommands,
 ];
 
@@ -68,5 +82,7 @@ export async function loadCommands(client: Client): Promise<void> {
  * Get all command data for registration
  */
 export function getCommandData() {
-    return allCommands.map((cmd) => cmd.data.toJSON());
+    return allCommands
+        .filter((cmd) => !cmd.data.name.startsWith('_'))
+        .map((cmd) => cmd.data.toJSON());
 }

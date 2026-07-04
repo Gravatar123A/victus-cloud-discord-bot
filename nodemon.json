@@ -1,11 +1,11 @@
 {
     "watch": [
-        "src"
+        "bot/src"
     ],
     "ext": "ts,json",
     "ignore": [
-        "src/**/*.spec.ts",
+        "bot/src/**/*.spec.ts",
         "logs/*"
     ],
-    "exec": "tsx src/index.ts"
+    "exec": "tsx bot/src/index.ts"
 }

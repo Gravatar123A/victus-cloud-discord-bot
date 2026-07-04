@@ -207,8 +207,7 @@ export const playCommand: Command = {
             case 'pause': {
                 if (player.paused) await player.resume();
                 else await player.pause();
-                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-                return;
+                break;
             }
             case 'skip': {
                 if (!player.queue.tracks.length) {
@@ -227,8 +226,7 @@ export const playCommand: Command = {
             }
             case 'restart': {
                 await player.seek(0);
-                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-                return;
+                break;
             }
             case 'previous': {
                 const prev = player.queue.previous?.[0];
@@ -249,24 +247,20 @@ export const playCommand: Command = {
                 const delta = action === 'seekfwd' ? 10_000 : -10_000;
                 const target = Math.max(0, (player.position || 0) + delta);
                 await player.seek(target);
-                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-                return;
+                break;
             }
             case 'voldown': {
                 await player.setVolume(Math.max(0, player.volume - 10));
-                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-                return;
+                break;
             }
             case 'volup': {
                 await player.setVolume(Math.min(150, player.volume + 10));
-                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-                return;
+                break;
             }
             case 'loop': {
                 const next = player.repeatMode === 'off' ? 'track' : player.repeatMode === 'track' ? 'queue' : 'off';
                 await player.setRepeatMode(next);
-                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-                return;
+                break;
             }
             case 'shuffle': {
                 if (player.queue.tracks.length < 2) {
@@ -274,12 +268,10 @@ export const playCommand: Command = {
                     return;
                 }
                 await player.queue.shuffle();
-                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-                return;
+                break;
             }
             case 'refresh': {
-                await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-                return;
+                break;
             }
             case 'queue': {
                 await interaction.reply({ components: [queueContainer(player, 0)], flags: EPH | V2 });
@@ -287,7 +279,11 @@ export const playCommand: Command = {
             }
             default:
                 await interaction.reply({ content: 'Unknown control.', flags: EPH });
+                return;
         }
+
+        const payload = await nowPlayingContainer(player);
+        await interaction.update({ components: [payload.container], files: payload.files, flags: V2 });
     },
 
     // Overflow controls from the `music:select` string-select menu.
@@ -310,29 +306,25 @@ export const playCommand: Command = {
         if (value.startsWith('vol:')) {
             const level = Math.max(0, Math.min(150, Number(value.slice(4)) || 0));
             await player.setVolume(level);
-            await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-            return;
-        }
-        if (value.startsWith('loop:')) {
+        } else if (value.startsWith('loop:')) {
             const mode = value.slice(5) as 'off' | 'track' | 'queue';
             await player.setRepeatMode(mode);
-            await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
-            return;
-        }
-        if (value === 'clear') {
+        } else if (value === 'clear') {
             if (!player.queue.tracks.length) {
                 await interaction.reply({ ...info('Queue already empty', 'There are no upcoming tracks to clear.'), flags: EPH | V2 });
                 return;
             }
             const removed = player.queue.tracks.length;
             await player.queue.splice(0, player.queue.tracks.length);
-            await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+            
+            const payload = await nowPlayingContainer(player);
+            await interaction.update({ components: [payload.container], files: payload.files, flags: V2 });
             await interaction.followUp({ ...info('Queue cleared', `Removed **${removed}** upcoming track${removed === 1 ? '' : 's'}.`), flags: EPH | V2 });
             return;
         }
 
-        // Unknown option — acknowledge silently to avoid "interaction failed".
-        await interaction.update({ components: [nowPlayingContainer(player)], flags: V2 });
+        const payload = await nowPlayingContainer(player);
+        await interaction.update({ components: [payload.container], files: payload.files, flags: V2 });
     },
 };
 
@@ -435,7 +427,8 @@ export const nowplayingCommand: Command = {
             await interaction.editReply(info('Nothing is playing', 'Start a track with `/play`.'));
             return;
         }
-        await interaction.editReply({ components: [nowPlayingContainer(player)], flags: V2 });
+        const payload = await nowPlayingContainer(player);
+        await interaction.editReply({ components: [payload.container], files: payload.files, flags: V2 });
         // Re-anchor the live panel to this fresh message.
         const sent = await interaction.fetchReply().catch(() => null);
         if (sent) player.set('npMessage', sent);
@@ -546,7 +539,8 @@ export const musicCommand: Command = {
             await interaction.editReply({ components: [musicIdleContainer()], flags: V2 });
             return;
         }
-        await interaction.editReply({ components: [nowPlayingContainer(player)], flags: V2 });
+        const payload = await nowPlayingContainer(player);
+        await interaction.editReply({ components: [payload.container], files: payload.files, flags: V2 });
         // Re-anchor the live panel to this fresh message so controls keep updating it.
         const sent = await interaction.fetchReply().catch(() => null);
         if (sent) player.set('npMessage', sent);

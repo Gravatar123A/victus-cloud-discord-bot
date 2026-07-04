@@ -1,7 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import type { BotSettings, LinkedAccount, LinkToken, UserProfile } from '../types/index.js';
+import type { 
+    BotSettings, LinkedAccount, LinkToken, UserProfile,
+    CustomEmbed, EmbedSettings, Suggestion, SuggestionVote, Giveaway, CustomCommand
+} from '../types/index.js';
 import { localSettings } from './localSettings.js';
 
 type CreditBalance = {
@@ -97,7 +100,7 @@ async function describeFunctionError(error: unknown): Promise<string> {
 }
 
 class SupabaseService {
-    private client: SupabaseClient;
+    public client: SupabaseClient;
 
     constructor() {
         // Create client with service role key and auth bypass
@@ -1635,6 +1638,461 @@ class SupabaseService {
 
         if (error) {
             logger.error('Failed to mark Discord DM failed:', error);
+            return false;
+        }
+        return true;
+    }
+
+    // ============================================
+    // Custom Embeds
+    // ============================================
+
+    async getCustomEmbed(guildId: string, name: string): Promise<CustomEmbed | null> {
+        const { data, error } = await this.client
+            .from('custom_embeds')
+            .select('*')
+            .eq('guild_id', guildId)
+            .eq('name', name)
+            .maybeSingle();
+
+        if (error) {
+            logger.error(`Failed to get custom embed ${name} for ${guildId}:`, error);
+            return null;
+        }
+        return data;
+    }
+
+    async saveCustomEmbed(guildId: string, name: string, embed: Partial<CustomEmbed>): Promise<boolean> {
+        const { error } = await this.client
+            .from('custom_embeds')
+            .upsert({
+                guild_id: guildId,
+                name: name,
+                ...embed,
+                updated_at: new Date().toISOString()
+            });
+
+        if (error) {
+            logger.error(`Failed to save custom embed ${name} for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async deleteCustomEmbed(guildId: string, name: string): Promise<boolean> {
+        const { error } = await this.client
+            .from('custom_embeds')
+            .delete()
+            .eq('guild_id', guildId)
+            .eq('name', name);
+
+        if (error) {
+            logger.error(`Failed to delete custom embed ${name} for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async listCustomEmbeds(guildId: string): Promise<CustomEmbed[]> {
+        const { data, error } = await this.client
+            .from('custom_embeds')
+            .select('*')
+            .eq('guild_id', guildId)
+            .order('name', { ascending: true });
+
+        if (error) {
+            logger.error(`Failed to list custom embeds for ${guildId}:`, error);
+            return [];
+        }
+        return data || [];
+    }
+
+    async getEmbedSettings(guildId: string): Promise<EmbedSettings | null> {
+        const { data, error } = await this.client
+            .from('embed_settings')
+            .select('*')
+            .eq('guild_id', guildId)
+            .maybeSingle();
+
+        if (error) {
+            logger.error(`Failed to get embed settings for ${guildId}:`, error);
+            return null;
+        }
+        return data;
+    }
+
+    async updateEmbedSettings(guildId: string, settings: Partial<EmbedSettings>): Promise<boolean> {
+        const { error } = await this.client
+            .from('embed_settings')
+            .upsert({
+                guild_id: guildId,
+                ...settings,
+                updated_at: new Date().toISOString()
+            });
+
+        if (error) {
+            logger.error(`Failed to update embed settings for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    // ============================================
+    // Suggestions
+    // ============================================
+
+    async createSuggestion(
+        guildId: string,
+        channelId: string,
+        messageId: string,
+        userId: string,
+        authorTag: string,
+        title: string,
+        content: string
+    ): Promise<Suggestion | null> {
+        const { data, error } = await this.client
+            .from('suggestions')
+            .insert({
+                guild_id: guildId,
+                channel_id: channelId,
+                message_id: messageId,
+                user_id: userId,
+                author_tag: authorTag,
+                title: title,
+                content: content,
+                status: 'pending'
+            })
+            .select()
+            .single();
+
+        if (error) {
+            logger.error('Failed to create suggestion:', error);
+            return null;
+        }
+        return data;
+    }
+
+    async getSuggestion(id: number): Promise<Suggestion | null> {
+        const { data, error } = await this.client
+            .from('suggestions')
+            .select('*')
+            .eq('id', id)
+            .maybeSingle();
+
+        if (error) {
+            logger.error(`Failed to get suggestion #${id}:`, error);
+            return null;
+        }
+        return data;
+    }
+
+    async getSuggestionByMessage(messageId: string): Promise<Suggestion | null> {
+        const { data, error } = await this.client
+            .from('suggestions')
+            .select('*')
+            .eq('message_id', messageId)
+            .maybeSingle();
+
+        if (error) {
+            logger.error(`Failed to get suggestion for message ${messageId}:`, error);
+            return null;
+        }
+        return data;
+    }
+
+    async updateSuggestionStatus(id: number, status: 'pending' | 'approved' | 'denied' | 'implemented'): Promise<boolean> {
+        const { error } = await this.client
+            .from('suggestions')
+            .update({ status: status, updated_at: new Date().toISOString() })
+            .eq('id', id);
+
+        if (error) {
+            logger.error(`Failed to update suggestion status for #${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async toggleSuggestionLock(id: number): Promise<boolean> {
+        const suggestion = await this.getSuggestion(id);
+        if (!suggestion) return false;
+
+        const { error } = await this.client
+            .from('suggestions')
+            .update({ locked: !suggestion.locked, updated_at: new Date().toISOString() })
+            .eq('id', id);
+
+        if (error) {
+            logger.error(`Failed to toggle suggestion lock for #${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async deleteSuggestion(id: number): Promise<boolean> {
+        const { error } = await this.client
+            .from('suggestions')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            logger.error(`Failed to delete suggestion #${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async addSuggestionVote(
+        suggestionId: number,
+        userId: string,
+        username: string,
+        voteType: 'up' | 'down'
+    ): Promise<boolean> {
+        const { error } = await this.client
+            .from('suggestion_votes')
+            .upsert(
+                {
+                    suggestion_id: suggestionId,
+                    user_id: userId,
+                    username: username,
+                    vote_type: voteType,
+                    created_at: new Date().toISOString()
+                },
+                { onConflict: 'suggestion_id,user_id' }
+            );
+
+        if (error) {
+            logger.error(`Failed to add suggestion vote for #${suggestionId} by ${userId}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async removeSuggestionVote(suggestionId: number, userId: string): Promise<boolean> {
+        const { error } = await this.client
+            .from('suggestion_votes')
+            .delete()
+            .eq('suggestion_id', suggestionId)
+            .eq('user_id', userId);
+
+        if (error) {
+            logger.error(`Failed to remove suggestion vote for #${suggestionId} by ${userId}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async getSuggestionVoteCounts(suggestionId: number): Promise<{ up: number; down: number }> {
+        const { data, error } = await this.client
+            .from('suggestion_votes')
+            .select('vote_type')
+            .eq('suggestion_id', suggestionId);
+
+        if (error) {
+            logger.error(`Failed to get suggestion vote counts for #${suggestionId}:`, error);
+            return { up: 0, down: 0 };
+        }
+
+        const counts = { up: 0, down: 0 };
+        data?.forEach((v: { vote_type: string }) => {
+            if (v.vote_type === 'up') counts.up++;
+            else if (v.vote_type === 'down') counts.down++;
+        });
+        return counts;
+    }
+
+    async getSuggestionVotes(suggestionId: number): Promise<SuggestionVote[]> {
+        const { data, error } = await this.client
+            .from('suggestion_votes')
+            .select('*')
+            .eq('suggestion_id', suggestionId)
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            logger.error(`Failed to get suggestion votes for #${suggestionId}:`, error);
+            return [];
+        }
+        return data || [];
+    }
+
+    // ============================================
+    // Giveaways
+    // ============================================
+
+    async createGiveaway(
+        guildId: string,
+        channelId: string,
+        messageId: string,
+        prize: string,
+        duration: string,
+        winnersCount: number,
+        endsAt: Date,
+        hostId: string,
+        requirements: any,
+        bonusEntries: any
+    ): Promise<Giveaway | null> {
+        const { data, error } = await this.client
+            .from('giveaways')
+            .insert({
+                guild_id: guildId,
+                channel_id: channelId,
+                message_id: messageId,
+                prize: prize,
+                duration: duration,
+                winners_count: winnersCount,
+                ends_at: endsAt.toISOString(),
+                host_id: hostId,
+                requirements: requirements,
+                bonus_entries: bonusEntries,
+                status: 'active',
+                participants: [],
+                winners: []
+            })
+            .select()
+            .single();
+
+        if (error) {
+            logger.error('Failed to create giveaway:', error);
+            return null;
+        }
+        return data;
+    }
+
+    async getGiveaway(idOrMessageId: string): Promise<Giveaway | null> {
+        const { data, error } = await this.client
+            .from('giveaways')
+            .select('*')
+            .or(`id.eq.${idOrMessageId},message_id.eq.${idOrMessageId}`)
+            .maybeSingle();
+
+        if (error) {
+            logger.error(`Failed to get giveaway ${idOrMessageId}:`, error);
+            return null;
+        }
+        return data;
+    }
+
+    async updateGiveaway(id: string, updates: Partial<Giveaway>): Promise<boolean> {
+        const { error } = await this.client
+            .from('giveaways')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('id', id);
+
+        if (error) {
+            logger.error(`Failed to update giveaway ${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async listGiveaways(guildId: string, activeOnly = false): Promise<Giveaway[]> {
+        let query = this.client
+            .from('giveaways')
+            .select('*')
+            .eq('guild_id', guildId);
+
+        if (activeOnly) {
+            query = query.eq('status', 'active');
+        }
+
+        const { data, error } = await query.order('created_at', { ascending: false });
+
+        if (error) {
+            logger.error(`Failed to list giveaways for ${guildId}:`, error);
+            return [];
+        }
+        return data || [];
+    }
+
+    async deleteGiveaway(id: string): Promise<boolean> {
+        const { error } = await this.client
+            .from('giveaways')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            logger.error(`Failed to delete giveaway ${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    // ============================================
+    // Custom Commands
+    // ============================================
+
+    async createCustomCommand(guildId: string, cmd: Partial<CustomCommand>): Promise<boolean> {
+        const { error } = await this.client
+            .from('custom_commands')
+            .upsert({
+                guild_id: guildId,
+                name: cmd.name,
+                ...cmd,
+                updated_at: new Date().toISOString()
+            });
+
+        if (error) {
+            logger.error(`Failed to create custom command ${cmd.name} for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async deleteCustomCommand(guildId: string, name: string): Promise<boolean> {
+        const { error } = await this.client
+            .from('custom_commands')
+            .delete()
+            .eq('guild_id', guildId)
+            .eq('name', name);
+
+        if (error) {
+            logger.error(`Failed to delete custom command ${name} for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+
+    async listCustomCommands(guildId: string): Promise<CustomCommand[]> {
+        const { data, error } = await this.client
+            .from('custom_commands')
+            .select('*')
+            .eq('guild_id', guildId)
+            .order('name', { ascending: true });
+
+        if (error) {
+            logger.error(`Failed to list custom commands for ${guildId}:`, error);
+            return [];
+        }
+        return data || [];
+    }
+
+    async getCustomCommand(guildId: string, name: string): Promise<CustomCommand | null> {
+        const { data, error } = await this.client
+            .from('custom_commands')
+            .select('*')
+            .eq('guild_id', guildId);
+
+        if (error) {
+            logger.error(`Failed to get custom command ${name} for ${guildId}:`, error);
+            return null;
+        }
+        if (!data) return null;
+
+        const command = data.find(c => c.name.toLowerCase() === name.toLowerCase() || 
+            (Array.isArray(c.aliases) && c.aliases.some((a: string) => a.toLowerCase() === name.toLowerCase()))
+        );
+        return command || null;
+    }
+
+    async updateCustomCommand(guildId: string, name: string, updates: Partial<CustomCommand>): Promise<boolean> {
+        const { error } = await this.client
+            .from('custom_commands')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('guild_id', guildId)
+            .eq('name', name);
+
+        if (error) {
+            logger.error(`Failed to update custom command ${name} for ${guildId}:`, error);
             return false;
         }
         return true;

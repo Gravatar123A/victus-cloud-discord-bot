@@ -9,6 +9,8 @@ import type { Event } from '../types/index.js';
 import { registerApplicationCommands } from '../utils/registerCommands.js';
 import { initTicketBridge } from '../services/ticketBridge.js';
 import { startUptimeHeartbeat } from '../services/uptimeHeartbeat.js';
+import { initializeFonts } from 'musicard';
+import { startGiveawayScheduler } from '../commands/giveaway.js';
 
 let dmQueueProcessing = false;
 
@@ -51,6 +53,13 @@ export const readyEvent: Event = {
     once: true,
     async execute(client: Client<true>) {
         logger.info(`Logged in as ${client.user.tag}`);
+
+        // Initialize musicard fonts
+        try {
+            initializeFonts();
+        } catch (err) {
+            logger.error('Failed to initialize musicard fonts:', err);
+        }
         logger.info(`Serving ${client.guilds.cache.size} guilds`);
 
         // Connect to the Lavalink music node now that the gateway is ready.
@@ -104,6 +113,9 @@ export const readyEvent: Event = {
 
         // Keep the Uptime Kuma "Discord Bot" push monitor green.
         startUptimeHeartbeat(client);
+
+        // Start background giveaway ends_at checks scheduler
+        startGiveawayScheduler(client);
 
         await processAdminDmQueue(client);
         setInterval(() => {
