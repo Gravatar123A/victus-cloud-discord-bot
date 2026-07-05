@@ -8,6 +8,7 @@ import { interactionCreateEvent } from './interactionCreate.js';
 import { messageCreateEvent } from './messageCreate.js';
 import { voiceStateUpdateEvent } from './voiceStateUpdate.js';
 import { guildMemberAddEvent } from './guildMemberAdd.js';
+import { channelDeleteEvent } from './channelDelete.js';
 
 const events: Event[] = [
     readyEvent,
@@ -15,6 +16,7 @@ const events: Event[] = [
     messageCreateEvent,
     voiceStateUpdateEvent,
     guildMemberAddEvent,
+    channelDeleteEvent,
 ];
 
 /**
