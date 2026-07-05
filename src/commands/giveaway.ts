@@ -501,6 +501,19 @@ export const giveawayCommand: Command = {
             const member = interaction.member as GuildMember | null;
             if (!member) return;
 
+            // 0. Account Linking Check (Mandatory for all entrants)
+            const linked = await supabase.getLinkedAccount(interaction.user.id).catch(() => null);
+            if (!linked) {
+                await interaction.reply({
+                    components: [ComponentsV2.errorContainer(
+                        'Account Not Linked', 
+                        'You must link your Discord account to Victus Cloud to participate in giveaways. Use the link panel or `/account` to link your profile.'
+                    )],
+                    flags: V2 | EPH
+                });
+                return;
+            }
+
             // 1. Role requirements
             const rId = giveaway.requirements?.roles?.[0];
             if (rId) {
@@ -517,13 +530,10 @@ export const giveawayCommand: Command = {
             // 2. Level requirement
             const lvl = giveaway.requirements?.level ?? 0;
             if (lvl > 0) {
-                const linked = await supabase.getLinkedAccount(interaction.user.id).catch(() => null);
                 let level = 0;
-                if (linked) {
-                    const profile = await supabase.getUserProfile(linked.user_id).catch(() => null);
-                    if (profile) {
-                        level = calculateLevel(Number(profile.total_xp ?? 0));
-                    }
+                const profile = await supabase.getUserProfile(linked.user_id).catch(() => null);
+                if (profile) {
+                    level = calculateLevel(Number(profile.total_xp ?? 0));
                 }
 
                 if (level < lvl) {
