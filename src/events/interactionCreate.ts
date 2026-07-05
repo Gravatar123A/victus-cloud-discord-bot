@@ -109,7 +109,7 @@ export const interactionCreateEvent: Event = {
         }
 
         // Handle select menus
-        else if (interaction.isStringSelectMenu()) {
+        else if (interaction.isAnySelectMenu()) {
             const customId = interaction.customId;
 
             // Try each command's select handler, but only stop once one has
@@ -120,7 +120,7 @@ export const interactionCreateEvent: Event = {
             for (const [, command] of interaction.client.commands) {
                 if (command.handleSelectMenu) {
                     try {
-                        await command.handleSelectMenu(interaction);
+                        await command.handleSelectMenu(interaction as any);
                         if (interaction.replied || interaction.deferred) return;
                     } catch (error) {
                         logger.error(`Error handling select menu ${customId}:`, error);
