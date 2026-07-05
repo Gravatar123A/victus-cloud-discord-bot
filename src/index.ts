@@ -21,6 +21,14 @@ declare module 'discord.js' {
 async function main() {
     logger.info('🚀 Starting Victus Cloud Discord Bot...');
 
+    // Run migration of local JSON data to Supabase
+    try {
+        const { migrateLocalDataToSupabase } = await import('./services/migrateLocalData.js');
+        await migrateLocalDataToSupabase();
+    } catch (err) {
+        logger.error('Failed to run local data migration:', err);
+    }
+
     // Create client with required intents
     const client = new Client({
         intents: [
