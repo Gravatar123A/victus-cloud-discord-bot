@@ -187,8 +187,8 @@ export function buildFinalEmbedPayload(session: any): any {
     const c = ComponentsV2.baseContainer(accent);
 
     const imageUrl = session.imageUrl || session.image_url;
-    if (imageUrl) {
-        c.addMediaGalleryComponents(ComponentsV2.mediaGallery(imageUrl));
+    if (imageUrl && typeof imageUrl === 'string' && (imageUrl.trim().startsWith('http') || imageUrl.trim().startsWith('attachment://'))) {
+        c.addMediaGalleryComponents(ComponentsV2.mediaGallery(imageUrl.trim()));
     }
     // Thumbnails are not supported by ContainerBuilder directly. Image URL is displayed as a media gallery component if provided.
 

@@ -153,8 +153,8 @@ export async function buildWelcomePayload(config: WelcomeConfig, member: any): P
     const parsedColor = parseInt(config.embedColor.replace('#', ''), 16) || ComponentsV2.Accents.primary;
     const c = ComponentsV2.baseContainer(parsedColor);
     
-    if (config.embedImage) {
-        c.addMediaGalleryComponents(ComponentsV2.mediaGallery(config.embedImage));
+    if (config.embedImage && typeof config.embedImage === 'string' && config.embedImage.trim().startsWith('http')) {
+        c.addMediaGalleryComponents(ComponentsV2.mediaGallery(config.embedImage.trim()));
     }
     
     const title = formatWelcomeMessage(config.embedTitle, member);
