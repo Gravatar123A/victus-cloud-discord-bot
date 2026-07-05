@@ -27,6 +27,8 @@ import { embedCommand, embedListActionButtons, embedLinksRouter } from './embed.
 import { suggestCommand, suggestionCommand } from './suggest.js';
 import { giveawayCommand } from './giveaway.js';
 import { customcmdCommand } from './customcmd.js';
+import { welcomeCommand } from './welcome.js';
+import { staffAppCommand } from './staff-app.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -61,6 +63,8 @@ const allCommands: Command[] = [
     suggestionCommand,
     giveawayCommand,
     customcmdCommand,
+    welcomeCommand,
+    staffAppCommand,
     ...musicCommands,
 ];
 
