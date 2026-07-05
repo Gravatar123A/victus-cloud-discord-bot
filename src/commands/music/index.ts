@@ -112,10 +112,10 @@ function info(title: string, body: string) {
 export const playCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('play')
-        .setDescription('Play a song or playlist (YouTube, SoundCloud, or a direct link)')
+        .setDescription('Play a song or playlist (YouTube, Spotify, SoundCloud, or a direct link)')
         .setDMPermission(false)
         .addStringOption((o) =>
-            o.setName('query').setDescription('Song name or URL').setRequired(true).setMaxLength(500),
+            o.setName('query').setDescription('Song name, Spotify/YouTube/SoundCloud URL, or playlist link').setRequired(true).setMaxLength(500),
         ),
 
     async execute(interaction: ChatInputCommandInteraction) {
@@ -146,9 +146,22 @@ export const playCommand: Command = {
         }
         if (!player.connected) await player.connect();
 
+        // Detect streaming service URLs — pass them raw so LavaSrc resolves them.
+        // Plain text queries get the configured default search platform prefix.
+        const isUrl = /^https?:\/\//i.test(query);
+        const isSpotify = /open\.spotify\.com/i.test(query);
+        const isDeezer = /deezer\.com/i.test(query);
+        const isAppleMusic = /music\.apple\.com/i.test(query);
+        const isStreamingService = isSpotify || isDeezer || isAppleMusic;
+
         let res: SearchOutcome;
         try {
-            res = await player.search({ query }, interaction.user);
+            // For streaming service URLs and direct URLs, pass as-is.
+            // For plain text queries, use the configured search source.
+            const searchQuery = isUrl
+                ? { query }
+                : { query, source: config.lavalink.defaultSource as any };
+            res = await player.search(searchQuery, interaction.user);
         } catch (error) {
             logger.error('🎵 Lavalink search failed:', error);
             await interaction.editReply({
