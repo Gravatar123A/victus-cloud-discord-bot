@@ -36,6 +36,7 @@ import {
 import { refreshNowPlaying } from '../../services/music.js';
 
 const EPH = MessageFlags.Ephemeral;
+const V2 = ComponentsV2.IS_COMPONENTS_V2;
 
 // ── shared helpers ──────────────────────────────────────────────────────────
 
@@ -461,7 +462,7 @@ export const nowplayingCommand: Command = {
             return;
         }
         const payload = await nowPlayingContainer(player);
-        await interaction.editReply({ embeds: payload.embeds, components: payload.components });
+        await interaction.editReply({ embeds: payload.embeds, components: payload.components, files: payload.files });
         // Re-anchor the live panel to this fresh message.
         const sent = await interaction.fetchReply().catch(() => null);
         if (sent) player.set('npMessage', sent);
@@ -574,11 +575,11 @@ export const musicCommand: Command = {
         const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
         if (!player || !player.queue.current) {
             const embed = musicIdleContainer();
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.editReply({ embeds: [embed], components: [] });
             return;
         }
         const payload = await nowPlayingContainer(player);
-        await interaction.editReply({ embeds: payload.embeds, components: payload.components });
+        await interaction.editReply({ embeds: payload.embeds, components: payload.components, files: payload.files });
         // Re-anchor the live panel to this fresh message so controls keep updating it.
         const sent = await interaction.fetchReply().catch(() => null);
         if (sent) player.set('npMessage', sent);

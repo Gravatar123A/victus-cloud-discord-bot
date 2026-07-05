@@ -79,18 +79,11 @@ export const playlistCommand: Command = {
                 const name = interaction.options.getString('name', true).trim();
                 await playlistService.create(guildId, userId, name);
                 
-                if (isPrefix) {
-                    const embed = new EmbedBuilder()
-                        .setColor(0x10b981)
-                        .setTitle('✅ Playlist Created')
-                        .setDescription(`Created playlist **${escapeMd(name)}** successfully.`);
-                    await interaction.reply({ embeds: [embed] });
-                } else {
-                    await interaction.reply({
-                        components: [ComponentsV2.successContainer('Playlist Created', `Created playlist **${escapeMd(name)}** successfully. Use \`/playlist add\` to add tracks.`)],
-                        flags: V2 | EPH
-                    });
-                }
+                const embed = new EmbedBuilder()
+                    .setColor(0x10b981)
+                    .setTitle('☑️ Playlist Created')
+                    .setDescription(`Created playlist **${escapeMd(name)}** successfully. Use \`/playlist add\` to add tracks.`);
+                await interaction.reply({ embeds: [embed], flags: EPH });
             }
             else if (sub === 'delete') {
                 const name = interaction.options.getString('name', true).trim();
@@ -101,36 +94,22 @@ export const playlistCommand: Command = {
                     return;
                 }
 
-                if (isPrefix) {
-                    const embed = new EmbedBuilder()
-                        .setColor(0xef4444)
-                        .setTitle('🗑️ Playlist Deleted')
-                        .setDescription(`Deleted playlist **${escapeMd(name)}**.`);
-                    await interaction.reply({ embeds: [embed] });
-                } else {
-                    await interaction.reply({
-                        components: [ComponentsV2.successContainer('Playlist Deleted', `Deleted playlist **${escapeMd(name)}** successfully.`)],
-                        flags: V2 | EPH
-                    });
-                }
+                const embed = new EmbedBuilder()
+                    .setColor(0x10b981)
+                    .setTitle('🗑️ Playlist Deleted')
+                    .setDescription(`Deleted playlist **${escapeMd(name)}** successfully.`);
+                await interaction.reply({ embeds: [embed], flags: EPH });
             }
             else if (sub === 'rename') {
                 const name = interaction.options.getString('name', true).trim();
                 const newName = interaction.options.getString('new_name', true).trim();
                 await playlistService.rename(guildId, userId, name, newName);
 
-                if (isPrefix) {
-                    const embed = new EmbedBuilder()
-                        .setColor(0x10b981)
-                        .setTitle('✏️ Playlist Renamed')
-                        .setDescription(`Renamed playlist **${escapeMd(name)}** to **${escapeMd(newName)}**.`);
-                    await interaction.reply({ embeds: [embed] });
-                } else {
-                    await interaction.reply({
-                        components: [ComponentsV2.successContainer('Playlist Renamed', `Renamed playlist **${escapeMd(name)}** to **${escapeMd(newName)}** successfully.`)],
-                        flags: V2 | EPH
-                    });
-                }
+                const embed = new EmbedBuilder()
+                    .setColor(0x10b981)
+                    .setTitle('✏️ Playlist Renamed')
+                    .setDescription(`Renamed playlist **${escapeMd(name)}** to **${escapeMd(newName)}** successfully.`);
+                await interaction.reply({ embeds: [embed], flags: EPH });
             }
             else if (sub === 'add') {
                 if (!isPrefix) await interaction.deferReply({ flags: EPH });
@@ -218,18 +197,11 @@ export const playlistCommand: Command = {
                 const removedTrack = playlist.tracks[index];
                 await playlistService.removeTrack(guildId, userId, name, index);
 
-                if (isPrefix) {
-                    const embed = new EmbedBuilder()
-                        .setColor(0xef4444)
-                        .setTitle('❌ Track Removed')
-                        .setDescription(`Removed **${escapeMd(removedTrack.title)}** from playlist **${escapeMd(playlist.name)}**.`);
-                    await interaction.reply({ embeds: [embed] });
-                } else {
-                    await interaction.reply({
-                        components: [ComponentsV2.successContainer('Track Removed', `Removed **${escapeMd(removedTrack.title)}** from playlist **${escapeMd(playlist.name)}** successfully.`)],
-                        flags: V2 | EPH
-                    });
-                }
+                const embed = new EmbedBuilder()
+                    .setColor(0x10b981)
+                    .setTitle('☑️ Track Removed')
+                    .setDescription(`Removed **${escapeMd(removedTrack.title)}** from playlist **${escapeMd(playlist.name)}** successfully.`);
+                await interaction.reply({ embeds: [embed], flags: EPH });
             }
             else if (sub === 'list') {
                 const playlists = await playlistService.getAll(guildId, userId);

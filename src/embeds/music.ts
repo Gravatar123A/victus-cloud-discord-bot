@@ -9,7 +9,6 @@ import {
     EmbedBuilder,
     AttachmentBuilder,
 } from 'discord.js';
-import type { MessageActionRowComponentBuilder } from 'discord.js';
 import type { Player, Track, UnresolvedTrack } from 'lavalink-client';
 import { Bloom } from 'musicard';
 import { config } from '../config.js';
@@ -61,7 +60,7 @@ function requesterId(t: AnyTrack): string | null {
 /** Idle control panel shown by /music when nothing is playing. */
 export function musicIdleContainer(): EmbedBuilder {
     return new EmbedBuilder()
-        .setColor(config.branding.color)
+        .setColor(0x6366f1) // Indigo
         .setTitle('🎵 Music System')
         .setDescription(
             'Nothing is playing right now.\n\n' +
@@ -75,7 +74,7 @@ export async function nowPlayingContainer(player: Player): Promise<{ embeds: Emb
     const track = player.queue.current;
     if (!track) {
         const embed = new EmbedBuilder()
-            .setColor(config.branding.color)
+            .setColor(0x6366f1)
             .setTitle('🎵 Now Playing')
             .setDescription('Nothing is playing right now.');
         return { embeds: [embed], components: [], files: [] };
@@ -108,13 +107,13 @@ export async function nowPlayingContainer(player: Player): Promise<{ embeds: Emb
 
     const files: AttachmentBuilder[] = [];
     const embed = new EmbedBuilder()
-        .setColor(config.branding.color)
+        .setColor(0x8b5cf6) // Purple
         .setTitle(info?.title || 'Unknown Title')
         .setURL(info?.uri || null)
         .setDescription(
-            `• **Author:** ${escapeMd(info?.author || 'Unknown Artist')}\n` +
-            `• **Duration:** \`${formatDuration(pos)} / ${formatDuration(duration)}\`\n` +
-            `• **Requester:** ${reqId ? `<@${reqId}>` : 'Unknown'}`
+            `👤 **Artist:** ${escapeMd(info?.author || 'Unknown Artist')}\n` +
+            `⏱️ **Duration:** \`${formatDuration(pos)} / ${formatDuration(duration)}\`\n` +
+            `🙋 **Requester:** ${reqId ? `<@${reqId}>` : 'Unknown'}`
         );
 
     if (cardBuffer.length > 0) {
@@ -205,7 +204,7 @@ export function queueContainer(player: Player, page = 0): EmbedBuilder {
     const upcoming = player.queue.tracks as AnyTrack[];
 
     const embed = new EmbedBuilder()
-        .setColor(config.branding.color)
+        .setColor(0x6366f1)
         .setTitle('ℹ️ Music Queue');
 
     let description = '';
