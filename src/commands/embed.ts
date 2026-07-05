@@ -182,29 +182,39 @@ function renderWizardPage(session: any): any {
 }
 
 export function buildFinalEmbedPayload(session: any): any {
-    const accent = session.color ? (PRESET_COLORS[session.color.toLowerCase()] || parseInt(session.color.replace('#', ''), 16) || ComponentsV2.Accents.primary) : ComponentsV2.Accents.primary;
+    const color = session.color;
+    const accent = color ? (PRESET_COLORS[color.toLowerCase()] || parseInt(color.replace('#', ''), 16) || ComponentsV2.Accents.primary) : ComponentsV2.Accents.primary;
     const c = ComponentsV2.baseContainer(accent);
 
-    if (session.imageUrl) {
-        c.addMediaGalleryComponents(ComponentsV2.mediaGallery(session.imageUrl));
+    const imageUrl = session.imageUrl || session.image_url;
+    if (imageUrl) {
+        c.addMediaGalleryComponents(ComponentsV2.mediaGallery(imageUrl));
     }
     // Thumbnails are not supported by ContainerBuilder directly. Image URL is displayed as a media gallery component if provided.
 
     let textBody = '';
-    if (session.authorName) {
-        textBody += `-# ${session.authorIconUrl ? '💠 ' : ''}${session.authorName}${session.authorUrl ? ` • [Link](${session.authorUrl})` : ''}\n`;
+    const authorName = session.authorName || session.author_name;
+    const authorIconUrl = session.authorIconUrl || session.author_icon_url;
+    const authorUrl = session.authorUrl || session.author_url;
+    const title = session.title;
+    const description = session.description;
+    const footerText = session.footerText || session.footer_text;
+    const selectMenu = session.selectMenu || session.select_menu;
+
+    if (authorName) {
+        textBody += `-# ${authorIconUrl ? '💠 ' : ''}${authorName}${authorUrl ? ` • [Link](${authorUrl})` : ''}\n`;
     }
-    if (session.title) {
-        textBody += `# ${session.title}\n\n`;
+    if (title) {
+        textBody += `# ${title}\n\n`;
     }
-    if (session.description) {
-        textBody += `${session.description}\n`;
+    if (description) {
+        textBody += `${description}\n`;
     }
 
     c.addTextDisplayComponents(ComponentsV2.text(textBody || ' '));
 
-    if (session.footerText) {
-        c.addTextDisplayComponents(ComponentsV2.text(`-# ${session.footerText}`));
+    if (footerText) {
+        c.addTextDisplayComponents(ComponentsV2.text(`-# ${footerText}`));
     }
 
     // Add buttons
@@ -229,13 +239,13 @@ export function buildFinalEmbedPayload(session: any): any {
     }
 
     // Add select menu
-    if (session.selectMenu) {
+    if (selectMenu) {
         const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>();
         const menu = new StringSelectMenuBuilder()
             .setCustomId(`embed_select:${session.name}`)
-            .setPlaceholder(session.selectMenu.placeholder || 'Select an option...');
+            .setPlaceholder(selectMenu.placeholder || 'Select an option...');
 
-        session.selectMenu.options.forEach((o: any) => {
+        selectMenu.options.forEach((o: any) => {
             menu.addOptions({
                 label: o.label,
                 description: o.description || undefined,
