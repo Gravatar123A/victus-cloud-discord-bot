@@ -97,21 +97,30 @@ export class PrefixInteraction {
             },
             getUser: (name: string, required?: boolean) => {
                 const val = optionsMap.get(name);
+                if (val === undefined && required) throw new Error(`Missing option ${name}`);
                 if (!val) return null;
                 const id = val.replace(/[<@!>]/g, '');
-                return this.client.users.cache.get(id) || null;
+                const resolved = this.client.users.cache.get(id) || this.message.mentions.users.get(id) || null;
+                if (resolved === null && required) throw new Error(`Missing option ${name}`);
+                return resolved;
             },
             getRole: (name: string, required?: boolean) => {
                 const val = optionsMap.get(name);
+                if (val === undefined && required) throw new Error(`Missing option ${name}`);
                 if (!val || !this.guild) return null;
                 const id = val.replace(/[<@&>]/g, '');
-                return this.guild.roles.cache.get(id) || null;
+                const resolved = this.guild.roles.cache.get(id) || this.message.mentions.roles.get(id) || null;
+                if (resolved === null && required) throw new Error(`Missing option ${name}`);
+                return resolved;
             },
             getChannel: (name: string, required?: boolean) => {
                 const val = optionsMap.get(name);
+                if (val === undefined && required) throw new Error(`Missing option ${name}`);
                 if (!val || !this.guild) return null;
                 const id = val.replace(/[<#>]/g, '');
-                return this.guild.channels.cache.get(id) || null;
+                const resolved = this.guild.channels.cache.get(id) || this.message.mentions.channels.get(id) || null;
+                if (resolved === null && required) throw new Error(`Missing option ${name}`);
+                return resolved;
             },
             getSubcommand: (required?: boolean) => subcommand,
             getSubcommandGroup: (required?: boolean) => subcommandGroup,

@@ -4,10 +4,10 @@ import {
     ButtonStyle, 
     ChannelSelectMenuBuilder, 
     ChannelType, 
+    EmbedBuilder,
     MessageFlags, 
     PermissionFlagsBits, 
-    SlashCommandBuilder, 
-    User 
+    SlashCommandBuilder 
 } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { warnSettings, WarnConfig, WarningRecord } from '../services/warnSettings.js';
@@ -130,59 +130,68 @@ export const warnCommand: Command = {
             if (config.warnChannelId) {
                 const warnChannel = interaction.guild?.channels.cache.get(config.warnChannelId);
                 if (warnChannel?.isTextBased()) {
-                    const logCard = ComponentsV2.baseContainer(ComponentsV2.Accents.warning);
-                    logCard.addTextDisplayComponents(ComponentsV2.text(
-                        `# ⚠️ Member Warned\n` +
-                        `› **User:** <@${targetUser.id}> (${targetUser.username})\n` +
-                        `› **Moderator:** <@${interaction.user.id}>\n` +
-                        `› **Warning ID:** \`${warningId}\`\n` +
-                        `› **Reason:** ${reason}\n` +
-                        `› **Warnings Count:** \`${warnCount}\``
-                    ));
-                    await (warnChannel as any).send({ components: [logCard], flags: V2 }).catch(() => {});
+                    const logEmbed = new EmbedBuilder()
+                        .setColor(0xf59e0b) // Warning Amber
+                        .setTitle('⚠️ Member Warned')
+                        .setThumbnail(targetUser.displayAvatarURL())
+                        .setDescription(
+                            `**User:** <@${targetUser.id}> (${targetUser.username})\n` +
+                            `**Moderator:** <@${interaction.user.id}>\n` +
+                            `**Warning ID:** \`${warningId}\`\n` +
+                            `**Reason:** ${reason}\n` +
+                            `────────────────────────\n` +
+                            `**Warnings Count:** \`${warnCount}\``
+                        )
+                        .setTimestamp();
+                    await (warnChannel as any).send({ embeds: [logEmbed] }).catch(() => {});
                 }
             }
 
             // 2. DM the warned user
-            const dmCard = ComponentsV2.baseContainer(ComponentsV2.Accents.danger);
-            dmCard.addTextDisplayComponents(ComponentsV2.text(
-                `# ⚠️ Warning Notice\n` +
-                `You have been issued a warning in **${interaction.guild?.name}**.\n\n` +
-                `› **Reason:** ${reason}\n` +
-                `› **Issued By:** ${interaction.user.username}\n` +
-                `› **Total Warnings:** \`${warnCount}\``
-            ));
-            await targetUser.send({ components: [dmCard], flags: V2 }).catch(() => {});
+            const dmEmbed = new EmbedBuilder()
+                .setColor(0xef4444) // Danger Red
+                .setTitle('⚠️ Warning Notice')
+                .setDescription(
+                    `You have been issued a warning in **${interaction.guild?.name}**.\n\n` +
+                    `**Reason:** ${reason}\n` +
+                    `**Issued By:** ${interaction.user.username}\n` +
+                    `────────────────────────\n` +
+                    `**Total Warnings:** \`${warnCount}\``
+                )
+                .setTimestamp();
+            await targetUser.send({ embeds: [dmEmbed] }).catch(() => {});
 
             // 3. Reply to Moderator
-            await interaction.reply({
-                components: [ComponentsV2.successContainer('Warning Issued', `Warned <@${targetUser.id}> successfully (Warning ID: \`${warningId}\`, Total: \`${warnCount}\`).`)],
-                flags: V2 | EPH
-            });
+            const successEmbed = new EmbedBuilder()
+                .setColor(0x10b981) // Success Green
+                .setTitle('✅ Warning Issued')
+                .setDescription(`Successfully warned <@${targetUser.id}>.\n\n**Warning ID:** \`${warningId}\` | **Total Warns:** \`${warnCount}\``);
+            await interaction.reply({ embeds: [successEmbed], flags: EPH });
         }
         else if (sub === 'list') {
             const warnings = await warnSettings.getWarnings(interaction.guildId!, targetUser.id);
             if (warnings.length === 0) {
-                await interaction.reply({
-                    components: [ComponentsV2.infoContainer('No Warnings', `<@${targetUser.id}> currently has no warnings.`)],
-                    flags: V2 | EPH
-                });
+                const noWarnEmbed = new EmbedBuilder()
+                    .setColor(0x3b82f6)
+                    .setTitle('ℹ️ No Warnings')
+                    .setDescription(`<@${targetUser.id}> currently has no warnings.`);
+                await interaction.reply({ embeds: [noWarnEmbed], flags: EPH });
                 return;
             }
 
-            const c = ComponentsV2.baseContainer(ComponentsV2.Accents.info);
-            let text = `# ⚠️ Warnings for ${targetUser.username}\n` +
-                `› **Total Warnings:** \`${warnings.length}\`\n\n` +
-                `---`;
+            const listEmbed = new EmbedBuilder()
+                .setColor(0x3b82f6) // Info Blue
+                .setTitle(`⚠️ Warnings for ${targetUser.username}`)
+                .setDescription(`**Total Active Warnings:** \`${warnings.length}\`\n\n────────────────────────`);
                 
             warnings.forEach((w) => {
-                text += `\n\n**ID:** \`${w.id}\` | **Moderator:** <@${w.moderatorId}>\n` +
-                    `› **Reason:** ${w.reason}\n` +
-                    `› **Date:** <t:${Math.floor(new Date(w.timestamp).getTime() / 1000)}:R>`;
+                listEmbed.addFields({
+                    name: `ID: ${w.id} | Moderator: ${w.moderatorName}`,
+                    value: `› **Reason:** ${w.reason}\n› **Date:** <t:${Math.floor(new Date(w.timestamp).getTime() / 1000)}:R>`
+                });
             });
 
-            c.addTextDisplayComponents(ComponentsV2.text(text));
-            await interaction.reply({ components: [c], flags: V2 | EPH });
+            await interaction.reply({ embeds: [listEmbed], flags: EPH });
         }
         else if (sub === 'remove') {
             const warnId = interaction.options.getString('id', true);
@@ -192,17 +201,19 @@ export const warnCommand: Command = {
                 return;
             }
 
-            await interaction.reply({
-                components: [ComponentsV2.successContainer('Warning Removed', `Removed warning ID \`${warnId}\` from <@${targetUser.id}>. (Total warnings remaining: \`${updated.length}\`)`)],
-                flags: V2 | EPH
-            });
+            const successEmbed = new EmbedBuilder()
+                .setColor(0x10b981)
+                .setTitle('✅ Warning Removed')
+                .setDescription(`Removed warning ID \`${warnId}\` from <@${targetUser.id}>.\n\n**Total warnings remaining:** \`${updated.length}\``);
+            await interaction.reply({ embeds: [successEmbed], flags: EPH });
         }
         else if (sub === 'reset') {
             await warnSettings.resetWarnings(interaction.guildId!, targetUser.id);
-            await interaction.reply({
-                components: [ComponentsV2.successContainer('Warnings Cleared', `Successfully cleared all warnings for <@${targetUser.id}>.`)],
-                flags: V2 | EPH
-            });
+            const successEmbed = new EmbedBuilder()
+                .setColor(0x10b981)
+                .setTitle('✅ Warnings Cleared')
+                .setDescription(`Successfully cleared all warnings for <@${targetUser.id}>.`);
+            await interaction.reply({ embeds: [successEmbed], flags: EPH });
         }
     },
 
