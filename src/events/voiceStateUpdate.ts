@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { awardVoiceXp } from '../services/activityXp.js';
 import { j2cSettings } from '../services/j2cSettings.js';
+import { ComponentsV2 } from '../embeds/componentsV2.js';
 
 // In-memory voice XP tracking. One ticking timer per (guild, user) session that
 // awards XP each minute while the member is "actively" in voice: not self-muted,
@@ -106,9 +107,21 @@ export const voiceStateUpdateEvent: Event = {
                             ]
                         });
                         
-                        // Add to tracked list
-                        await j2cSettings.addTempChannel(tempChannel.id);
+                        // Add to tracked list with ownerId
+                        await j2cSettings.addTempChannel(tempChannel.id, member.id);
                         
+                        // Send Voice Control Panel to the channel's text chat
+                        try {
+                            const { buildVoiceControlPanel } = await import('../commands/j2c.js');
+                            const panel = buildVoiceControlPanel(member.id);
+                            await (tempChannel as any).send({
+                                components: [panel],
+                                flags: ComponentsV2.IS_COMPONENTS_V2
+                            });
+                        } catch (err) {
+                            logger.error('Failed to send voice control panel:', err);
+                        }
+
                         // Move member to the new voice channel
                         await member.voice.setChannel(tempChannel).catch(() => {});
                     }

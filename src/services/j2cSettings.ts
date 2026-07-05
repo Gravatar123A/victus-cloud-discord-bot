@@ -9,6 +9,11 @@ export interface J2CConfig {
     nameFormat: string;
 }
 
+export interface TempVoiceChannelInfo {
+    channelId: string;
+    ownerId: string;
+}
+
 const SETTINGS_PATH = join(process.cwd(), 'data', 'j2c-settings.json');
 const TEMP_CHANNELS_PATH = join(process.cwd(), 'data', 'j2c-temp-channels.json');
 
@@ -57,10 +62,16 @@ export class J2CSettingsService {
         return updated;
     }
 
-    async getTempChannels(): Promise<string[]> {
+    async getTempChannelsInfo(): Promise<TempVoiceChannelInfo[]> {
         try {
             const raw = await readFile(TEMP_CHANNELS_PATH, 'utf8');
-            return JSON.parse(raw) as string[];
+            const parsed = JSON.parse(raw) as any[];
+            return parsed.map((item: any) => {
+                if (typeof item === 'string') {
+                    return { channelId: item, ownerId: '' }; // legacy fallback
+                }
+                return item as TempVoiceChannelInfo;
+            });
         } catch (error: any) {
             if (error?.code !== 'ENOENT') {
                 logger.warn('Failed to read J2C temporary channels:', error);
@@ -69,20 +80,35 @@ export class J2CSettingsService {
         }
     }
 
-    async addTempChannel(channelId: string): Promise<void> {
-        const list = await this.getTempChannels();
-        if (!list.includes(channelId)) {
-            list.push(channelId);
+    async getTempChannels(): Promise<string[]> {
+        const info = await this.getTempChannelsInfo();
+        return info.map(i => i.channelId);
+    }
+
+    async addTempChannel(channelId: string, ownerId: string): Promise<void> {
+        const list = await this.getTempChannelsInfo();
+        if (!list.some(i => i.channelId === channelId)) {
+            list.push({ channelId, ownerId });
             await mkdir(dirname(TEMP_CHANNELS_PATH), { recursive: true });
             await writeFile(TEMP_CHANNELS_PATH, JSON.stringify(list, null, 2), 'utf8');
         }
     }
 
     async removeTempChannel(channelId: string): Promise<void> {
-        const list = await this.getTempChannels();
-        const filtered = list.filter(id => id !== channelId);
+        const list = await this.getTempChannelsInfo();
+        const filtered = list.filter(i => i.channelId !== channelId);
         await mkdir(dirname(TEMP_CHANNELS_PATH), { recursive: true });
         await writeFile(TEMP_CHANNELS_PATH, JSON.stringify(filtered, null, 2), 'utf8');
+    }
+
+    async setTempChannelOwner(channelId: string, ownerId: string): Promise<void> {
+        const list = await this.getTempChannelsInfo();
+        const item = list.find(i => i.channelId === channelId);
+        if (item) {
+            item.ownerId = ownerId;
+            await mkdir(dirname(TEMP_CHANNELS_PATH), { recursive: true });
+            await writeFile(TEMP_CHANNELS_PATH, JSON.stringify(list, null, 2), 'utf8');
+        }
     }
 }
 
