@@ -5,8 +5,6 @@
  */
 import {
     ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
     ContainerBuilder,
     StringSelectMenuBuilder,
     AttachmentBuilder,
@@ -84,37 +82,32 @@ export function controlRows(
     player?: Player,
 ): ActionRowBuilder<MessageActionRowComponentBuilder>[] {
     const paused = !!player?.paused;
-    const live = player ? isLiveTrack(player) : false;
-    const hasPrev = !!player && (player.queue.previous?.length ?? 0) > 0;
-    const hasQueue = !!player && player.queue.tracks.length > 0;
+    const mode = player?.repeatMode ?? 'off';
+    const vol = player?.volume ?? 80;
 
-    const transport = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('music:previous').setLabel('⏮').setStyle(ButtonStyle.Secondary).setDisabled(!hasPrev),
-        new ButtonBuilder().setCustomId('music:pause').setLabel(paused ? '▶️' : '⏸️').setStyle(paused ? ButtonStyle.Success : ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('music:skip').setLabel('⏭').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('music:stop').setLabel('⏹').setStyle(ButtonStyle.Danger),
+    const menu = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('music:controls')
+            .setPlaceholder('🎵 Select a music control...')
+            .addOptions([
+                { label: paused ? '▶️ Resume' : '⏸️ Pause', value: 'pause', description: paused ? 'Resume playback' : 'Pause playback' },
+                { label: '⏭ Skip', value: 'skip', description: 'Skip to next track' },
+                { label: '⏮ Previous', value: 'previous', description: 'Play the previous track' },
+                { label: '⏹ Stop', value: 'stop', description: 'Stop and clear the queue' },
+                { label: '⏪ Restart', value: 'restart', description: 'Restart current track' },
+                { label: '⏪ -10s', value: 'seekback', description: 'Seek back 10 seconds' },
+                { label: '⏩ +10s', value: 'seekfwd', description: 'Seek forward 10 seconds' },
+                { label: '🔉 Volume Down', value: 'voldown', description: `Current: ${vol}%` },
+                { label: '🔊 Volume Up', value: 'volup', description: `Current: ${vol}%` },
+                { label: `🔁 Loop: ${mode === 'off' ? 'Off → Track' : mode === 'track' ? 'Track → Queue' : 'Queue → Off'}`, value: 'loop', description: `Currently: ${mode}` },
+                { label: '🔀 Shuffle', value: 'shuffle', description: 'Shuffle the queue' },
+                { label: '📋 Queue', value: 'queue', description: 'View the full queue' },
+                { label: '🔄 Refresh', value: 'refresh', description: 'Refresh the now playing panel' },
+                { label: '🗑️ Clear Queue', value: 'clear', description: 'Remove all upcoming tracks' },
+            ])
     );
 
-    const seekRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('music:restart').setLabel('⏪').setStyle(ButtonStyle.Secondary).setDisabled(live),
-        new ButtonBuilder().setCustomId('music:seekback').setLabel('-10s').setStyle(ButtonStyle.Secondary).setDisabled(live),
-        new ButtonBuilder().setCustomId('music:seekfwd').setLabel('+10s').setStyle(ButtonStyle.Secondary).setDisabled(live),
-    );
-
-    const volumeRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('music:voldown').setLabel('🔉').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('music:volup').setLabel('🔊').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('music:loop').setLabel(loopShort(player?.repeatMode)).setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('music:shuffle').setLabel('🔀').setStyle(ButtonStyle.Secondary).setDisabled(!hasQueue),
-    );
-
-    const extraRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId('music:queue').setLabel('📋 Queue').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('music:refresh').setLabel('🔄').setStyle(ButtonStyle.Secondary),
-    );
-
-    const rows = [transport, seekRow, volumeRow, extraRow];
-    return rows as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>[];
+    return [menu] as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }
 
 /** Idle control panel shown by /music when nothing is playing. */

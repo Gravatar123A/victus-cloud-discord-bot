@@ -200,10 +200,15 @@ export const playCommand: Command = {
         });
     },
 
-    // All `music:*` transport buttons funnel through here.
+    // All music controls are now routed through the select menu.
     async handleButton(interaction: ButtonInteraction) {
-        if (!interaction.customId.startsWith('music:')) return;
-        const action = interaction.customId.split(':')[1];
+        // No more music buttons — all controls go through the select menu.
+        return;
+    },
+
+    // Unified music select menu handler.
+    async handleSelectMenu(interaction: StringSelectMenuInteraction) {
+        if (interaction.customId !== 'music:controls' && interaction.customId !== 'music:select') return;
 
         const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
         if (!player) {
@@ -215,6 +220,8 @@ export const playCommand: Command = {
             await interaction.reply({ components: [ComponentsV2.warningContainer('Wrong voice channel', 'Join my voice channel to control playback.')], flags: EPH | V2 });
             return;
         }
+
+        const action = interaction.values[0] ?? '';
 
         switch (action) {
             case 'pause': {
@@ -290,50 +297,22 @@ export const playCommand: Command = {
                 await interaction.reply({ components: [queueContainer(player, 0)], flags: EPH | V2 });
                 return;
             }
+            case 'clear': {
+                if (!player.queue.tracks.length) {
+                    await interaction.reply({ ...info('Queue already empty', 'There are no upcoming tracks to clear.'), flags: EPH | V2 });
+                    return;
+                }
+                const removed = player.queue.tracks.length;
+                await player.queue.splice(0, player.queue.tracks.length);
+
+                const clearPayload = await nowPlayingContainer(player);
+                await interaction.update({ components: [clearPayload.container], files: clearPayload.files, flags: V2 });
+                await interaction.followUp({ ...info('Queue cleared', `Removed **${removed}** upcoming track${removed === 1 ? '' : 's'}.`), flags: EPH | V2 });
+                return;
+            }
             default:
                 await interaction.reply({ content: 'Unknown control.', flags: EPH });
                 return;
-        }
-
-        const payload = await nowPlayingContainer(player);
-        await interaction.update({ components: [payload.container], files: payload.files, flags: V2 });
-    },
-
-    // Overflow controls from the `music:select` string-select menu.
-    async handleSelectMenu(interaction: StringSelectMenuInteraction) {
-        if (interaction.customId !== 'music:select') return;
-
-        const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
-        if (!player) {
-            await interaction.reply({ components: [ComponentsV2.warningContainer('Nothing is playing', 'This panel is no longer active. Use `/play` to start again.')], flags: EPH | V2 });
-            return;
-        }
-        const member = interaction.member as GuildMember | null;
-        if (member?.voice?.channelId !== player.voiceChannelId) {
-            await interaction.reply({ components: [ComponentsV2.warningContainer('Wrong voice channel', 'Join my voice channel to control playback.')], flags: EPH | V2 });
-            return;
-        }
-
-        const value = interaction.values[0] ?? '';
-
-        if (value.startsWith('vol:')) {
-            const level = Math.max(0, Math.min(150, Number(value.slice(4)) || 0));
-            await player.setVolume(level);
-        } else if (value.startsWith('loop:')) {
-            const mode = value.slice(5) as 'off' | 'track' | 'queue';
-            await player.setRepeatMode(mode);
-        } else if (value === 'clear') {
-            if (!player.queue.tracks.length) {
-                await interaction.reply({ ...info('Queue already empty', 'There are no upcoming tracks to clear.'), flags: EPH | V2 });
-                return;
-            }
-            const removed = player.queue.tracks.length;
-            await player.queue.splice(0, player.queue.tracks.length);
-            
-            const payload = await nowPlayingContainer(player);
-            await interaction.update({ components: [payload.container], files: payload.files, flags: V2 });
-            await interaction.followUp({ ...info('Queue cleared', `Removed **${removed}** upcoming track${removed === 1 ? '' : 's'}.`), flags: EPH | V2 });
-            return;
         }
 
         const payload = await nowPlayingContainer(player);
