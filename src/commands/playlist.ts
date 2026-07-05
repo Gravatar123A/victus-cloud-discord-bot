@@ -304,7 +304,19 @@ export const playlistCommand: Command = {
                 let addedCount = 0;
                 for (const t of playlist.tracks) {
                     try {
-                        const searchRes = await player.search({ query: t.uri }, interaction.user);
+                        let searchRes = await player.search({ query: t.uri }, interaction.user);
+                        
+                        // Fallback 1: Try spsearch if it's a Spotify track and direct load failed
+                        if ((!searchRes || !searchRes.tracks?.length || searchRes.loadType === 'empty' || searchRes.loadType === 'error') && t.source === 'spotify') {
+                            searchRes = await player.search({ query: t.uri, source: 'spsearch' as any }, interaction.user);
+                        }
+
+                        // Fallback 2: Search by title + author if both failed
+                        if (!searchRes || !searchRes.tracks?.length || searchRes.loadType === 'empty' || searchRes.loadType === 'error') {
+                            const fallbackQuery = `${t.title} ${t.author}`;
+                            searchRes = await player.search({ query: fallbackQuery, source: config.lavalink.defaultSource as any }, interaction.user);
+                        }
+
                         if (searchRes.tracks?.length) {
                             await player.queue.add(searchRes.tracks[0]);
                             addedCount++;

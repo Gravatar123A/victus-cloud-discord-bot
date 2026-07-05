@@ -95,7 +95,7 @@ export async function postNowPlaying(client: Client, player: Player): Promise<vo
     await clearNowPlaying(client, player);
     const payload = await nowPlayingContainer(player);
     const sent = await channel
-        .send({ components: [payload.container], files: payload.files, flags: V2 })
+        .send({ embeds: payload.embeds, components: payload.components, files: payload.files })
         .catch(() => null);
     if (sent) player.set('npMessage', sent);
 }
@@ -105,7 +105,7 @@ export async function refreshNowPlaying(player: Player): Promise<void> {
     const msg = player.get('npMessage') as Message | undefined;
     if (!msg) return;
     const payload = await nowPlayingContainer(player);
-    await msg.edit({ components: [payload.container], files: payload.files, flags: V2 }).catch(() => undefined);
+    await msg.edit({ embeds: payload.embeds, components: payload.components, files: payload.files }).catch(() => undefined);
 }
 
 function attachPlayerListeners(client: Client, manager: LavalinkManager): void {

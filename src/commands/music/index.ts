@@ -3,8 +3,7 @@
  *
  * Top-level slash commands so members can either type `/play`, `/skip`, … or use
  * the buttons on the live Now Playing panel. All control buttons (`music:*`) are
- * handled by `playCommand.handleButton` — the interaction dispatcher walks every
- * command's handleButton until one acknowledges, so a single handler is enough.
+ * handled by `playCommand.handleButton`.
  */
 import {
     ChannelType,
@@ -12,6 +11,7 @@ import {
     MessageFlags,
     PermissionFlagsBits,
     SlashCommandBuilder,
+    EmbedBuilder,
 } from 'discord.js';
 import type {
     ButtonInteraction,
@@ -35,7 +35,6 @@ import {
 } from '../../embeds/music.js';
 import { refreshNowPlaying } from '../../services/music.js';
 
-const V2 = ComponentsV2.IS_COMPONENTS_V2;
 const EPH = MessageFlags.Ephemeral;
 
 // ── shared helpers ──────────────────────────────────────────────────────────
@@ -51,9 +50,15 @@ async function requireVoice(
     const voice = member?.voice?.channel ?? null;
 
     const fail = async (title: string, body: string) => {
-        const payload = { components: [ComponentsV2.warningContainer(title, body)], flags: EPH | V2 };
-        if (deferred && interaction.isChatInputCommand()) await interaction.editReply(payload);
-        else await interaction.reply(payload);
+        const embed = new EmbedBuilder()
+            .setColor(0xef4444)
+            .setTitle(`⚠️ ${title}`)
+            .setDescription(body);
+        if (deferred && interaction.isChatInputCommand()) {
+            await interaction.editReply({ embeds: [embed] });
+        } else {
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+        }
     };
 
     if (!interaction.guild || !member) {
@@ -84,9 +89,15 @@ async function requirePlayer(
 ): Promise<Player | null> {
     const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
     const reply = async (title: string, body: string) => {
-        const payload = { components: [ComponentsV2.warningContainer(title, body)], flags: EPH | V2 };
-        if (deferred && interaction.isChatInputCommand()) await interaction.editReply(payload);
-        else await interaction.reply(payload);
+        const embed = new EmbedBuilder()
+            .setColor(0xef4444)
+            .setTitle(`⚠️ ${title}`)
+            .setDescription(body);
+        if (deferred && interaction.isChatInputCommand()) {
+            await interaction.editReply({ embeds: [embed] });
+        } else {
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+        }
     };
     if (!player || !player.queue.current) {
         await reply('Nothing is playing', 'There is nothing playing right now. Start something with `/play`.');
@@ -101,10 +112,18 @@ async function requirePlayer(
 }
 
 function ok(title: string, body: string) {
-    return { components: [ComponentsV2.successContainer(title, body)], flags: V2 } as const;
+    const embed = new EmbedBuilder()
+        .setColor(0x10b981)
+        .setTitle(`✅ ${title}`)
+        .setDescription(body);
+    return { embeds: [embed] } as const;
 }
 function info(title: string, body: string) {
-    return { components: [ComponentsV2.infoContainer(title, body)], flags: V2 } as const;
+    const embed = new EmbedBuilder()
+        .setColor(0x3b82f6)
+        .setTitle(`ℹ️ ${title}`)
+        .setDescription(body);
+    return { embeds: [embed] } as const;
 }
 
 // ── /play ────────────────────────────────────────────────────────────────────
@@ -128,10 +147,11 @@ export const playCommand: Command = {
 
         let player = lavalink.getPlayer(interaction.guildId!);
         if (player && player.voiceChannelId && player.voiceChannelId !== ctx.voice.id) {
-            await interaction.editReply({
-                components: [ComponentsV2.warningContainer('Already in use', `I'm already playing in another voice channel. Join it to add songs.`)],
-                flags: V2,
-            });
+            const embed = new EmbedBuilder()
+                .setColor(0xef4444)
+                .setTitle('⚠️ Already in use')
+                .setDescription("I'm already playing in another voice channel. Join it to add songs.");
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
         if (!player) {
@@ -167,10 +187,11 @@ export const playCommand: Command = {
             }
         } catch (error) {
             logger.error('🎵 Lavalink search failed:', error);
-            await interaction.editReply({
-                components: [ComponentsV2.errorContainer('Search failed', 'Could not reach the music server. Please try again in a moment.')],
-                flags: V2,
-            });
+            const embed = new EmbedBuilder()
+                .setColor(0xef4444)
+                .setTitle('❌ Search failed')
+                .setDescription('Could not reach the music server. Please try again in a moment.');
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -178,10 +199,11 @@ export const playCommand: Command = {
             const hint = isSpotify
                 ? ' Make sure the Lavalink server has LavaSrc configured for Spotify.'
                 : ' Try a different search or a direct link.';
-            await interaction.editReply({
-                components: [ComponentsV2.warningContainer('No results', `Nothing found for **${query.slice(0, 120)}**.${hint}`)],
-                flags: V2,
-            });
+            const embed = new EmbedBuilder()
+                .setColor(0xef4444)
+                .setTitle('⚠️ No results')
+                .setDescription(`Nothing found for **${query.slice(0, 120)}**.${hint}`);
+            await interaction.editReply({ embeds: [embed] });
             if (!player.queue.current && !player.queue.tracks.length) await player.destroy().catch(() => undefined);
             return;
         }
@@ -200,34 +222,33 @@ export const playCommand: Command = {
             await player.play();
         }
 
-        await interaction.editReply({
-            components: [addedContainer(toAdd, playlistName, positionBefore)],
-            flags: V2,
-        });
+        const addedEmbed = addedContainer(toAdd, playlistName, positionBefore);
+        await interaction.editReply({ embeds: [addedEmbed] });
     },
 
-    // All music controls are now routed through the select menu.
+    // All `music:*` transport buttons funnel through here.
     async handleButton(interaction: ButtonInteraction) {
-        // No more music buttons — all controls go through the select menu.
-        return;
-    },
-
-    // Unified music select menu handler.
-    async handleSelectMenu(interaction: StringSelectMenuInteraction) {
-        if (interaction.customId !== 'music:controls' && interaction.customId !== 'music:select') return;
+        if (!interaction.customId.startsWith('music:')) return;
+        const action = interaction.customId.split(':')[1];
 
         const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
         if (!player) {
-            await interaction.reply({ components: [ComponentsV2.warningContainer('Nothing is playing', 'This panel is no longer active. Use `/play` to start again.')], flags: EPH | V2 });
+            const embed = new EmbedBuilder()
+                .setColor(0xef4444)
+                .setTitle('⚠️ Nothing is playing')
+                .setDescription('This panel is no longer active. Use `/play` to start again.');
+            await interaction.reply({ embeds: [embed], ephemeral: true });
             return;
         }
         const member = interaction.member as GuildMember | null;
         if (member?.voice?.channelId !== player.voiceChannelId) {
-            await interaction.reply({ components: [ComponentsV2.warningContainer('Wrong voice channel', 'Join my voice channel to control playback.')], flags: EPH | V2 });
+            const embed = new EmbedBuilder()
+                .setColor(0xef4444)
+                .setTitle('⚠️ Wrong voice channel')
+                .setDescription('Join my voice channel to control playback.');
+            await interaction.reply({ embeds: [embed], ephemeral: true });
             return;
         }
-
-        const action = interaction.values[0] ?? '';
 
         switch (action) {
             case 'pause': {
@@ -237,93 +258,51 @@ export const playCommand: Command = {
             }
             case 'skip': {
                 if (!player.queue.tracks.length) {
-                    await interaction.reply({ ...info('Skipped', 'That was the last track — stopping playback.'), flags: EPH | V2 });
+                    await interaction.reply({ ...info('Skipped', 'That was the last track — stopping playback.'), ephemeral: true });
                     await player.destroy().catch(() => undefined);
                     return;
                 }
                 await player.skip();
-                await interaction.reply({ ...info('Skipped', 'Skipped to the next track.'), flags: EPH | V2 });
+                await interaction.reply({ ...info('Skipped', 'Skipped to the next track.'), ephemeral: true });
                 return;
             }
             case 'stop': {
                 await player.destroy();
-                await interaction.update({ components: [ComponentsV2.infoContainer('Stopped', 'Playback stopped and the queue was cleared. 👋')], flags: V2 });
+                const embed = new EmbedBuilder()
+                    .setColor(0x3b82f6)
+                    .setTitle('⏹ Stopped')
+                    .setDescription('Playback stopped and the queue was cleared. 👋');
+                await interaction.update({ embeds: [embed], components: [] });
                 return;
-            }
-            case 'restart': {
-                await player.seek(0);
-                break;
             }
             case 'previous': {
                 const prev = player.queue.previous?.[0];
                 if (!prev) {
-                    await interaction.reply({ ...info('No previous track', 'There is no track to go back to.'), flags: EPH | V2 });
+                    await interaction.reply({ ...info('No previous track', 'There is no track to go back to.'), ephemeral: true });
                     return;
                 }
                 await player.play({ clientTrack: prev });
-                await interaction.reply({ ...info('Previous track', 'Playing the previous track again.'), flags: EPH | V2 });
+                await interaction.reply({ ...info('Previous track', 'Playing the previous track again.'), ephemeral: true });
                 return;
-            }
-            case 'seekback':
-            case 'seekfwd': {
-                if (player.queue.current?.info.isStream) {
-                    await interaction.reply({ ...info('Live stream', 'You can not seek within a live stream.'), flags: EPH | V2 });
-                    return;
-                }
-                const delta = action === 'seekfwd' ? 10_000 : -10_000;
-                const target = Math.max(0, (player.position || 0) + delta);
-                await player.seek(target);
-                break;
-            }
-            case 'voldown': {
-                await player.setVolume(Math.max(0, player.volume - 10));
-                break;
-            }
-            case 'volup': {
-                await player.setVolume(Math.min(150, player.volume + 10));
-                break;
             }
             case 'loop': {
                 const next = player.repeatMode === 'off' ? 'track' : player.repeatMode === 'track' ? 'queue' : 'off';
                 await player.setRepeatMode(next);
                 break;
             }
-            case 'shuffle': {
-                if (player.queue.tracks.length < 2) {
-                    await interaction.reply({ ...info('Not enough tracks', 'Add at least two tracks to shuffle.'), flags: EPH | V2 });
-                    return;
-                }
-                await player.queue.shuffle();
-                break;
-            }
-            case 'refresh': {
-                break;
-            }
-            case 'queue': {
-                await interaction.reply({ components: [queueContainer(player, 0)], flags: EPH | V2 });
-                return;
-            }
-            case 'clear': {
-                if (!player.queue.tracks.length) {
-                    await interaction.reply({ ...info('Queue already empty', 'There are no upcoming tracks to clear.'), flags: EPH | V2 });
-                    return;
-                }
-                const removed = player.queue.tracks.length;
-                await player.queue.splice(0, player.queue.tracks.length);
-
-                const clearPayload = await nowPlayingContainer(player);
-                await interaction.update({ components: [clearPayload.container], files: clearPayload.files, flags: V2 });
-                await interaction.followUp({ ...info('Queue cleared', `Removed **${removed}** upcoming track${removed === 1 ? '' : 's'}.`), flags: EPH | V2 });
-                return;
-            }
             default:
-                await interaction.reply({ content: 'Unknown control.', flags: EPH });
+                await interaction.reply({ content: 'Unknown control.', ephemeral: true });
                 return;
         }
 
         const payload = await nowPlayingContainer(player);
-        await interaction.update({ components: [payload.container], files: payload.files, flags: V2 });
+        await interaction.update({ embeds: payload.embeds, components: payload.components });
     },
+
+    async handleSelectMenu(interaction: StringSelectMenuInteraction) {
+        // No select menus on the standard music panel
+        return;
+    }
 };
 
 // ── /skip ──────────────────────────────────────────────────────────────────
@@ -410,7 +389,8 @@ export const queueCommand: Command = {
             return;
         }
         const page = (interaction.options.getInteger('page') ?? 1) - 1;
-        await interaction.editReply({ components: [queueContainer(player, page)], flags: V2 });
+        const embed = queueContainer(player, page);
+        await interaction.editReply({ embeds: [embed] });
     },
 };
 
@@ -426,7 +406,7 @@ export const nowplayingCommand: Command = {
             return;
         }
         const payload = await nowPlayingContainer(player);
-        await interaction.editReply({ components: [payload.container], files: payload.files, flags: V2 });
+        await interaction.editReply({ embeds: payload.embeds, components: payload.components });
         // Re-anchor the live panel to this fresh message.
         const sent = await interaction.fetchReply().catch(() => null);
         if (sent) player.set('npMessage', sent);
@@ -515,7 +495,11 @@ export const disconnectCommand: Command = {
         }
         const member = interaction.member as GuildMember | null;
         if (member?.voice?.channelId !== player.voiceChannelId) {
-            await interaction.editReply({ components: [ComponentsV2.warningContainer('Wrong voice channel', 'Join my voice channel to disconnect me.')], flags: V2 });
+            const embed = new EmbedBuilder()
+                .setColor(0xef4444)
+                .setTitle('⚠️ Wrong voice channel')
+                .setDescription('Join my voice channel to disconnect me.');
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
         await player.destroy();
@@ -534,11 +518,12 @@ export const musicCommand: Command = {
         await interaction.deferReply();
         const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
         if (!player || !player.queue.current) {
-            await interaction.editReply({ components: [musicIdleContainer()], flags: V2 });
+            const embed = musicIdleContainer();
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
         const payload = await nowPlayingContainer(player);
-        await interaction.editReply({ components: [payload.container], files: payload.files, flags: V2 });
+        await interaction.editReply({ embeds: payload.embeds, components: payload.components });
         // Re-anchor the live panel to this fresh message so controls keep updating it.
         const sent = await interaction.fetchReply().catch(() => null);
         if (sent) player.set('npMessage', sent);

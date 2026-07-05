@@ -1,19 +1,16 @@
 /**
- * Music UI for the Victus Cloud bot — Components v2 panels for the Lavalink
- * music feature (Now Playing, queue, "added" confirmations) plus the shared
- * transport-control button row used by /play and the music button handler.
+ * Music UI for the Victus Cloud bot — Clean, professional standard Discord Embeds
+ * for the Lavalink music feature (Now Playing, queue, "added" confirmations)
+ * plus the button row used by /play and the music button handler.
  */
 import {
     ActionRowBuilder,
-    ContainerBuilder,
-    StringSelectMenuBuilder,
-    AttachmentBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    EmbedBuilder,
 } from 'discord.js';
 import type { MessageActionRowComponentBuilder } from 'discord.js';
 import type { Player, Track, UnresolvedTrack } from 'lavalink-client';
-import { ComponentsV2 } from './componentsV2.js';
-import { Bloom } from 'musicard';
-import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
 
 type AnyTrack = Track | UnresolvedTrack;
@@ -59,136 +56,89 @@ function requesterId(t: AnyTrack): string | null {
     return r?.id ?? null;
 }
 
-function repeatLabel(mode: string | undefined): string {
-    if (mode === 'track') return '🔂 Track';
-    if (mode === 'queue') return '🔁 Queue';
-    return '➡️ Off';
-}
-
-function loopShort(mode: string | undefined): string {
-    if (mode === 'track') return 'Loop: Track';
-    if (mode === 'queue') return 'Loop: Queue';
-    return 'Loop: Off';
-}
-
-function isLiveTrack(player: Player): boolean {
-    return !!player.queue.current && !!trackInfo(player.queue.current)?.isStream;
-}
-
 /**
- * Full transport control grid for the live panel.
+ * Standard professional button controls row
  */
 export function controlRows(
     player?: Player,
 ): ActionRowBuilder<MessageActionRowComponentBuilder>[] {
     const paused = !!player?.paused;
     const mode = player?.repeatMode ?? 'off';
-    const vol = player?.volume ?? 80;
 
-    const menu = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId('music:controls')
-            .setPlaceholder('🎵 Select a music control...')
-            .addOptions([
-                { label: paused ? '▶️ Resume' : '⏸️ Pause', value: 'pause', description: paused ? 'Resume playback' : 'Pause playback' },
-                { label: '⏭ Skip', value: 'skip', description: 'Skip to next track' },
-                { label: '⏮ Previous', value: 'previous', description: 'Play the previous track' },
-                { label: '⏹ Stop', value: 'stop', description: 'Stop and clear the queue' },
-                { label: '⏪ Restart', value: 'restart', description: 'Restart current track' },
-                { label: '⏪ -10s', value: 'seekback', description: 'Seek back 10 seconds' },
-                { label: '⏩ +10s', value: 'seekfwd', description: 'Seek forward 10 seconds' },
-                { label: '🔉 Volume Down', value: 'voldown', description: `Current: ${vol}%` },
-                { label: '🔊 Volume Up', value: 'volup', description: `Current: ${vol}%` },
-                { label: `🔁 Loop: ${mode === 'off' ? 'Off → Track' : mode === 'track' ? 'Track → Queue' : 'Queue → Off'}`, value: 'loop', description: `Currently: ${mode}` },
-                { label: '🔀 Shuffle', value: 'shuffle', description: 'Shuffle the queue' },
-                { label: '📋 Queue', value: 'queue', description: 'View the full queue' },
-                { label: '🔄 Refresh', value: 'refresh', description: 'Refresh the now playing panel' },
-                { label: '🗑️ Clear Queue', value: 'clear', description: 'Remove all upcoming tracks' },
-            ])
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setCustomId('music:previous')
+            .setEmoji('⏮️')
+            .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId('music:pause')
+            .setEmoji(paused ? '▶️' : '⏸️')
+            .setStyle(paused ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId('music:skip')
+            .setEmoji('⏭️')
+            .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId('music:loop')
+            .setEmoji('🔁')
+            .setStyle(mode !== 'off' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId('music:stop')
+            .setEmoji('⏹️')
+            .setStyle(ButtonStyle.Danger),
     );
 
-    return [menu] as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>[];
+    return [row] as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }
 
 /** Idle control panel shown by /music when nothing is playing. */
-export function musicIdleContainer(): ContainerBuilder {
-    return ComponentsV2.baseContainer(ComponentsV2.Accents.primary).addTextDisplayComponents(
-        ComponentsV2.text(
-            `-# 🎵 VICTUS CLOUD MUSIC\n` +
-                `### Nothing Playing\n` +
-                `Use \`/play <song or link>\` to start.\n` +
-                `-# YouTube • SoundCloud • Spotify • Bandcamp • Direct URLs`,
-        ),
-    );
+export function musicIdleContainer(): EmbedBuilder {
+    return new EmbedBuilder()
+        .setColor(config.branding.color)
+        .setTitle('🎵 Music System')
+        .setDescription(
+            'Nothing is playing right now.\n\n' +
+            'Use `/play <song or link>` to start playing music.\n' +
+            '-# YouTube, Spotify, SoundCloud, Bandcamp, and direct URLs are supported.'
+        );
 }
 
 /** The public "Now Playing" panel with live transport controls. */
-export async function nowPlayingContainer(player: Player): Promise<{ container: ContainerBuilder; files: AttachmentBuilder[] }> {
+export async function nowPlayingContainer(player: Player): Promise<{ embeds: EmbedBuilder[]; components: any[]; files: any[] }> {
     const track = player.queue.current;
-    const c = ComponentsV2.baseContainer(ComponentsV2.Accents.purple);
-
     if (!track) {
-        c.addTextDisplayComponents(ComponentsV2.text('### 🎵 Now Playing\n_Nothing is playing right now._'));
-        return { container: c, files: [] };
+        const embed = new EmbedBuilder()
+            .setColor(config.branding.color)
+            .setTitle('🎵 Now Playing')
+            .setDescription('Nothing is playing right now.');
+        return { embeds: [embed], components: [], files: [] };
     }
 
     const info = trackInfo(track);
-    const live = !!info?.isStream;
     const duration = info?.duration ?? 0;
     const pos = Math.min(player.position ?? 0, duration);
-
-    // Generate musicard Bloom image
-    let cardBuffer: Buffer;
-    try {
-        cardBuffer = await Bloom({
-            trackName: info?.title || 'Unknown Title',
-            artistName: info?.author || 'Unknown Artist',
-            albumArt: info?.artworkUrl || config.branding.logo,
-            fallbackArt: config.branding.logo,
-            isExplicit: false,
-            timeAdjust: {
-                timeStart: formatDuration(pos),
-                timeEnd: live ? 'LIVE' : formatDuration(duration)
-            },
-            progressBar: live ? 100 : (duration > 0 ? (pos / duration) * 100 : 0)
-        });
-    } catch (err) {
-        logger.error('Failed to generate musicard:', err);
-        const art = info?.artworkUrl;
-        if (art && typeof art === 'string' && art.startsWith('http')) {
-            c.addMediaGalleryComponents(ComponentsV2.mediaGallery(art));
-        }
-        cardBuffer = Buffer.alloc(0);
-    }
-
-    const files: AttachmentBuilder[] = [];
-    if (cardBuffer.length > 0) {
-        files.push(new AttachmentBuilder(cardBuffer, { name: 'musicard.png' }));
-        c.addMediaGalleryComponents(ComponentsV2.mediaGallery('attachment://musicard.png'));
-    }
-
-    const source = info?.sourceName ?? 'stream';
-    const badge = live ? '🔴 LIVE' : player.paused ? '⏸️ Paused' : '▶️ Playing';
     const reqId = requesterId(track);
 
-    let body = `-# ${sourceIcon(info?.sourceName)} ${source.toUpperCase()} • ${badge} • 🔊 ${player.volume}%\n`;
-    body += `**[${escapeMd(info?.title)}](${info?.uri})**\n`;
-    body += `-# ${escapeMd(info?.author || 'Unknown')}`;
-    if (reqId) body += ` • <@${reqId}>`;
-    body += `\n`;
+    const embed = new EmbedBuilder()
+        .setColor(config.branding.color)
+        .setTitle(info?.title || 'Unknown Title')
+        .setURL(info?.uri || null)
+        .setDescription(
+            `• **Author:** ${escapeMd(info?.author || 'Unknown Artist')}\n` +
+            `• **Duration:** \`${formatDuration(pos)} / ${formatDuration(duration)}\`\n` +
+            `• **Requester:** ${reqId ? `<@${reqId}>` : 'Unknown'}`
+        );
 
-    // Compact up-next
-    const upcoming = player.queue.tracks as AnyTrack[];
-    if (upcoming.length > 0) {
-        body += `\n-# Up next: **${escapeMd(trackInfo(upcoming[0])?.title)}**`;
-        if (upcoming.length > 1) body += ` +${upcoming.length - 1} more`;
+    const art = info?.artworkUrl;
+    if (art && typeof art === 'string' && art.startsWith('http')) {
+        embed.setThumbnail(art);
     }
 
-    c.addTextDisplayComponents(ComponentsV2.text(body));
-    c.addSeparatorComponents(ComponentsV2.separator());
-    for (const row of controlRows(player)) c.addActionRowComponents(row);
-
-    return { container: c, files };
+    return { 
+        embeds: [embed], 
+        components: controlRows(player),
+        files: []
+    };
 }
 
 /** Confirmation shown when a track (or playlist) is queued. */
@@ -196,60 +146,71 @@ export function addedContainer(
     tracks: AnyTrack[],
     playlistName: string | null,
     position: number,
-): ContainerBuilder {
-    const c = ComponentsV2.baseContainer(ComponentsV2.Accents.success);
+): EmbedBuilder {
+    const embed = new EmbedBuilder().setColor(0x10b981); // Green
+
     if (playlistName && tracks.length > 1) {
         const totalMs = tracks.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
-        const source = trackInfo(tracks[0])?.sourceName || '';
-        let body = `-# ${sourceIcon(source)} PLAYLIST ADDED\n`;
-        body += `**${escapeMd(playlistName)}**\n`;
-        body += `-# ${tracks.length} tracks • ${formatDuration(totalMs)}`;
-        c.addTextDisplayComponents(ComponentsV2.text(body));
-        return c;
+        embed.setTitle('☑️ Playlist Added')
+            .setDescription(
+                `**${escapeMd(playlistName)}**\n` +
+                `Tracks: \`${tracks.length}\` • Duration: \`${formatDuration(totalMs)}\``
+            );
+        return embed;
     }
 
     const t = tracks[0];
     const info = trackInfo(t);
+    const reqId = requesterId(t);
+    
+    embed.setTitle('☑️ Track Added')
+        .setDescription(
+            `**[${escapeMd(info?.title)}](${info?.uri})** by \`${escapeMd(info?.author || 'Unknown Artist')}\`\n` +
+            `Position \`#${position}\` • Duration \`${formatDuration(info?.duration)}\`${reqId ? ` • By <@${reqId}>` : ''}`
+        );
+
     const art = info?.artworkUrl;
     if (art && typeof art === 'string' && art.startsWith('http')) {
-        c.addMediaGalleryComponents(ComponentsV2.mediaGallery(art));
+        embed.setThumbnail(art);
     }
-    let body = `-# ${sourceIcon(info?.sourceName)} ADDED TO QUEUE\n`;
-    body += `**[${escapeMd(info?.title)}](${info?.uri})**\n`;
-    body += `-# ${escapeMd(info?.author || 'Unknown')} • \`${formatDuration(info?.duration)}\``;
-    if (position > 0) body += ` • #${position}`;
-    c.addTextDisplayComponents(ComponentsV2.text(body));
-    return c;
+
+    return embed;
 }
 
 const QUEUE_PAGE_SIZE = 10;
 
 /** Full queue listing, paginated. */
-export function queueContainer(player: Player, page = 0): ContainerBuilder {
-    const c = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
+export function queueContainer(player: Player, page = 0): EmbedBuilder {
     const current = player.queue.current;
     const upcoming = player.queue.tracks as AnyTrack[];
 
-    let body = `-# 🎵 QUEUE\n`;
+    const embed = new EmbedBuilder()
+        .setColor(config.branding.color)
+        .setTitle('ℹ️ Music Queue');
+
+    let description = '';
     if (current) {
-        body += `**Now:** ${sourceIcon(trackInfo(current)?.sourceName)} ${escapeMd(trackInfo(current)?.title)} \`${formatDuration(trackInfo(current)?.duration)}\`\n`;
+        const info = trackInfo(current);
+        description += `**0 | [${escapeMd(info?.title)}](${info?.uri})** - \`${formatDuration(info?.duration)}\`\n\n`;
     }
 
     if (!upcoming.length) {
-        body += `-# Queue is empty — add more with \`/play\``;
+        description += '_Queue is empty — add more with `/play`._';
     } else {
         const pages = Math.max(1, Math.ceil(upcoming.length / QUEUE_PAGE_SIZE));
         const safePage = Math.max(0, Math.min(page, pages - 1));
         const start = safePage * QUEUE_PAGE_SIZE;
         const slice = upcoming.slice(start, start + QUEUE_PAGE_SIZE);
         const totalMs = upcoming.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
-        body += `-# ${upcoming.length} tracks • ${formatDuration(totalMs)}\n`;
-        body += slice
-            .map((t, i) => `\`${start + i + 1}.\` ${escapeMd(trackInfo(t)?.title)} \`${formatDuration(trackInfo(t)?.duration)}\``)
-            .join('\n');
-        body += `\n-# Page ${safePage + 1}/${pages} • ${loopShort(player.repeatMode)} • 🔊 ${player.volume}%`;
+
+        slice.forEach((t, i) => {
+            const info = trackInfo(t);
+            description += `**${start + i + 1} | [${escapeMd(info?.title)}](${info?.uri})** - \`${formatDuration(info?.duration)}\`\n`;
+        });
+
+        embed.setFooter({ text: `Page ${safePage + 1}/${pages} • Total duration: ${formatDuration(totalMs)} • Volume: ${player.volume}%` });
     }
 
-    c.addTextDisplayComponents(ComponentsV2.text(body));
-    return c;
+    embed.setDescription(description);
+    return embed;
 }
