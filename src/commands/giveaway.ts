@@ -324,8 +324,21 @@ export const giveawayCommand: Command = {
             
             const channel = interaction.guild?.channels.cache.get(giveaway.channel_id);
             if (channel && channel.type === ChannelType.GuildText) {
+                const rerollContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.purple)
+                    .addTextDisplayComponents(ComponentsV2.text(
+                        `-# 🎁 GIVEAWAY REROLL • #${id.slice(0, 8)}\n` +
+                        `# Reroll Complete! 🏆\n\n` +
+                        `A new set of winners has been rolled for **"${giveaway.prize}"**!\n\n` +
+                        `› **New Winners:** ${picked.map(w => `<@${w}>`).join(', ')}\n` +
+                        `› **Hosted by:** <@${giveaway.host_id}>\n\n` +
+                        `Claim your reward by contacting the host!`
+                    ))
+                    .addSeparatorComponents(ComponentsV2.separator());
+
                 await (channel as any).send({
-                    content: `🏆 **Giveaway Reroll Winners (#${id.slice(0, 8)}):** ${picked.map(w => `<@${w}>`).join(', ')} congratulations! You won **"${giveaway.prize}"**!`
+                    content: `🏆 **Reroll Winners:** ${picked.map(w => `<@${w}>`).join(', ')}!`,
+                    components: [rerollContainer],
+                    flags: V2
                 });
             }
 
@@ -717,12 +730,36 @@ async function endGiveaway(client: Client, giveaway: Giveaway): Promise<void> {
     }
 
     if (picked.length > 0) {
+        const winContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.purple)
+            .addTextDisplayComponents(ComponentsV2.text(
+                `-# 🎁 GIVEAWAY CONCLUDED • #${giveaway.id.slice(0, 8)}\n` +
+                `# Congratulations! 🏆\n\n` +
+                `The lottery for **"${giveaway.prize}"** has officially finished!\n\n` +
+                `› **Winners:** ${picked.map(w => `<@${w}>`).join(', ')}\n` +
+                `› **Hosted by:** <@${giveaway.host_id}>\n` +
+                `› **Total Entrants:** \`${participants.length}\` participants\n\n` +
+                `Claim your reward by contacting the host or opening a ticket!`
+            ))
+            .addSeparatorComponents(ComponentsV2.separator());
+
         await (channel as any).send({
-            content: `🏆 **Giveaway Concluded!** Congratulations to ${picked.map(w => `<@${w}>`).join(', ')} for winning **"${giveaway.prize}"**! (#${giveaway.id.slice(0, 8)})`
+            content: `🏆 **Giveaway Winners:** ${picked.map(w => `<@${w}>`).join(', ')}!`,
+            components: [winContainer],
+            flags: V2
         });
     } else {
+        const noWinContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.danger)
+            .addTextDisplayComponents(ComponentsV2.text(
+                `-# 🎁 GIVEAWAY CONCLUDED • #${giveaway.id.slice(0, 8)}\n` +
+                `# No Winners 🎟️\n\n` +
+                `The lottery for **"${giveaway.prize}"** has finished, but there were no participants.\n\n` +
+                `› **Hosted by:** <@${giveaway.host_id}>`
+            ))
+            .addSeparatorComponents(ComponentsV2.separator());
+
         await (channel as any).send({
-            content: `🏆 **Giveaway Concluded!** No participants entered, so no winners could be selected. (#${giveaway.id.slice(0, 8)})`
+            components: [noWinContainer],
+            flags: V2
         });
     }
 }
