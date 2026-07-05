@@ -8,8 +8,8 @@
         "dev": "nodemon",
         "build": "tsc",
         "start": "node dist/index.js",
-        "register": "tsx bot/src/deploy-commands.ts",
-        "lint": "eslint bot/src/**/*.ts",
+        "register": "tsx src/deploy-commands.ts",
+        "lint": "eslint src/**/*.ts",
         "test": "jest"
     },
     "dependencies": {

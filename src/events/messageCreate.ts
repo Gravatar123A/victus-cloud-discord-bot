@@ -180,7 +180,7 @@ export const messageCreateEvent: Event = {
                     const command = message.client.commands.get(commandName);
                     if (command) {
                         if (command.cooldown) {
-                            const remaining = checkCooldown(message as any, commandName, command.cooldown);
+                            const remaining = checkCooldown({ user: message.author } as any, commandName, command.cooldown);
                             if (remaining > 0) {
                                 const container = ComponentsV2.warningContainer(
                                     'Slow Down!',
@@ -231,7 +231,7 @@ export const messageCreateEvent: Event = {
                         const customCmd = await supabase.getCustomCommand(message.guildId, commandName);
                         if (customCmd && customCmd.enabled) {
                             if (customCmd.cooldown > 0) {
-                                const remaining = checkCooldown(message as any, `custom:${commandName}`, customCmd.cooldown);
+                                const remaining = checkCooldown({ user: message.author } as any, `custom:${commandName}`, customCmd.cooldown);
                                 if (remaining > 0) {
                                     const container = ComponentsV2.warningContainer(
                                         'Slow Down!',
