@@ -5,8 +5,10 @@ import {
     SlashCommandBuilder 
 } from 'discord.js';
 import type { Command } from '../types/index.js';
+import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
 
+const V2 = ComponentsV2.IS_COMPONENTS_V2;
 const EPH = MessageFlags.Ephemeral;
 
 export const dmCommand: Command = {
@@ -35,7 +37,8 @@ export const dmCommand: Command = {
             return;
         }
 
-        await interaction.deferReply({ flags: EPH });
+        const isPrefix = interaction.constructor.name === 'PrefixInteraction';
+        await interaction.deferReply({ flags: isPrefix ? undefined : V2 | EPH });
 
         try {
             const dmEmbed = new EmbedBuilder()
@@ -47,20 +50,30 @@ export const dmCommand: Command = {
 
             await targetUser.send({ embeds: [dmEmbed] });
 
-            const successEmbed = new EmbedBuilder()
-                .setColor(0x10b981) // Green
-                .setTitle('✅ Message Delivered')
-                .setDescription(`Your official DM was successfully sent to <@${targetUser.id}>.`);
-
-            await interaction.editReply({ embeds: [successEmbed] });
+            if (isPrefix) {
+                const successEmbed = new EmbedBuilder()
+                    .setColor(0x10b981) // Green
+                    .setTitle('✅ Message Delivered')
+                    .setDescription(`Your official DM was successfully sent to <@${targetUser.id}>.`);
+                await interaction.editReply({ embeds: [successEmbed] });
+            } else {
+                await interaction.editReply({
+                    components: [ComponentsV2.successContainer('Message Delivered', `Your official DM was successfully sent to <@${targetUser.id}>.`)]
+                });
+            }
         } catch (error: any) {
             logger.warn(`Failed to send DM to user ${targetUser.id}:`, error);
-            const errorEmbed = new EmbedBuilder()
-                .setColor(0xef4444) // Red
-                .setTitle('⛔ Delivery Failed')
-                .setDescription(`Could not send DM to <@${targetUser.id}>. Their DMs might be closed or they have blocked the bot.`);
-
-            await interaction.editReply({ embeds: [errorEmbed] });
+            if (isPrefix) {
+                const errorEmbed = new EmbedBuilder()
+                    .setColor(0xef4444) // Red
+                    .setTitle('⛔ Delivery Failed')
+                    .setDescription(`Could not send DM to <@${targetUser.id}>. Their DMs might be closed or they have blocked the bot.`);
+                await interaction.editReply({ embeds: [errorEmbed] });
+            } else {
+                await interaction.editReply({
+                    components: [ComponentsV2.errorContainer('Delivery Failed', `Could not send DM to <@${targetUser.id}>. Their DMs might be closed or they have blocked the bot.`)]
+                });
+            }
         }
     }
 };
