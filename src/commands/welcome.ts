@@ -8,6 +8,7 @@ import {
     ModalBuilder, 
     PermissionFlagsBits, 
     SlashCommandBuilder, 
+    StringSelectMenuBuilder,
     TextInputBuilder, 
     TextInputStyle 
 } from 'discord.js';
@@ -15,6 +16,8 @@ import type { Command } from '../types/index.js';
 import { welcomeSettings, WelcomeConfig } from '../services/welcomeSettings.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
+import { supabase } from '../services/supabase.js';
+import { buildFinalEmbedPayload } from './embed.js';
 
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
 const EPH = MessageFlags.Ephemeral;
@@ -26,12 +29,17 @@ function renderWelcomeDashboard(config: WelcomeConfig): any {
         `Configure how the bot welcomes new server members.\n\n` +
         `› **Status:** ${config.enabled ? '🟢 **Enabled**' : '🔴 **Disabled**'}\n` +
         `› **Welcome Channel:** ${config.channelId ? `<#${config.channelId}>` : '*Not configured (Required)*'}\n` +
-        `› **Embed Format:** ${config.embedEnabled ? '✨ **Rich Embed**' : '📝 **Text Only**'}\n` +
-        `› **Message Template:**\n` +
-        `\`\`\`\n${config.template}\n\`\`\`\n`;
+        `› **Welcome Format:** **\`${config.welcomeType.toUpperCase()}\`**\n`;
         
-    if (config.embedEnabled) {
-        text += `### 🎨 Embed Settings\n` +
+    if (config.welcomeType === 'custom_embed') {
+        text += `› **Saved Embed Name:** \`${config.customEmbedName || '*Not configured (Required)*'}\` *(Created via /embed create)*\n`;
+    } else {
+        text += `› **Message Template:**\n` +
+            `\`\`\`\n${config.template}\n\`\`\`\n`;
+    }
+        
+    if (config.welcomeType === 'embed') {
+        text += `### 🎨 Default Embed Settings\n` +
             `› **Embed Title:** \`${config.embedTitle}\`\n` +
             `› **Color HEX:** \`${config.embedColor}\`\n` +
             `› **Banner Image:** ${config.embedImage ? `[Link](${config.embedImage})` : '*None*'}\n`;
@@ -47,30 +55,44 @@ function renderWelcomeDashboard(config: WelcomeConfig): any {
             .setPlaceholder('Select welcome text channel...')
             .addChannelTypes(ChannelType.GuildText)
     );
+
+    // Row 2: Select Format Type
+    const formatSelect = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('welcome_wiz:select:format')
+            .setPlaceholder('Select welcome message format...')
+            .addOptions([
+                { label: 'Text Message Only', value: 'text', default: config.welcomeType === 'text' },
+                { label: 'Default Welcome Embed', value: 'embed', default: config.welcomeType === 'embed' },
+                { label: 'Saved Custom Embed', value: 'custom_embed', default: config.welcomeType === 'custom_embed' }
+            ])
+    );
     
-    // Row 2: Toggles
+    // Row 3: Status Toggle and Custom Embed setting
     const toggleRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId('welcome_wiz:toggle_status')
             .setLabel(config.enabled ? 'Disable System 🔴' : 'Enable System 🟢')
             .setStyle(config.enabled ? ButtonStyle.Danger : ButtonStyle.Success),
         new ButtonBuilder()
-            .setCustomId('welcome_wiz:toggle_embed')
-            .setLabel(config.embedEnabled ? 'Embed: ON ✨' : 'Embed: OFF 📝')
-            .setStyle(config.embedEnabled ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setCustomId('welcome_wiz:modal:custom_embed')
+            .setLabel('Set Saved Embed Name')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(config.welcomeType !== 'custom_embed')
     );
     
-    // Row 3: Modals and Actions
+    // Row 4: Modals and Actions
     const editRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId('welcome_wiz:modal:msg')
             .setLabel('Edit Message')
-            .setStyle(ButtonStyle.Secondary),
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(config.welcomeType === 'custom_embed'),
         new ButtonBuilder()
             .setCustomId('welcome_wiz:modal:embed')
             .setLabel('Edit Embed Style')
             .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!config.embedEnabled),
+            .setDisabled(config.welcomeType !== 'embed'),
         new ButtonBuilder()
             .setCustomId('welcome_wiz:test')
             .setLabel('Send Test Welcome 🧪')
@@ -79,6 +101,7 @@ function renderWelcomeDashboard(config: WelcomeConfig): any {
     );
     
     c.addActionRowComponents(channelSelect);
+    c.addActionRowComponents(formatSelect);
     c.addActionRowComponents(toggleRow);
     c.addActionRowComponents(editRow);
     
@@ -94,10 +117,36 @@ export function formatWelcomeMessage(template: string, member: any): string {
         .replace(/{member_count}/g, String(guild.memberCount));
 }
 
-export function buildWelcomePayload(config: WelcomeConfig, member: any): any {
+export async function buildWelcomePayload(config: WelcomeConfig, member: any): Promise<any> {
+    if (config.welcomeType === 'custom_embed' && config.customEmbedName) {
+        const embed = await supabase.getCustomEmbed(member.guild.id, config.customEmbedName);
+        if (embed) {
+            const cloned = JSON.parse(JSON.stringify(embed));
+            
+            const replacer = (str: string | null) => {
+                if (!str) return str;
+                return str
+                    .replace(/{user}/g, `<@${member.user.id}>`)
+                    .replace(/{user\.name}/g, member.user.username)
+                    .replace(/{guild}/g, member.guild.name)
+                    .replace(/{member_count}/g, String(member.guild.memberCount));
+            };
+            
+            cloned.title = replacer(cloned.title);
+            cloned.description = replacer(cloned.description);
+            cloned.footer_text = replacer(cloned.footer_text);
+            cloned.author_name = replacer(cloned.author_name);
+            
+            const payload = buildFinalEmbedPayload(cloned);
+            return { components: [payload], flags: V2 };
+        } else {
+            return { content: `⚠️ Welcome custom embed template **\`${config.customEmbedName}\`** not found in database.` };
+        }
+    }
+
     const textBody = formatWelcomeMessage(config.template, member);
     
-    if (!config.embedEnabled) {
+    if (config.welcomeType === 'text') {
         return { content: textBody };
     }
     
@@ -156,7 +205,7 @@ export const welcomeCommand: Command = {
                 return;
             }
 
-            const payload = buildWelcomePayload(config, interaction.member);
+            const payload = await buildWelcomePayload(config, interaction.member);
             await targetChannel.send(payload).catch((err) => {
                 logger.error('Failed to send test welcome message:', err);
             });
@@ -176,10 +225,6 @@ export const welcomeCommand: Command = {
             const updated = await welcomeSettings.set(interaction.guildId!, { enabled: !config.enabled });
             await interaction.update({ components: [renderWelcomeDashboard(updated)] });
         }
-        else if (action === 'toggle_embed') {
-            const updated = await welcomeSettings.set(interaction.guildId!, { embedEnabled: !config.embedEnabled });
-            await interaction.update({ components: [renderWelcomeDashboard(updated)] });
-        }
         else if (action === 'test') {
             await interaction.deferReply({ flags: EPH });
             const targetChannel = interaction.guild?.channels.cache.get(config.channelId!);
@@ -190,7 +235,7 @@ export const welcomeCommand: Command = {
                 return;
             }
 
-            const payload = buildWelcomePayload(config, interaction.member);
+            const payload = await buildWelcomePayload(config, interaction.member);
             await targetChannel.send(payload).catch((err) => {
                 logger.error('Failed to send test welcome message:', err);
             });
@@ -249,14 +294,37 @@ export const welcomeCommand: Command = {
                 );
                 await interaction.showModal(modal);
             }
+            else if (targetModal === 'custom_embed') {
+                const modal = new ModalBuilder().setCustomId('welcome_wiz_modal:custom_embed').setTitle('Saved Embed Template Name');
+                modal.addComponents(
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(
+                        new TextInputBuilder()
+                            .setCustomId('embedName')
+                            .setLabel('Custom Embed Name')
+                            .setPlaceholder('rules (The name of the embed created via /embed create)')
+                            .setValue(config.customEmbedName || '')
+                            .setStyle(TextInputStyle.Short)
+                            .setRequired(true)
+                    )
+                );
+                await interaction.showModal(modal);
+            }
         }
     },
 
     async handleSelectMenu(interaction) {
-        if (interaction.customId !== 'welcome_wiz:channel') return;
-        const channelId = interaction.values[0];
-        const updated = await welcomeSettings.set(interaction.guildId!, { channelId });
-        await interaction.update({ components: [renderWelcomeDashboard(updated)] });
+        if (!interaction.customId.startsWith('welcome_wiz:')) return;
+        const action = interaction.customId.split(':')[1];
+        const val = interaction.values[0];
+
+        if (action === 'channel') {
+            const updated = await welcomeSettings.set(interaction.guildId!, { channelId: val });
+            await interaction.update({ components: [renderWelcomeDashboard(updated)] });
+        }
+        else if (action === 'select' && interaction.customId.endsWith(':format')) {
+            const updated = await welcomeSettings.set(interaction.guildId!, { welcomeType: val as any });
+            await interaction.update({ components: [renderWelcomeDashboard(updated)] });
+        }
     },
 
     async handleModal(interaction) {
@@ -279,6 +347,11 @@ export const welcomeCommand: Command = {
                 embedColor,
                 embedImage
             });
+            await (interaction as any).update({ components: [renderWelcomeDashboard(updated)] });
+        }
+        else if (type === 'custom_embed') {
+            const customEmbedName = interaction.fields.getTextInputValue('embedName').trim().toLowerCase();
+            const updated = await welcomeSettings.set(interaction.guildId!, { customEmbedName });
             await (interaction as any).update({ components: [renderWelcomeDashboard(updated)] });
         }
     }

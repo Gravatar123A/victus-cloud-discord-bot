@@ -18,7 +18,7 @@ export const guildMemberAddEvent: Event = {
                 return;
             }
 
-            const payload = buildWelcomePayload(config, member);
+            const payload = await buildWelcomePayload(config, member);
             await channel.send(payload).catch((err) => {
                 logger.error(`Failed to send welcome message for ${member.user.tag}:`, err);
             });

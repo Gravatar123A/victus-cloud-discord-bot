@@ -10,6 +10,8 @@ export interface WelcomeConfig {
     embedTitle: string;
     embedColor: string;
     embedImage: string | null;
+    customEmbedName: string | null;
+    welcomeType: 'text' | 'embed' | 'custom_embed';
 }
 
 const SETTINGS_PATH = join(process.cwd(), 'data', 'welcome-settings.json');
@@ -21,7 +23,9 @@ const DEFAULT_CONFIG: WelcomeConfig = {
     embedEnabled: true,
     embedTitle: 'Welcome to the Server! 🎉',
     embedColor: '#8b5cf6',
-    embedImage: null
+    embedImage: null,
+    customEmbedName: null,
+    welcomeType: 'embed'
 };
 
 async function readAllConfigs(): Promise<Record<string, WelcomeConfig>> {
@@ -44,18 +48,21 @@ async function writeAllConfigs(configs: Record<string, WelcomeConfig>): Promise<
 export class WelcomeSettingsService {
     async get(guildId: string): Promise<WelcomeConfig> {
         const configs = await readAllConfigs();
-        return {
+        const raw = configs[guildId] || {};
+        const config = {
             ...DEFAULT_CONFIG,
-            ...(configs[guildId] || {})
+            ...raw
         };
+        // Auto-migrate old embedEnabled settings to welcomeType
+        if (!raw.welcomeType) {
+            config.welcomeType = (raw.embedEnabled ?? DEFAULT_CONFIG.embedEnabled) ? 'embed' : 'text';
+        }
+        return config;
     }
 
     async set(guildId: string, updates: Partial<WelcomeConfig>): Promise<WelcomeConfig> {
         const configs = await readAllConfigs();
-        const current = {
-            ...DEFAULT_CONFIG,
-            ...(configs[guildId] || {})
-        };
+        const current = await this.get(guildId);
         const updated = { ...current, ...updates };
         configs[guildId] = updated;
         await writeAllConfigs(configs);
