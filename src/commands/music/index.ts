@@ -226,10 +226,13 @@ export const playCommand: Command = {
         await interaction.editReply({ embeds: [addedEmbed] });
     },
 
-    // All `music:*` transport buttons funnel through here.
+    // All `music:*` transport controls are handled via select menu.
     async handleButton(interaction: ButtonInteraction) {
-        if (!interaction.customId.startsWith('music:')) return;
-        const action = interaction.customId.split(':')[1];
+        return;
+    },
+
+    async handleSelectMenu(interaction: StringSelectMenuInteraction) {
+        if (interaction.customId !== 'music:controls') return;
 
         const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
         if (!player) {
@@ -249,6 +252,8 @@ export const playCommand: Command = {
             await interaction.reply({ embeds: [embed], ephemeral: true });
             return;
         }
+
+        const action = interaction.values[0] ?? '';
 
         switch (action) {
             case 'pause': {
@@ -290,18 +295,68 @@ export const playCommand: Command = {
                 await player.setRepeatMode(next);
                 break;
             }
+            case 'restart': {
+                await player.seek(0);
+                break;
+            }
+            case 'seekback': {
+                if (player.queue.current?.info.isStream) {
+                    await interaction.reply({ ...info('Live stream', 'You cannot seek within a live stream.'), ephemeral: true });
+                    return;
+                }
+                const target = Math.max(0, (player.position || 0) - 10000);
+                await player.seek(target);
+                break;
+            }
+            case 'seekfwd': {
+                if (player.queue.current?.info.isStream) {
+                    await interaction.reply({ ...info('Live stream', 'You cannot seek within a live stream.'), ephemeral: true });
+                    return;
+                }
+                const target = Math.min(player.queue.current?.info.duration || 0, (player.position || 0) + 10000);
+                await player.seek(target);
+                break;
+            }
+            case 'voldown': {
+                await player.setVolume(Math.max(0, player.volume - 10));
+                break;
+            }
+            case 'volup': {
+                await player.setVolume(Math.min(150, player.volume + 10));
+                break;
+            }
+            case 'shuffle': {
+                if (player.queue.tracks.length < 2) {
+                    await interaction.reply({ ...info('Not enough tracks', 'Add at least two tracks to shuffle.'), ephemeral: true });
+                    return;
+                }
+                await player.queue.shuffle();
+                break;
+            }
+            case 'queue': {
+                const embed = queueContainer(player, 0);
+                await interaction.reply({ embeds: [embed], ephemeral: true });
+                return;
+            }
+            case 'clear': {
+                if (!player.queue.tracks.length) {
+                    await interaction.reply({ ...info('Queue empty', 'The queue is already empty.'), ephemeral: true });
+                    return;
+                }
+                const count = player.queue.tracks.length;
+                await player.queue.splice(0, count);
+                break;
+            }
+            case 'refresh': {
+                break;
+            }
             default:
                 await interaction.reply({ content: 'Unknown control.', ephemeral: true });
                 return;
         }
 
         const payload = await nowPlayingContainer(player);
-        await interaction.update({ embeds: payload.embeds, components: payload.components });
-    },
-
-    async handleSelectMenu(interaction: StringSelectMenuInteraction) {
-        // No select menus on the standard music panel
-        return;
+        await interaction.update({ embeds: payload.embeds, components: payload.components, files: payload.files });
     }
 };
 

@@ -1,17 +1,19 @@
 /**
  * Music UI for the Victus Cloud bot — Clean, professional standard Discord Embeds
  * for the Lavalink music feature (Now Playing, queue, "added" confirmations)
- * plus the button row used by /play and the music button handler.
+ * plus the select menu dropdown control row.
  */
 import {
     ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
+    StringSelectMenuBuilder,
     EmbedBuilder,
+    AttachmentBuilder,
 } from 'discord.js';
 import type { MessageActionRowComponentBuilder } from 'discord.js';
 import type { Player, Track, UnresolvedTrack } from 'lavalink-client';
+import { Bloom } from 'musicard';
 import { config } from '../config.js';
+import { logger } from '../utils/logger.js';
 
 type AnyTrack = Track | UnresolvedTrack;
 
@@ -56,41 +58,6 @@ function requesterId(t: AnyTrack): string | null {
     return r?.id ?? null;
 }
 
-/**
- * Standard professional button controls row
- */
-export function controlRows(
-    player?: Player,
-): ActionRowBuilder<MessageActionRowComponentBuilder>[] {
-    const paused = !!player?.paused;
-    const mode = player?.repeatMode ?? 'off';
-
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-            .setCustomId('music:previous')
-            .setEmoji('⏮️')
-            .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-            .setCustomId('music:pause')
-            .setEmoji(paused ? '▶️' : '⏸️')
-            .setStyle(paused ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder()
-            .setCustomId('music:skip')
-            .setEmoji('⏭️')
-            .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-            .setCustomId('music:loop')
-            .setEmoji('🔁')
-            .setStyle(mode !== 'off' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-        new ButtonBuilder()
-            .setCustomId('music:stop')
-            .setEmoji('⏹️')
-            .setStyle(ButtonStyle.Danger),
-    );
-
-    return [row] as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>[];
-}
-
 /** Idle control panel shown by /music when nothing is playing. */
 export function musicIdleContainer(): EmbedBuilder {
     return new EmbedBuilder()
@@ -104,7 +71,7 @@ export function musicIdleContainer(): EmbedBuilder {
 }
 
 /** The public "Now Playing" panel with live transport controls. */
-export async function nowPlayingContainer(player: Player): Promise<{ embeds: EmbedBuilder[]; components: any[]; files: any[] }> {
+export async function nowPlayingContainer(player: Player): Promise<{ embeds: EmbedBuilder[]; components: any[]; files: AttachmentBuilder[] }> {
     const track = player.queue.current;
     if (!track) {
         const embed = new EmbedBuilder()
@@ -118,7 +85,28 @@ export async function nowPlayingContainer(player: Player): Promise<{ embeds: Emb
     const duration = info?.duration ?? 0;
     const pos = Math.min(player.position ?? 0, duration);
     const reqId = requesterId(track);
+    const live = !!info?.isStream;
 
+    // Generate musicard Bloom image
+    let cardBuffer: Buffer = Buffer.alloc(0);
+    try {
+        cardBuffer = await Bloom({
+            trackName: info?.title || 'Unknown Title',
+            artistName: info?.author || 'Unknown Artist',
+            albumArt: info?.artworkUrl || config.branding.logo,
+            fallbackArt: config.branding.logo,
+            isExplicit: false,
+            timeAdjust: {
+                timeStart: formatDuration(pos),
+                timeEnd: live ? 'LIVE' : formatDuration(duration)
+            },
+            progressBar: live ? 100 : (duration > 0 ? (pos / duration) * 100 : 0)
+        });
+    } catch (err) {
+        logger.error('Failed to generate musicard:', err);
+    }
+
+    const files: AttachmentBuilder[] = [];
     const embed = new EmbedBuilder()
         .setColor(config.branding.color)
         .setTitle(info?.title || 'Unknown Title')
@@ -129,15 +117,47 @@ export async function nowPlayingContainer(player: Player): Promise<{ embeds: Emb
             `• **Requester:** ${reqId ? `<@${reqId}>` : 'Unknown'}`
         );
 
-    const art = info?.artworkUrl;
-    if (art && typeof art === 'string' && art.startsWith('http')) {
-        embed.setThumbnail(art);
+    if (cardBuffer.length > 0) {
+        files.push(new AttachmentBuilder(cardBuffer, { name: 'musicard.png' }));
+        embed.setImage('attachment://musicard.png');
+    } else {
+        const art = info?.artworkUrl;
+        if (art && typeof art === 'string' && art.startsWith('http')) {
+            embed.setThumbnail(art);
+        }
     }
+
+    // Dropdown Select Menu
+    const paused = !!player?.paused;
+    const mode = player?.repeatMode ?? 'off';
+    const vol = player?.volume ?? 80;
+
+    const selectMenu = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('music:controls')
+            .setPlaceholder('Select a music control option...')
+            .addOptions([
+                { label: paused ? '▶️ Resume' : '⏸️ Pause', value: 'pause', description: paused ? 'Resume playback' : 'Pause playback' },
+                { label: '⏭ Skip', value: 'skip', description: 'Skip to next track' },
+                { label: '⏮ Previous', value: 'previous', description: 'Play the previous track' },
+                { label: '⏹ Stop', value: 'stop', description: 'Stop and clear the queue' },
+                { label: '⏪ Restart', value: 'restart', description: 'Restart current track' },
+                { label: '⏪ -10s', value: 'seekback', description: 'Seek back 10 seconds' },
+                { label: '⏩ +10s', value: 'seekfwd', description: 'Seek forward 10 seconds' },
+                { label: '🔉 Volume Down', value: 'voldown', description: `Current: ${vol}%` },
+                { label: '🔊 Volume Up', value: 'volup', description: `Current: ${vol}%` },
+                { label: `🔁 Loop: ${mode === 'off' ? 'Off → Track' : mode === 'track' ? 'Track → Queue' : 'Queue → Off'}`, value: 'loop', description: `Currently: ${mode}` },
+                { label: '🔀 Shuffle', value: 'shuffle', description: 'Shuffle the queue' },
+                { label: '📋 Queue', value: 'queue', description: 'View the full queue' },
+                { label: '🔄 Refresh', value: 'refresh', description: 'Refresh the now playing panel' },
+                { label: '🗑️ Clear Queue', value: 'clear', description: 'Remove all upcoming tracks' },
+            ])
+    );
 
     return { 
         embeds: [embed], 
-        components: controlRows(player),
-        files: []
+        components: [selectMenu],
+        files
     };
 }
 
