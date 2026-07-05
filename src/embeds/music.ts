@@ -1,11 +1,12 @@
 /**
  * Music UI for the Victus Cloud bot — Clean, professional standard Discord Embeds
  * for the Lavalink music feature (Now Playing, queue, "added" confirmations)
- * plus the select menu dropdown control row.
+ * plus the custom buttons control row.
  */
 import {
     ActionRowBuilder,
-    StringSelectMenuBuilder,
+    ButtonBuilder,
+    ButtonStyle,
     EmbedBuilder,
     AttachmentBuilder,
 } from 'discord.js';
@@ -57,6 +58,13 @@ function requesterId(t: AnyTrack): string | null {
     return r?.id ?? null;
 }
 
+export function generateProgressBar(pos: number, duration: number, length = 18): string {
+    if (duration <= 0) return '▬'.repeat(length);
+    const progress = Math.min(pos / duration, 1);
+    const index = Math.round(progress * (length - 1));
+    return '▬'.repeat(index) + '🔵' + '▬'.repeat(length - 1 - index);
+}
+
 /** Idle control panel shown by /music when nothing is playing. */
 export function musicIdleContainer(): EmbedBuilder {
     return new EmbedBuilder()
@@ -70,7 +78,7 @@ export function musicIdleContainer(): EmbedBuilder {
 }
 
 /** The public "Now Playing" panel with live transport controls. */
-export async function nowPlayingContainer(player: Player): Promise<{ embeds: EmbedBuilder[]; components: any[]; files: AttachmentBuilder[] }> {
+export async function nowPlayingContainer(player: Player, guild?: any): Promise<{ embeds: EmbedBuilder[]; components: any[]; files: AttachmentBuilder[] }> {
     const track = player.queue.current;
     if (!track) {
         const embed = new EmbedBuilder()
@@ -85,6 +93,14 @@ export async function nowPlayingContainer(player: Player): Promise<{ embeds: Emb
     const pos = Math.min(player.position ?? 0, duration);
     const reqId = requesterId(track);
     const live = !!info?.isStream;
+
+    // Get voice channel name
+    let vcName = 'PUBLIC VC';
+    if (guild) {
+        const member = reqId ? guild.members.cache.get(reqId) : null;
+        const voiceChannel = member?.voice.channel;
+        if (voiceChannel) vcName = voiceChannel.name.toUpperCase();
+    }
 
     // Generate musicard Bloom image
     let cardBuffer: Buffer = Buffer.alloc(0);
@@ -108,12 +124,12 @@ export async function nowPlayingContainer(player: Player): Promise<{ embeds: Emb
     const files: AttachmentBuilder[] = [];
     const embed = new EmbedBuilder()
         .setColor(0x8b5cf6) // Purple
-        .setTitle(info?.title || 'Unknown Title')
-        .setURL(info?.uri || null)
+        .setTitle('Now playing')
         .setDescription(
-            `👤 **Artist:** ${escapeMd(info?.author || 'Unknown Artist')}\n` +
-            `⏱️ **Duration:** \`${formatDuration(pos)} / ${formatDuration(duration)}\`\n` +
-            `🙋 **Requester:** ${reqId ? `<@${reqId}>` : 'Unknown'}`
+            `**[${escapeMd(info?.title)}](${info?.uri})**\n\n` +
+            `⊕ ${reqId ? `<@${reqId}>` : 'Unknown'} 👑 📍 🔊 🌍 • ${vcName} •\n\n` +
+            `\`${formatDuration(pos)} / ${formatDuration(duration)}\`\n\n` +
+            `${generateProgressBar(pos, duration)}`
         );
 
     if (cardBuffer.length > 0) {
@@ -126,37 +142,75 @@ export async function nowPlayingContainer(player: Player): Promise<{ embeds: Emb
         }
     }
 
-    // Dropdown Select Menu
-    const paused = !!player?.paused;
-    const mode = player?.repeatMode ?? 'off';
-    const vol = player?.volume ?? 80;
+    // Row 1 Buttons
+    const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:like').setEmoji('🤍').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:loop').setEmoji('🔁').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:open_controls').setEmoji('🎛️').setLabel('Open music controls').setStyle(ButtonStyle.Secondary),
+    );
 
-    const selectMenu = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId('music:controls')
-            .setPlaceholder('Select a music control option...')
-            .addOptions([
-                { label: paused ? '▶️ Resume' : '⏸️ Pause', value: 'pause', description: paused ? 'Resume playback' : 'Pause playback' },
-                { label: '⏭ Skip', value: 'skip', description: 'Skip to next track' },
-                { label: '⏮ Previous', value: 'previous', description: 'Play the previous track' },
-                { label: '⏹ Stop', value: 'stop', description: 'Stop and clear the queue' },
-                { label: '⏪ Restart', value: 'restart', description: 'Restart current track' },
-                { label: '⏪ -10s', value: 'seekback', description: 'Seek back 10 seconds' },
-                { label: '⏩ +10s', value: 'seekfwd', description: 'Seek forward 10 seconds' },
-                { label: '🔉 Volume Down', value: 'voldown', description: `Current: ${vol}%` },
-                { label: '🔊 Volume Up', value: 'volup', description: `Current: ${vol}%` },
-                { label: `🔁 Loop: ${mode === 'off' ? 'Off → Track' : mode === 'track' ? 'Track → Queue' : 'Queue → Off'}`, value: 'loop', description: `Currently: ${mode}` },
-                { label: '🔀 Shuffle', value: 'shuffle', description: 'Shuffle the queue' },
-                { label: '📋 Queue', value: 'queue', description: 'View the full queue' },
-                { label: '🔄 Refresh', value: 'refresh', description: 'Refresh the now playing panel' },
-                { label: '🗑️ Clear Queue', value: 'clear', description: 'Remove all upcoming tracks' },
-            ])
+    // Row 2 Buttons
+    const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:stop').setEmoji('❌').setStyle(ButtonStyle.Secondary),
     );
 
     return { 
         embeds: [embed], 
-        components: [selectMenu],
+        components: [row1, row2],
         files
+    };
+}
+
+export function musicControlsContainer(player: Player): { content: string; components: any[] } {
+    const track = player.queue.current;
+    const title = track ? track.info.title : 'Unknown Track';
+    const pos = player.position ?? 0;
+    const duration = track ? track.info.duration : 0;
+    const live = track ? track.info.isStream : false;
+    
+    const timeStr = live ? 'LIVE' : `${formatDuration(pos)} / ${formatDuration(duration)}`;
+    const header = `\`${escapeMd(title).slice(0, 50)}... (${timeStr})\``;
+
+    const playbackRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:previous').setEmoji('⏮️').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:pause').setEmoji(player.paused ? '▶️' : '⏸️').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:stop').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+    );
+
+    const musicRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:queue').setEmoji('📊').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:filters').setEmoji('🎛️').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:add').setEmoji('➕').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:search').setEmoji('🔍').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:lyrics').setEmoji('🎵').setStyle(ButtonStyle.Secondary),
+    );
+
+    const controlsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:like').setEmoji('🤍').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:volume').setEmoji('🔊').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:eq').setEmoji('🎚️').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:preset').setEmoji('🟣').setStyle(ButtonStyle.Secondary),
+    );
+
+    const libraryRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('music:library_playlists').setEmoji('📁').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('music:history').setEmoji('🕒').setStyle(ButtonStyle.Secondary),
+    );
+
+    return {
+        content: 
+            `**${header}**\n` +
+            `───────────────────────────────────\n` +
+            `**Playback**\n` +
+            `⠀\n` +
+            `**Music**\n` +
+            `⠀\n` +
+            `**Controls**\n` +
+            `⠀\n` +
+            `**Library**`,
+        components: [playbackRow, musicRow, controlsRow, libraryRow]
     };
 }
 

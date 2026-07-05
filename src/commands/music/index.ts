@@ -12,6 +12,8 @@ import {
     PermissionFlagsBits,
     SlashCommandBuilder,
     EmbedBuilder,
+    ButtonBuilder,
+    ButtonStyle,
 } from 'discord.js';
 import type {
     ButtonInteraction,
@@ -32,8 +34,12 @@ import {
     musicIdleContainer,
     nowPlayingContainer,
     queueContainer,
+    musicControlsContainer,
+    escapeMd,
 } from '../../embeds/music.js';
 import { refreshNowPlaying } from '../../services/music.js';
+import { supabase } from '../../services/supabase.js';
+import { playlistService } from '../../services/playlistSettings.js';
 
 const EPH = MessageFlags.Ephemeral;
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
@@ -227,9 +233,138 @@ export const playCommand: Command = {
         await interaction.editReply({ embeds: [addedEmbed] });
     },
 
-    // All `music:*` transport controls are handled via select menu.
+    // Handle transport controls and ephemeral control panel button clicks
     async handleButton(interaction: ButtonInteraction) {
-        return;
+        if (!interaction.customId.startsWith('music:')) return;
+        
+        const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
+        if (!player) {
+            await interaction.reply({ content: '❌ Nothing is playing right now.', ephemeral: true });
+            return;
+        }
+
+        const member = interaction.member as GuildMember | null;
+        if (member?.voice?.channelId !== player.voiceChannelId) {
+            await interaction.reply({ content: '❌ Join my voice channel to control playback.', ephemeral: true });
+            return;
+        }
+
+        const action = interaction.customId.split(':')[1];
+
+        switch (action) {
+            case 'open_controls': {
+                const controls = musicControlsContainer(player);
+                await interaction.reply({ content: controls.content, components: controls.components, ephemeral: true });
+                return;
+            }
+            case 'like': {
+                const track = player.queue.current;
+                if (track) {
+                    try {
+                        const embed = await supabase.getCustomEmbed(interaction.guildId!, `_music_favorites_${interaction.user.id}`);
+                        let favorites: any[] = [];
+                        if (embed?.description) {
+                            favorites = JSON.parse(embed.description);
+                        }
+                        const trackInfoRecord = {
+                            title: track.info.title,
+                            uri: track.info.uri,
+                            author: track.info.author,
+                            duration: track.info.duration
+                        };
+                        if (!favorites.some(f => f.uri === track.info.uri)) {
+                            favorites.push(trackInfoRecord);
+                            await supabase.saveCustomEmbed(interaction.guildId!, `_music_favorites_${interaction.user.id}`, {
+                                description: JSON.stringify(favorites)
+                            });
+                        }
+                        await interaction.reply({ content: `❤️ Added **${escapeMd(track.info.title)}** to your favorites!`, ephemeral: true });
+                    } catch (error) {
+                        logger.error('Failed to save music favorite:', error);
+                        await interaction.reply({ content: '❌ Failed to add to favorites.', ephemeral: true });
+                    }
+                }
+                return;
+            }
+            case 'pause': {
+                if (player.paused) await player.resume();
+                else await player.pause();
+                break;
+            }
+            case 'skip': {
+                if (!player.queue.tracks.length) {
+                    await interaction.reply({ content: '⏭️ That was the last track — stopping playback.', ephemeral: true });
+                    await player.destroy().catch(() => undefined);
+                    return;
+                }
+                await player.skip();
+                await interaction.reply({ content: '⏭️ Skipped to the next track.', ephemeral: true });
+                return;
+            }
+            case 'previous': {
+                const prev = player.queue.previous?.[0];
+                if (!prev) {
+                    await interaction.reply({ content: '⏮️ There is no track to go back to.', ephemeral: true });
+                    return;
+                }
+                await player.play({ clientTrack: prev });
+                await interaction.reply({ content: '⏮️ Playing the previous track.', ephemeral: true });
+                return;
+            }
+            case 'stop': {
+                await player.destroy();
+                await interaction.reply({ content: '⏹️ Playback stopped and connection closed.', ephemeral: true });
+                return;
+            }
+            case 'loop': {
+                const next = player.repeatMode === 'off' ? 'track' : player.repeatMode === 'track' ? 'queue' : 'off';
+                await player.setRepeatMode(next);
+                await interaction.reply({ content: `🔁 Loop mode updated to: **${next}**`, ephemeral: true });
+                break;
+            }
+            case 'queue': {
+                const embed = queueContainer(player, 0);
+                await interaction.reply({ embeds: [embed], ephemeral: true });
+                return;
+            }
+            case 'volume': {
+                const nextVol = player.volume === 0 ? 80 : 0;
+                await player.setVolume(nextVol);
+                await interaction.reply({ content: nextVol === 0 ? '🔇 Muted volume.' : '🔊 Restored volume to 80%.', ephemeral: true });
+                break;
+            }
+            case 'history': {
+                const prev = player.queue.previous;
+                if (!prev || prev.length === 0) {
+                    await interaction.reply({ content: '🕒 No history found.', ephemeral: true });
+                    return;
+                }
+                const historyList = prev.slice(0, 10).map((t, idx) => `${idx + 1}. **${escapeMd(t.info.title)}**`).join('\n');
+                await interaction.reply({ content: `🕒 **Recent History:**\n${historyList}`, ephemeral: true });
+                return;
+            }
+            case 'library_playlists': {
+                const playlists = await playlistService.getAll(interaction.guildId!, interaction.user.id);
+                if (playlists.length === 0) {
+                    await interaction.reply({ content: '📁 You have no playlists. Use `/playlist create` to make one!', ephemeral: true });
+                    return;
+                }
+                const list = playlists.map(p => `• **${escapeMd(p.name)}** (${p.tracks.length} tracks)`).join('\n');
+                await interaction.reply({ content: `📁 **Your Playlists:**\n${list}`, ephemeral: true });
+                return;
+            }
+            default: {
+                await interaction.reply({ content: '🔧 Feature coming soon!', ephemeral: true });
+                return;
+            }
+        }
+
+        await refreshNowPlaying(player);
+
+        if (interaction.message.flags.has(MessageFlags.Ephemeral)) {
+            const controls = musicControlsContainer(player);
+            await interaction.update({ content: controls.content, components: controls.components });
+        }
     },
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction) {
@@ -356,7 +491,7 @@ export const playCommand: Command = {
                 return;
         }
 
-        const payload = await nowPlayingContainer(player);
+        const payload = await nowPlayingContainer(player, interaction.guild);
         await interaction.update({ embeds: payload.embeds, components: payload.components, files: payload.files });
     }
 };
@@ -461,7 +596,7 @@ export const nowplayingCommand: Command = {
             await interaction.editReply(info('Nothing is playing', 'Start a track with `/play`.'));
             return;
         }
-        const payload = await nowPlayingContainer(player);
+        const payload = await nowPlayingContainer(player, interaction.guild);
         await interaction.editReply({ embeds: payload.embeds, components: payload.components, files: payload.files });
         // Re-anchor the live panel to this fresh message.
         const sent = await interaction.fetchReply().catch(() => null);
@@ -578,7 +713,7 @@ export const musicCommand: Command = {
             await interaction.editReply({ embeds: [embed], components: [] });
             return;
         }
-        const payload = await nowPlayingContainer(player);
+        const payload = await nowPlayingContainer(player, interaction.guild);
         await interaction.editReply({ embeds: payload.embeds, components: payload.components, files: payload.files });
         // Re-anchor the live panel to this fresh message so controls keep updating it.
         const sent = await interaction.fetchReply().catch(() => null);

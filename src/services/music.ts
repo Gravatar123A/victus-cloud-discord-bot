@@ -93,7 +93,7 @@ export async function postNowPlaying(client: Client, player: Player): Promise<vo
     const channel = await getTextChannel(client, player);
     if (!channel || !('send' in channel)) return;
     await clearNowPlaying(client, player);
-    const payload = await nowPlayingContainer(player);
+    const payload = await nowPlayingContainer(player, 'guild' in channel ? channel.guild : undefined);
     const sent = await channel
         .send({ embeds: payload.embeds, components: payload.components, files: payload.files })
         .catch(() => null);
@@ -104,7 +104,7 @@ export async function postNowPlaying(client: Client, player: Player): Promise<vo
 export async function refreshNowPlaying(player: Player): Promise<void> {
     const msg = player.get('npMessage') as Message | undefined;
     if (!msg) return;
-    const payload = await nowPlayingContainer(player);
+    const payload = await nowPlayingContainer(player, msg.guild);
     await msg.edit({ embeds: payload.embeds, components: payload.components, files: payload.files }).catch(() => undefined);
 }
 
