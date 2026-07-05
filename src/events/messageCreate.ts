@@ -14,6 +14,7 @@ import { PrefixInteraction } from '../utils/prefixInteraction.js';
 import { checkCooldown } from '../middleware/rateLimit.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { calculateLevel } from '../utils/vccrs.js';
+import { buildFinalEmbedPayload } from '../commands/embed.js';
 
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
@@ -300,6 +301,19 @@ export const messageCreateEvent: Event = {
                                     await message.reply(embedPayload).catch(() => {});
                                 } catch {
                                     await message.reply({ content: replyText }).catch(() => {});
+                                }
+                            } else if (customCmd.reply_type === 'custom_embed') {
+                                try {
+                                    const embed = await supabase.getCustomEmbed(message.guildId!, replyText);
+                                    if (embed) {
+                                        const payload = buildFinalEmbedPayload(embed);
+                                        await message.reply({ components: [payload], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                                    } else {
+                                        await message.reply({ content: `❌ Linked custom embed template **\`${replyText}\`** not found.` }).catch(() => {});
+                                    }
+                                } catch (error) {
+                                    logger.error('Failed to send custom command embed:', error);
+                                    await message.reply({ content: '⚠️ Failed to load the custom embed response.' }).catch(() => {});
                                 }
                             } else if (customCmd.reply_type === 'image') {
                                 await message.reply({ files: [new AttachmentBuilder(replyText)] }).catch(() => {});

@@ -181,7 +181,7 @@ function renderWizardPage(session: any): any {
     return container;
 }
 
-function buildFinalEmbedPayload(session: any): any {
+export function buildFinalEmbedPayload(session: any): any {
     const accent = session.color ? (PRESET_COLORS[session.color.toLowerCase()] || parseInt(session.color.replace('#', ''), 16) || ComponentsV2.Accents.primary) : ComponentsV2.Accents.primary;
     const c = ComponentsV2.baseContainer(accent);
 

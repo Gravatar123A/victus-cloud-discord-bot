@@ -204,7 +204,7 @@ export interface CustomCommand {
     id: string;
     guild_id: string;
     name: string;
-    reply_type: 'text' | 'embed' | 'image' | 'message';
+    reply_type: 'text' | 'embed' | 'image' | 'message' | 'custom_embed';
     reply_content: string;
     aliases: string[];
     cooldown: number;

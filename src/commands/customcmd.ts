@@ -68,7 +68,7 @@ function renderWizPage(session: any): any {
             desc = `### Page 3: Response Parameters\n` +
                 `Set the reply formatting, type, and variables content.\n\n` +
                 `› **Reply Type:** **\`${session.replyType.toUpperCase()}\`**\n` +
-                `› **Reply Content:** ${session.replyContent ? `_Configured (${session.replyContent.length} chars)_` : '*Not set (Required)*'}\n\n` +
+                `› **Reply Content:** ${session.replyContent ? (session.replyType === 'custom_embed' ? `\`Embed: ${session.replyContent}\`` : `_Configured (${session.replyContent.length} chars)_`) : '*Not set (Required)*'}\n\n` +
                 `Select a reply formatting type below, then configure the content body.`;
 
             const typeSelect = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
@@ -78,6 +78,7 @@ function renderWizPage(session: any): any {
                     .addOptions([
                         { label: 'Normal Message Text', value: 'text' },
                         { label: 'System Embed (JSON/V2)', value: 'embed' },
+                        { label: 'Saved Custom Embed', value: 'custom_embed' },
                         { label: 'Image URL Attachment', value: 'image' }
                     ])
             );
@@ -232,8 +233,22 @@ export const customcmdCommand: Command = {
             }
             else if (target === 'response') {
                 const modal = new ModalBuilder().setCustomId('customcmd_wiz_modal:response').setTitle('Page 3: Response Content');
+                let placeholder = 'Visit: https://victuscloud.com\n\nVariables: {user}, {guild}, {member.level}';
+                let label = 'Response Body / Image Link / JSON Embed';
+                if (session.replyType === 'custom_embed') {
+                    label = 'Saved Custom Embed Name';
+                    placeholder = 'rules (The exact name of the embed created via /embed create)';
+                }
                 modal.addComponents(
-                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('content').setLabel('Response Body / Image Link / JSON Embed').setPlaceholder('Visit: https://victuscloud.com\n\nVariables: {user}, {guild}, {member.level}').setValue(session.replyContent).setStyle(TextInputStyle.Paragraph).setRequired(true))
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(
+                        new TextInputBuilder()
+                            .setCustomId('content')
+                            .setLabel(label)
+                            .setPlaceholder(placeholder)
+                            .setValue(session.replyContent)
+                            .setStyle(session.replyType === 'custom_embed' ? TextInputStyle.Short : TextInputStyle.Paragraph)
+                            .setRequired(true)
+                    )
                 );
                 await interaction.showModal(modal);
             }
