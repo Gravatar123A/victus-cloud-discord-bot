@@ -1,4 +1,4 @@
-import { ChannelType, AttachmentBuilder, PermissionFlagsBits } from 'discord.js';
+import { ChannelType, AttachmentBuilder, PermissionFlagsBits, EmbedBuilder } from 'discord.js';
 import type { Message } from 'discord.js';
 import { config } from '../config.js';
 import { supabase } from '../services/supabase.js';
@@ -131,10 +131,99 @@ async function replyWithAi(message: Message, prompt: string, publicReply: boolea
     }
 }
 
+function formatDurationMs(ms: number): string {
+    const secs = Math.floor(ms / 1000);
+    if (secs < 60) return `${secs}s`;
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return `${mins}m`;
+    const hrs = Math.floor(mins / 60);
+    const remainingMins = mins % 60;
+    return `${hrs}h ${remainingMins}m`;
+}
+
 export const messageCreateEvent: Event = {
     name: 'messageCreate',
     async execute(message: Message) {
         if (message.author.bot) return;
+
+        // --- AFK System ---
+        if (message.inGuild()) {
+            const guildId = message.guildId!;
+            
+            // 1. Check if the message sender is returning from AFK
+            try {
+                const authorAfkEmbed = await supabase.getCustomEmbed(guildId, `_afk_${message.author.id}`);
+                if (authorAfkEmbed?.description) {
+                    const afkData = JSON.parse(authorAfkEmbed.description);
+                    await supabase.deleteCustomEmbed(guildId, `_afk_${message.author.id}`);
+                    
+                    const durationMs = Date.now() - new Date(afkData.timestamp).getTime();
+                    const durationStr = formatDurationMs(durationMs);
+                    
+                    const welcomeEmbed = new EmbedBuilder()
+                        .setColor(0x8b5cf6) // Purple
+                        .setTitle(`Welcome back, ${message.author.username}!`)
+                        .setThumbnail(message.author.displayAvatarURL())
+                        .setDescription('🔮 You are no longer AFK.')
+                        .addFields(
+                            { name: 'You were AFK for', value: `**${durationStr}**`, inline: true },
+                            { name: 'Reason', value: afkData.reason || 'AFK', inline: true }
+                        );
+
+                    const loggedMentions = afkData.mentions || [];
+                    if (loggedMentions.length > 0) {
+                        const mentionList = loggedMentions
+                            .map((m: any) => `› **${m.authorTag}** in <#${m.channelId}>: [Jump to Message](https://discord.com/channels/${guildId}/${m.channelId}/${m.messageId}) (<t:${Math.floor(new Date(m.timestamp).getTime() / 1000)}:R>)`)
+                            .slice(0, 10)
+                            .join('\n');
+                        welcomeEmbed.addFields({ name: '📝 Mentions while you were AFK', value: mentionList, inline: false });
+                    } else {
+                        welcomeEmbed.addFields({ name: '📝 Mentions while you were AFK', value: 'No one mentioned you while you were away.', inline: false });
+                    }
+
+                    await message.reply({ embeds: [welcomeEmbed] }).catch(() => {});
+                }
+            } catch (err) {
+                logger.error('Error handling sender AFK return:', err);
+            }
+
+            // 2. Check if the message mentions anyone who is AFK
+            if (message.mentions.users.size > 0) {
+                for (const [mentionedId, mentionedUser] of message.mentions.users) {
+                    if (mentionedId === message.author.id || mentionedUser.bot) continue;
+                    
+                    try {
+                        const targetAfkEmbed = await supabase.getCustomEmbed(guildId, `_afk_${mentionedId}`);
+                        if (targetAfkEmbed?.description) {
+                            const afkData = JSON.parse(targetAfkEmbed.description);
+                            
+                            // Send AFK notification in the channel
+                            const afkEmbed = new EmbedBuilder()
+                                .setColor(0x6366f1)
+                                .setDescription(`🔍 **${mentionedUser.username}** is currently AFK: **${afkData.reason || 'AFK'}** (<t:${Math.floor(new Date(afkData.timestamp).getTime() / 1000)}:R>)`);
+                            await message.reply({ embeds: [afkEmbed] }).catch(() => {});
+
+                            // Log the mention into their AFK data
+                            const loggedMentions = afkData.mentions || [];
+                            loggedMentions.push({
+                                authorTag: message.author.username,
+                                content: message.content.slice(0, 100),
+                                channelId: message.channelId,
+                                messageId: message.id,
+                                timestamp: new Date().toISOString()
+                            });
+                            afkData.mentions = loggedMentions;
+
+                            await supabase.saveCustomEmbed(guildId, `_afk_${mentionedId}`, {
+                                description: JSON.stringify(afkData)
+                            });
+                        }
+                    } catch (err) {
+                        logger.error(`Error logging AFK mention for user ${mentionedId}:`, err);
+                    }
+                }
+            }
+        }
 
         // Get guild specific prefix or default to '!'
         let prefix = '!';

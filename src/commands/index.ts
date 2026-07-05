@@ -33,6 +33,7 @@ import { j2cCommand } from './j2c.js';
 import { warnCommand } from './warn.js';
 import { dmCommand } from './dm.js';
 import { playlistCommand } from './playlist.js';
+import { afkCommand } from './afk.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -73,6 +74,7 @@ const allCommands: Command[] = [
     warnCommand,
     dmCommand,
     playlistCommand,
+    afkCommand,
     ...musicCommands,
 ];
 

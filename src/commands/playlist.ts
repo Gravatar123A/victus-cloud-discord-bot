@@ -19,7 +19,7 @@ import { logger } from '../utils/logger.js';
 import { escapeMd, formatDuration } from '../embeds/music.js';
 
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
-const EPH = MessageFlags.Ephemeral;
+const EPH = undefined as any;
 
 export const playlistCommand: Command = {
     data: new SlashCommandBuilder()

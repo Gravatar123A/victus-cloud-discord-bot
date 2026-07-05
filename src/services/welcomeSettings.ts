@@ -1,5 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { supabase } from './supabase.js';
 import { logger } from '../utils/logger.js';
 
 export interface WelcomeConfig {
@@ -14,8 +13,6 @@ export interface WelcomeConfig {
     welcomeType: 'text' | 'embed' | 'custom_embed';
 }
 
-const SETTINGS_PATH = join(process.cwd(), 'data', 'welcome-settings.json');
-
 const DEFAULT_CONFIG: WelcomeConfig = {
     enabled: false,
     channelId: null,
@@ -28,44 +25,38 @@ const DEFAULT_CONFIG: WelcomeConfig = {
     welcomeType: 'embed'
 };
 
-async function readAllConfigs(): Promise<Record<string, WelcomeConfig>> {
-    try {
-        const raw = await readFile(SETTINGS_PATH, 'utf8');
-        return JSON.parse(raw) as Record<string, WelcomeConfig>;
-    } catch (error: any) {
-        if (error?.code !== 'ENOENT') {
-            logger.warn('Failed to read welcome settings:', error);
-        }
-        return {};
-    }
-}
-
-async function writeAllConfigs(configs: Record<string, WelcomeConfig>): Promise<void> {
-    await mkdir(dirname(SETTINGS_PATH), { recursive: true });
-    await writeFile(SETTINGS_PATH, JSON.stringify(configs, null, 2), 'utf8');
-}
-
 export class WelcomeSettingsService {
     async get(guildId: string): Promise<WelcomeConfig> {
-        const configs = await readAllConfigs();
-        const raw = configs[guildId] || {};
-        const config = {
-            ...DEFAULT_CONFIG,
-            ...raw
-        };
-        // Auto-migrate old embedEnabled settings to welcomeType
-        if (!raw.welcomeType) {
-            config.welcomeType = (raw.embedEnabled ?? DEFAULT_CONFIG.embedEnabled) ? 'embed' : 'text';
+        try {
+            const embed = await supabase.getCustomEmbed(guildId, '_welcome_settings');
+            let raw: any = {};
+            if (embed?.description) {
+                raw = JSON.parse(embed.description);
+            }
+            const config = {
+                ...DEFAULT_CONFIG,
+                ...raw
+            };
+            if (!raw.welcomeType) {
+                config.welcomeType = (raw.embedEnabled ?? DEFAULT_CONFIG.embedEnabled) ? 'embed' : 'text';
+            }
+            return config;
+        } catch (error) {
+            logger.error(`Failed to get welcome settings for guild ${guildId}:`, error);
+            return DEFAULT_CONFIG;
         }
-        return config;
     }
 
     async set(guildId: string, updates: Partial<WelcomeConfig>): Promise<WelcomeConfig> {
-        const configs = await readAllConfigs();
         const current = await this.get(guildId);
         const updated = { ...current, ...updates };
-        configs[guildId] = updated;
-        await writeAllConfigs(configs);
+        try {
+            await supabase.saveCustomEmbed(guildId, '_welcome_settings', {
+                description: JSON.stringify(updated)
+            });
+        } catch (error) {
+            logger.error(`Failed to save welcome settings for guild ${guildId}:`, error);
+        }
         return updated;
     }
 }

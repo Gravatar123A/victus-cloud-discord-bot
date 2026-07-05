@@ -1,5 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { supabase } from './supabase.js';
 import { logger } from '../utils/logger.js';
 
 export interface PlaylistTrack {
@@ -17,48 +16,39 @@ export interface Playlist {
     updatedAt: string;
 }
 
-type PlaylistStore = Record<string, Record<string, Playlist>>;
-
-const DATA_PATH = join(process.cwd(), 'data', 'playlists.json');
-
-async function readAllPlaylists(): Promise<PlaylistStore> {
-    try {
-        const raw = await readFile(DATA_PATH, 'utf8');
-        return JSON.parse(raw) as PlaylistStore;
-    } catch (error: any) {
-        if (error?.code !== 'ENOENT') {
-            logger.warn('Failed to read playlists:', error);
-        }
-        return {};
-    }
-}
-
-async function writeAllPlaylists(store: PlaylistStore): Promise<void> {
-    await mkdir(dirname(DATA_PATH), { recursive: true });
-    await writeFile(DATA_PATH, JSON.stringify(store, null, 2), 'utf8');
-}
-
 export class PlaylistService {
-    private key(guildId: string, userId: string): string {
-        return `${guildId}:${userId}`;
-    }
-
     async getAll(guildId: string, userId: string): Promise<Playlist[]> {
-        const store = await readAllPlaylists();
-        const userPlaylists = store[this.key(guildId, userId)] || {};
-        return Object.values(userPlaylists);
+        try {
+            const embed = await supabase.getCustomEmbed(guildId, `_playlist_${userId}`);
+            if (!embed?.description) return [];
+            const userPlaylists = JSON.parse(embed.description) as Record<string, Playlist>;
+            return Object.values(userPlaylists);
+        } catch (error) {
+            logger.error(`Failed to get playlists for user ${userId} in guild ${guildId}:`, error);
+            return [];
+        }
     }
 
     async get(guildId: string, userId: string, name: string): Promise<Playlist | null> {
-        const store = await readAllPlaylists();
-        const userPlaylists = store[this.key(guildId, userId)] || {};
-        return userPlaylists[name.toLowerCase()] || null;
+        try {
+            const embed = await supabase.getCustomEmbed(guildId, `_playlist_${userId}`);
+            if (!embed?.description) return null;
+            const userPlaylists = JSON.parse(embed.description) as Record<string, Playlist>;
+            return userPlaylists[name.toLowerCase()] || null;
+        } catch (error) {
+            logger.error(`Failed to get playlist ${name} for user ${userId} in guild ${guildId}:`, error);
+            return null;
+        }
     }
 
     async create(guildId: string, userId: string, name: string): Promise<Playlist> {
-        const store = await readAllPlaylists();
-        const k = this.key(guildId, userId);
-        const userPlaylists = store[k] || {};
+        const embed = await supabase.getCustomEmbed(guildId, `_playlist_${userId}`);
+        let userPlaylists: Record<string, Playlist> = {};
+        if (embed?.description) {
+            try {
+                userPlaylists = JSON.parse(embed.description);
+            } catch {}
+        }
         const nameKey = name.toLowerCase();
 
         if (userPlaylists[nameKey]) {
@@ -74,29 +64,51 @@ export class PlaylistService {
         };
 
         userPlaylists[nameKey] = playlist;
-        store[k] = userPlaylists;
-        await writeAllPlaylists(store);
+        try {
+            await supabase.saveCustomEmbed(guildId, `_playlist_${userId}`, {
+                description: JSON.stringify(userPlaylists)
+            });
+        } catch (error) {
+            logger.error(`Failed to save playlist creation for user ${userId} in guild ${guildId}:`, error);
+        }
         return playlist;
     }
 
     async delete(guildId: string, userId: string, name: string): Promise<boolean> {
-        const store = await readAllPlaylists();
-        const k = this.key(guildId, userId);
-        const userPlaylists = store[k] || {};
+        const embed = await supabase.getCustomEmbed(guildId, `_playlist_${userId}`);
+        if (!embed?.description) return false;
+        let userPlaylists: Record<string, Playlist> = {};
+        try {
+            userPlaylists = JSON.parse(embed.description);
+        } catch {
+            return false;
+        }
         const nameKey = name.toLowerCase();
 
         if (!userPlaylists[nameKey]) return false;
 
         delete userPlaylists[nameKey];
-        store[k] = userPlaylists;
-        await writeAllPlaylists(store);
+        try {
+            await supabase.saveCustomEmbed(guildId, `_playlist_${userId}`, {
+                description: JSON.stringify(userPlaylists)
+            });
+        } catch (error) {
+            logger.error(`Failed to save playlist deletion for user ${userId} in guild ${guildId}:`, error);
+        }
         return true;
     }
 
     async rename(guildId: string, userId: string, oldName: string, newName: string): Promise<Playlist> {
-        const store = await readAllPlaylists();
-        const k = this.key(guildId, userId);
-        const userPlaylists = store[k] || {};
+        const embed = await supabase.getCustomEmbed(guildId, `_playlist_${userId}`);
+        if (!embed?.description) {
+            throw new Error(`Playlist "${oldName}" not found.`);
+        }
+        let userPlaylists: Record<string, Playlist> = {};
+        try {
+            userPlaylists = JSON.parse(embed.description);
+        } catch {
+            throw new Error(`Playlist "${oldName}" not found.`);
+        }
         const oldKey = oldName.toLowerCase();
         const newKey = newName.toLowerCase();
 
@@ -113,15 +125,27 @@ export class PlaylistService {
         playlist.name = newName;
         playlist.updatedAt = new Date().toISOString();
         userPlaylists[newKey] = playlist;
-        store[k] = userPlaylists;
-        await writeAllPlaylists(store);
+        try {
+            await supabase.saveCustomEmbed(guildId, `_playlist_${userId}`, {
+                description: JSON.stringify(userPlaylists)
+            });
+        } catch (error) {
+            logger.error(`Failed to save playlist rename for user ${userId} in guild ${guildId}:`, error);
+        }
         return playlist;
     }
 
     async addTrack(guildId: string, userId: string, playlistName: string, track: PlaylistTrack): Promise<Playlist> {
-        const store = await readAllPlaylists();
-        const k = this.key(guildId, userId);
-        const userPlaylists = store[k] || {};
+        const embed = await supabase.getCustomEmbed(guildId, `_playlist_${userId}`);
+        if (!embed?.description) {
+            throw new Error(`Playlist "${playlistName}" not found.`);
+        }
+        let userPlaylists: Record<string, Playlist> = {};
+        try {
+            userPlaylists = JSON.parse(embed.description);
+        } catch {
+            throw new Error(`Playlist "${playlistName}" not found.`);
+        }
         const nameKey = playlistName.toLowerCase();
 
         const playlist = userPlaylists[nameKey];
@@ -132,15 +156,27 @@ export class PlaylistService {
         playlist.tracks.push(track);
         playlist.updatedAt = new Date().toISOString();
         userPlaylists[nameKey] = playlist;
-        store[k] = userPlaylists;
-        await writeAllPlaylists(store);
+        try {
+            await supabase.saveCustomEmbed(guildId, `_playlist_${userId}`, {
+                description: JSON.stringify(userPlaylists)
+            });
+        } catch (error) {
+            logger.error(`Failed to save playlist track add for user ${userId} in guild ${guildId}:`, error);
+        }
         return playlist;
     }
 
     async removeTrack(guildId: string, userId: string, playlistName: string, index: number): Promise<Playlist> {
-        const store = await readAllPlaylists();
-        const k = this.key(guildId, userId);
-        const userPlaylists = store[k] || {};
+        const embed = await supabase.getCustomEmbed(guildId, `_playlist_${userId}`);
+        if (!embed?.description) {
+            throw new Error(`Playlist "${playlistName}" not found.`);
+        }
+        let userPlaylists: Record<string, Playlist> = {};
+        try {
+            userPlaylists = JSON.parse(embed.description);
+        } catch {
+            throw new Error(`Playlist "${playlistName}" not found.`);
+        }
         const nameKey = playlistName.toLowerCase();
 
         const playlist = userPlaylists[nameKey];
@@ -155,8 +191,13 @@ export class PlaylistService {
         playlist.tracks.splice(index, 1);
         playlist.updatedAt = new Date().toISOString();
         userPlaylists[nameKey] = playlist;
-        store[k] = userPlaylists;
-        await writeAllPlaylists(store);
+        try {
+            await supabase.saveCustomEmbed(guildId, `_playlist_${userId}`, {
+                description: JSON.stringify(userPlaylists)
+            });
+        } catch (error) {
+            logger.error(`Failed to save playlist track remove for user ${userId} in guild ${guildId}:`, error);
+        }
         return playlist;
     }
 }

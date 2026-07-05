@@ -57,7 +57,7 @@ async function requireVoice(
         if (deferred && interaction.isChatInputCommand()) {
             await interaction.editReply({ embeds: [embed] });
         } else {
-            await interaction.reply({ embeds: [embed], ephemeral: true });
+            await interaction.reply({ embeds: [embed], ephemeral: false });
         }
     };
 
@@ -96,7 +96,7 @@ async function requirePlayer(
         if (deferred && interaction.isChatInputCommand()) {
             await interaction.editReply({ embeds: [embed] });
         } else {
-            await interaction.reply({ embeds: [embed], ephemeral: true });
+            await interaction.reply({ embeds: [embed], ephemeral: false });
         }
     };
     if (!player || !player.queue.current) {
@@ -240,7 +240,7 @@ export const playCommand: Command = {
                 .setColor(0xef4444)
                 .setTitle('⚠️ Nothing is playing')
                 .setDescription('This panel is no longer active. Use `/play` to start again.');
-            await interaction.reply({ embeds: [embed], ephemeral: true });
+            await interaction.reply({ embeds: [embed], ephemeral: false });
             return;
         }
         const member = interaction.member as GuildMember | null;
@@ -249,7 +249,7 @@ export const playCommand: Command = {
                 .setColor(0xef4444)
                 .setTitle('⚠️ Wrong voice channel')
                 .setDescription('Join my voice channel to control playback.');
-            await interaction.reply({ embeds: [embed], ephemeral: true });
+            await interaction.reply({ embeds: [embed], ephemeral: false });
             return;
         }
 
@@ -263,12 +263,12 @@ export const playCommand: Command = {
             }
             case 'skip': {
                 if (!player.queue.tracks.length) {
-                    await interaction.reply({ ...info('Skipped', 'That was the last track — stopping playback.'), ephemeral: true });
+                    await interaction.reply({ ...info('Skipped', 'That was the last track — stopping playback.'), ephemeral: false });
                     await player.destroy().catch(() => undefined);
                     return;
                 }
                 await player.skip();
-                await interaction.reply({ ...info('Skipped', 'Skipped to the next track.'), ephemeral: true });
+                await interaction.reply({ ...info('Skipped', 'Skipped to the next track.'), ephemeral: false });
                 return;
             }
             case 'stop': {
@@ -283,11 +283,11 @@ export const playCommand: Command = {
             case 'previous': {
                 const prev = player.queue.previous?.[0];
                 if (!prev) {
-                    await interaction.reply({ ...info('No previous track', 'There is no track to go back to.'), ephemeral: true });
+                    await interaction.reply({ ...info('No previous track', 'There is no track to go back to.'), ephemeral: false });
                     return;
                 }
                 await player.play({ clientTrack: prev });
-                await interaction.reply({ ...info('Previous track', 'Playing the previous track again.'), ephemeral: true });
+                await interaction.reply({ ...info('Previous track', 'Playing the previous track again.'), ephemeral: false });
                 return;
             }
             case 'loop': {
@@ -301,7 +301,7 @@ export const playCommand: Command = {
             }
             case 'seekback': {
                 if (player.queue.current?.info.isStream) {
-                    await interaction.reply({ ...info('Live stream', 'You cannot seek within a live stream.'), ephemeral: true });
+                    await interaction.reply({ ...info('Live stream', 'You cannot seek within a live stream.'), ephemeral: false });
                     return;
                 }
                 const target = Math.max(0, (player.position || 0) - 10000);
@@ -310,7 +310,7 @@ export const playCommand: Command = {
             }
             case 'seekfwd': {
                 if (player.queue.current?.info.isStream) {
-                    await interaction.reply({ ...info('Live stream', 'You cannot seek within a live stream.'), ephemeral: true });
+                    await interaction.reply({ ...info('Live stream', 'You cannot seek within a live stream.'), ephemeral: false });
                     return;
                 }
                 const target = Math.min(player.queue.current?.info.duration || 0, (player.position || 0) + 10000);
@@ -327,7 +327,7 @@ export const playCommand: Command = {
             }
             case 'shuffle': {
                 if (player.queue.tracks.length < 2) {
-                    await interaction.reply({ ...info('Not enough tracks', 'Add at least two tracks to shuffle.'), ephemeral: true });
+                    await interaction.reply({ ...info('Not enough tracks', 'Add at least two tracks to shuffle.'), ephemeral: false });
                     return;
                 }
                 await player.queue.shuffle();
@@ -335,12 +335,12 @@ export const playCommand: Command = {
             }
             case 'queue': {
                 const embed = queueContainer(player, 0);
-                await interaction.reply({ embeds: [embed], ephemeral: true });
+                await interaction.reply({ embeds: [embed], ephemeral: false });
                 return;
             }
             case 'clear': {
                 if (!player.queue.tracks.length) {
-                    await interaction.reply({ ...info('Queue empty', 'The queue is already empty.'), ephemeral: true });
+                    await interaction.reply({ ...info('Queue empty', 'The queue is already empty.'), ephemeral: false });
                     return;
                 }
                 const count = player.queue.tracks.length;
@@ -351,7 +351,7 @@ export const playCommand: Command = {
                 break;
             }
             default:
-                await interaction.reply({ content: 'Unknown control.', ephemeral: true });
+                await interaction.reply({ content: 'Unknown control.', ephemeral: false });
                 return;
         }
 

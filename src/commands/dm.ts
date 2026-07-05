@@ -9,7 +9,7 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
 
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
-const EPH = MessageFlags.Ephemeral;
+const EPH = 0;
 
 export const dmCommand: Command = {
     data: new SlashCommandBuilder()
@@ -33,12 +33,12 @@ export const dmCommand: Command = {
         const messageText = interaction.options.getString('message', true);
 
         if (targetUser.bot) {
-            await interaction.reply({ content: '❌ You cannot send DMs to other bots.', flags: EPH });
+            await interaction.reply({ content: '❌ You cannot send DMs to other bots.' });
             return;
         }
 
         const isPrefix = interaction.constructor.name === 'PrefixInteraction';
-        await interaction.deferReply({ flags: isPrefix ? undefined : V2 | EPH });
+        await interaction.deferReply({ flags: isPrefix ? undefined : V2 });
 
         try {
             const dmEmbed = new EmbedBuilder()

@@ -15,7 +15,7 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
 
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
-const EPH = MessageFlags.Ephemeral;
+const EPH = undefined as any;
 
 function renderWarnDashboard(config: WarnConfig): any {
     const c = ComponentsV2.baseContainer(config.enabled ? ComponentsV2.Accents.success : ComponentsV2.Accents.warning);
