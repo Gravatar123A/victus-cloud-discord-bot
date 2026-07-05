@@ -2,10 +2,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { logger } from '../utils/logger.js';
 
-export interface StaffAppConfig {
+export interface StaffAppCategory {
+    id: string; // unique category key (e.g. "dev", "support")
+    displayName: string; // e.g. "Developer"
+    description: string; // e.g. "Help code and maintain Victus Cloud systems."
     questions: string[];
-    reviewerChannelId: string | null;
     staffRoleId: string | null;
+    reviewerChannelId: string | null;
+}
+
+export interface StaffAppConfig {
+    categories: Record<string, StaffAppCategory>;
 }
 
 export interface StaffSubmission {
@@ -13,6 +20,7 @@ export interface StaffSubmission {
     userId: string;
     userName: string;
     guildId: string;
+    categoryId: string;
     status: 'pending' | 'approved' | 'denied';
     answers: Array<{ question: string; answer: string }>;
     submittedAt: string;
@@ -23,15 +31,18 @@ export interface StaffSubmission {
 const SETTINGS_PATH = join(process.cwd(), 'data', 'staff-app-settings.json');
 const SUBMISSIONS_PATH = join(process.cwd(), 'data', 'staff-submissions.json');
 
-const DEFAULT_CONFIG: StaffAppConfig = {
+const DEFAULT_CATEGORY: StaffAppCategory = {
+    id: 'support',
+    displayName: 'Support Staff',
+    description: 'Help assist clients with tickets, billing and hosting queries.',
     questions: [
         'How old are you?',
         'What is your timezone?',
         'Why do you want to join our staff team?',
         'What is your past staffing experience?'
     ],
-    reviewerChannelId: null,
-    staffRoleId: null
+    staffRoleId: null,
+    reviewerChannelId: null
 };
 
 // --- Settings ---
@@ -73,18 +84,41 @@ async function writeAllSubmissions(submissions: Record<string, StaffSubmission>)
 export class StaffAppSettingsService {
     async get(guildId: string): Promise<StaffAppConfig> {
         const configs = await readAllConfigs();
+        const raw = configs[guildId] || {};
+        
+        // Migrate legacy single-category config to the categories model
+        if (raw && !(raw as any).categories) {
+            const legacyQuestions = (raw as any).questions || [
+                'How old are you?',
+                'What is your timezone?',
+                'Why do you want to join our staff team?',
+                'What is your past staffing experience?'
+            ];
+            const legacyRole = (raw as any).staffRoleId || null;
+            const legacyChannel = (raw as any).reviewerChannelId || null;
+            
+            return {
+                categories: {
+                    support: {
+                        id: 'support',
+                        displayName: 'Support Staff',
+                        description: 'Help assist clients with tickets, billing and hosting queries.',
+                        questions: legacyQuestions,
+                        staffRoleId: legacyRole,
+                        reviewerChannelId: legacyChannel
+                    }
+                }
+            };
+        }
+        
         return {
-            ...DEFAULT_CONFIG,
-            ...(configs[guildId] || {})
+            categories: raw.categories || {}
         };
     }
 
     async set(guildId: string, updates: Partial<StaffAppConfig>): Promise<StaffAppConfig> {
         const configs = await readAllConfigs();
-        const current = {
-            ...DEFAULT_CONFIG,
-            ...(configs[guildId] || {})
-        };
+        const current = await this.get(guildId);
         const updated = { ...current, ...updates };
         configs[guildId] = updated;
         await writeAllConfigs(configs);
