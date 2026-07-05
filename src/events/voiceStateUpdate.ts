@@ -1,8 +1,10 @@
+import { ChannelType } from 'discord.js';
 import type { VoiceState, VoiceBasedChannel } from 'discord.js';
 import type { Event } from '../types/index.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { awardVoiceXp } from '../services/activityXp.js';
+import { j2cSettings } from '../services/j2cSettings.js';
 
 // In-memory voice XP tracking. One ticking timer per (guild, user) session that
 // awards XP each minute while the member is "actively" in voice: not self-muted,
@@ -78,6 +80,53 @@ export const voiceStateUpdateEvent: Event = {
     name: 'voiceStateUpdate',
     async execute(oldState: VoiceState, newState: VoiceState) {
         if (!clientRef) clientRef = newState.client;
+
+        const guild = newState.guild ?? oldState.guild;
+        if (guild) {
+            try {
+                const j2cConfig = await j2cSettings.get(guild.id);
+                if (j2cConfig.enabled && j2cConfig.channelId) {
+                    const member = newState.member ?? oldState.member;
+                    
+                    // 1. User joins the J2C trigger channel
+                    if (newState.channelId === j2cConfig.channelId && member && !member.user.bot) {
+                        const categoryId = j2cConfig.categoryId || newState.channel?.parentId || null;
+                        const chanName = j2cConfig.nameFormat.replace(/{username}/g, member.user.username);
+                        
+                        // Create temporary voice channel
+                        const tempChannel = await guild.channels.create({
+                            name: chanName,
+                            type: ChannelType.GuildVoice,
+                            parent: categoryId || undefined,
+                            permissionOverwrites: [
+                                {
+                                    id: member.id,
+                                    allow: ['ManageChannels', 'MoveMembers', 'MuteMembers', 'DeafenMembers']
+                                }
+                            ]
+                        });
+                        
+                        // Add to tracked list
+                        await j2cSettings.addTempChannel(tempChannel.id);
+                        
+                        // Move member to the new voice channel
+                        await member.voice.setChannel(tempChannel).catch(() => {});
+                    }
+                    
+                    // 2. User leaves/moves from a channel (cleanup empty temporary channel)
+                    const tempChannels = await j2cSettings.getTempChannels();
+                    if (oldState.channelId && tempChannels.includes(oldState.channelId)) {
+                        const oldChannel = oldState.channel;
+                        if (oldChannel && oldChannel.members.size === 0) {
+                            await oldChannel.delete().catch(() => {});
+                            await j2cSettings.removeTempChannel(oldState.channelId);
+                        }
+                    }
+                }
+            } catch (error) {
+                logger.error('Error executing J2C voice state update:', error);
+            }
+        }
 
         // XP disabled — make sure nothing is running and bail.
         if (config.economy.xpPerVoiceMinute <= 0) {

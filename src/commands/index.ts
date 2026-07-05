@@ -29,6 +29,7 @@ import { giveawayCommand } from './giveaway.js';
 import { customcmdCommand } from './customcmd.js';
 import { welcomeCommand } from './welcome.js';
 import { staffAppCommand } from './staff-app.js';
+import { j2cCommand } from './j2c.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -65,6 +66,7 @@ const allCommands: Command[] = [
     customcmdCommand,
     welcomeCommand,
     staffAppCommand,
+    j2cCommand,
     ...musicCommands,
 ];
 
