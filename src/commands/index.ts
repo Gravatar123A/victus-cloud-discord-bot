@@ -32,6 +32,7 @@ import { staffAppCommand } from './staff-app.js';
 import { j2cCommand } from './j2c.js';
 import { warnCommand } from './warn.js';
 import { dmCommand } from './dm.js';
+import { playlistCommand } from './playlist.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -71,6 +72,7 @@ const allCommands: Command[] = [
     j2cCommand,
     warnCommand,
     dmCommand,
+    playlistCommand,
     ...musicCommands,
 ];
 

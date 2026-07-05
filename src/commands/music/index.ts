@@ -150,18 +150,21 @@ export const playCommand: Command = {
         // Plain text queries get the configured default search platform prefix.
         const isUrl = /^https?:\/\//i.test(query);
         const isSpotify = /open\.spotify\.com/i.test(query);
-        const isDeezer = /deezer\.com/i.test(query);
-        const isAppleMusic = /music\.apple\.com/i.test(query);
-        const isStreamingService = isSpotify || isDeezer || isAppleMusic;
 
         let res: SearchOutcome;
         try {
-            // For streaming service URLs and direct URLs, pass as-is.
-            // For plain text queries, use the configured search source.
+            // For URLs, pass as-is so Lavalink/LavaSrc resolves them directly.
+            // For plain text, use the configured default search source.
             const searchQuery = isUrl
                 ? { query }
                 : { query, source: config.lavalink.defaultSource as any };
             res = await player.search(searchQuery, interaction.user);
+
+            // Fallback: if a Spotify URL failed (LavaSrc not configured), try spsearch:
+            if (isSpotify && (!res || !res.tracks?.length || res.loadType === 'empty' || res.loadType === 'error')) {
+                logger.warn('🎵 Spotify direct URL load failed, trying spsearch fallback...');
+                res = await player.search({ query, source: 'spsearch' as any }, interaction.user);
+            }
         } catch (error) {
             logger.error('🎵 Lavalink search failed:', error);
             await interaction.editReply({
@@ -172,8 +175,11 @@ export const playCommand: Command = {
         }
 
         if (!res || !res.tracks?.length || res.loadType === 'empty' || res.loadType === 'error') {
+            const hint = isSpotify
+                ? ' Make sure the Lavalink server has LavaSrc configured for Spotify.'
+                : ' Try a different search or a direct link.';
             await interaction.editReply({
-                components: [ComponentsV2.warningContainer('No results', `Nothing found for **${query.slice(0, 120)}**. Try a different search or a direct link.`)],
+                components: [ComponentsV2.warningContainer('No results', `Nothing found for **${query.slice(0, 120)}**.${hint}`)],
                 flags: V2,
             });
             if (!player.queue.current && !player.queue.tracks.length) await player.destroy().catch(() => undefined);
