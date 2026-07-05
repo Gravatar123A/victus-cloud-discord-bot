@@ -122,6 +122,25 @@ export const voiceStateUpdateEvent: Event = {
                             logger.error('Failed to send voice control panel:', err);
                         }
 
+                        // Send Direct Message (DM) to creator
+                        try {
+                            const dmContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.purple);
+                            dmContainer.addTextDisplayComponents(
+                                ComponentsV2.text(
+                                    `# 🎉 Voice Channel Created!\n\n` +
+                                    `Your temporary voice channel **${chanName}** has been successfully created in **${guild.name}**!\n\n` +
+                                    `### 🎙️ Manage Your Channel\n` +
+                                    `Go to the voice channel's text chat to use the **Voice Control Panel** dropdown. You can lock/unlock, rename, limit, or mute/ban members in your channel.`
+                                )
+                            );
+                            await member.send({
+                                components: [dmContainer],
+                                flags: ComponentsV2.IS_COMPONENTS_V2
+                            }).catch(() => {});
+                        } catch (dmErr) {
+                            logger.debug(`Failed to DM member ${member.id} about VC creation:`, dmErr);
+                        }
+
                         // Move member to the new voice channel
                         await member.voice.setChannel(tempChannel).catch(() => {});
                     }
