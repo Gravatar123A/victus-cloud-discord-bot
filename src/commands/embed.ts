@@ -1420,6 +1420,9 @@ export const embedLinksRouter: Command = {
         let targetName = val;
         if (val.startsWith('embed_link:')) {
             targetName = val.split(':')[1];
+        } else if (val.startsWith('embed_select_val:')) {
+            const parts = val.split(':');
+            targetName = parts.slice(2).join(':');
         }
 
         const embed = await supabase.getCustomEmbed(interaction.guildId!, targetName);
