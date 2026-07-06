@@ -9,6 +9,7 @@ import {
     ButtonBuilder,
     ButtonStyle,
     StringSelectMenuBuilder,
+    ChannelSelectMenuBuilder,
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
@@ -50,6 +51,31 @@ interface AnncDraft {
 
 // In-memory store for active creation drafts
 const pendingDrafts = new Map<string, AnncDraft>();
+
+function renderSetupDashboard(channels: string[]): ContainerBuilder {
+    const container = new ContainerBuilder();
+    
+    const body = `### 📢 Announcement Setup Dashboard\n` +
+        `Authorize channels where administrators are allowed to post announcements using \`/annc send\`.\n\n` +
+        `› **Authorized Channels:** ${channels.length > 0 ? channels.map(id => `<#${id}>`).join(', ') : '_None configured_'}`;
+
+    container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(body)
+    ).addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+
+    const selectMenu = new ChannelSelectMenuBuilder()
+        .setCustomId('annc:setup_channel_select')
+        .setPlaceholder('Choose authorized channels...')
+        .setMinValues(0)
+        .setMaxValues(10)
+        .addChannelTypes(ChannelType.GuildText);
+
+    container.addActionRowComponents(
+        new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(selectMenu)
+    );
+    
+    return container;
+}
 
 /** Render the Announcement Manager Dashboard */
 function renderDashboard(draft: AnncDraft): ContainerBuilder {
@@ -128,21 +154,6 @@ export const anncCommand: Command = {
             sub
                 .setName('setup')
                 .setDescription('Configure target channels for announcements')
-                .addStringOption(o =>
-                    o.setName('action')
-                        .setDescription('Add or remove a channel')
-                        .setRequired(true)
-                        .addChoices(
-                            { name: 'Add', value: 'add' },
-                            { name: 'Remove', value: 'remove' }
-                        )
-                )
-                .addChannelOption(o =>
-                    o.setName('channel')
-                        .setDescription('Select the channel')
-                        .setRequired(true)
-                        .addChannelTypes(ChannelType.GuildText)
-                )
         )
         .addSubcommand(sub =>
             sub
@@ -161,9 +172,6 @@ export const anncCommand: Command = {
 
         if (subcommand === 'setup') {
             await interaction.deferReply({ flags: EPH | V2 });
-            const action = interaction.options.getString('action', true);
-            const channel = interaction.options.getChannel('channel', true);
-
             const guildId = interaction.guildId!;
             const embed = await supabase.getCustomEmbed(guildId, '_annc_settings');
             let channels: string[] = [];
@@ -176,25 +184,8 @@ export const anncCommand: Command = {
                 }
             }
 
-            if (action === 'add') {
-                if (!channels.includes(channel.id)) {
-                    channels.push(channel.id);
-                }
-            } else {
-                channels = channels.filter(id => id !== channel.id);
-            }
-
-            await supabase.saveCustomEmbed(guildId, '_annc_settings', {
-                description: JSON.stringify(channels)
-            });
-
-            const statusContainer = ComponentsV2.successContainer(
-                'Channels Configured',
-                `Successfully ${action === 'add' ? 'added' : 'removed'} <#${channel.id}> ${action === 'add' ? 'to' : 'from'} announcement channels.\n\n` +
-                `› **Active Channels:** ${channels.length > 0 ? channels.map(id => `<#${id}>`).join(', ') : '_None_'}`
-            );
-
-            await interaction.editReply({ components: [statusContainer], flags: V2 });
+            const dashboard = renderSetupDashboard(channels);
+            await interaction.editReply({ components: [dashboard], flags: V2 });
             return;
         }
 
@@ -266,6 +257,19 @@ export const anncCommand: Command = {
     },
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction) {
+        if (interaction.customId === 'annc:setup_channel_select') {
+            const guildId = interaction.guildId!;
+            const selectedChannels = interaction.values;
+            
+            await supabase.saveCustomEmbed(guildId, '_annc_settings', {
+                description: JSON.stringify(selectedChannels)
+            });
+            
+            const dashboard = renderSetupDashboard(selectedChannels);
+            await interaction.update({ components: [dashboard] });
+            return;
+        }
+
         if (interaction.customId !== 'annc:select_channel') return;
 
         const channelId = interaction.values[0];

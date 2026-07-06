@@ -7,6 +7,26 @@ import type { Event } from '../types/index.js';
 export const interactionCreateEvent: Event = {
     name: 'interactionCreate',
     async execute(interaction: Interaction) {
+        // Intercept prefix command message component interactions and translate V2 components
+        if (interaction.isMessageComponent()) {
+            const isV2 = interaction.message.flags?.has(32768) ?? false;
+            if (!isV2) {
+                const origUpdate = interaction.update.bind(interaction);
+                (interaction as any).update = async (options: any) => {
+                    const { translateV2Components } = await import('../utils/prefixInteraction.js');
+                    const translated = translateV2Components(options);
+                    return origUpdate(translated);
+                };
+                
+                const origEditReply = interaction.editReply.bind(interaction);
+                (interaction as any).editReply = async (options: any) => {
+                    const { translateV2Components } = await import('../utils/prefixInteraction.js');
+                    const translated = translateV2Components(options);
+                    return origEditReply(translated);
+                };
+            }
+        }
+
         // Handle slash commands
         if (interaction.isChatInputCommand()) {
             const command = interaction.client.commands.get(interaction.commandName);
