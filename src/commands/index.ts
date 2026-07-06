@@ -44,6 +44,8 @@ import { pollCommand } from './poll.js';
 import { auditLogCommand } from './auditLog.js';
 import { reactRolesCommand } from './reactroles.js';
 import { serverStatsCommand } from './serverstats.js';
+import { unbanCommand } from './unban.js';
+import { untimeoutCommand } from './untimeout.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -95,6 +97,8 @@ const allCommands: Command[] = [
     auditLogCommand,
     reactRolesCommand,
     serverStatsCommand,
+    unbanCommand,
+    untimeoutCommand,
     ...musicCommands,
 ];
 

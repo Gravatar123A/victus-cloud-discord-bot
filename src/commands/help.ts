@@ -152,7 +152,9 @@ export const helpCommand: Command = {
                     `### Command Catalog\n` +
                     `› \`/kick <user> [reason]\` • Kick a user from the guild.\n` +
                     `› \`/ban <user> [reason]\` • Permanently ban a user.\n` +
+                    `› \`/unban <user_id> [reason]\` • Lift a server ban.\n` +
                     `› \`/timeout <user> <duration> [reason]\` • Place a user in timeout (mute).\n` +
+                    `› \`/untimeout <user> [reason]\` • Remove a user's timeout.\n` +
                     `› \`/purge <count> [user]\` • Bulk-delete channel messages.\n` +
                     `› \`/ticket close\` • Terminate support thread.\n` +
                     `› \`/ticket claim\` • Allocate ticket to active staff.\n` +
