@@ -23,6 +23,7 @@ const EPH = MessageFlags.Ephemeral;
 // Cache to store active wizard sessions
 // Key: userId-guildId
 const wizards = new Map<string, any>();
+const editors = new Map<string, any>();
 
 function getSessionKey(userId: string, guildId: string): string {
     return `${userId}-${guildId}`;
@@ -37,6 +38,77 @@ const PRESET_COLORS: Record<string, number> = {
     white: 0xffffff,
     black: 0x000000,
 };
+
+function renderEditorDashboard(session: any): any {
+    const accent = session.color ? (PRESET_COLORS[session.color.toLowerCase()] || parseInt(session.color.replace('#', ''), 16) || ComponentsV2.Accents.primary) : ComponentsV2.Accents.primary;
+    const container = ComponentsV2.baseContainer(accent);
+    
+    const body = `# 📝 Embed Editor: **\`${session.originalName}\`**\n` +
+        `Modify the configuration fields below. Once finished, click **Save & Publish** to save the changes.\n\n` +
+        `› **Title:** ${session.title ? `"${session.title}"` : '_Not set_'}\n` +
+        `› **Description:** ${session.description ? `_Provided (${session.description.length} chars)_` : '_Not set_'}\n` +
+        `› **HEX Color:** \`${session.color}\`\n` +
+        `› **Thumbnail:** ${session.thumbnailUrl ? `[Link](${session.thumbnailUrl})` : '_None_'}\n` +
+        `› **Image Banner:** ${session.imageUrl ? `[Link](${session.imageUrl})` : '_None_'}\n` +
+        `› **Footer:** ${session.footerText ? `"${session.footerText}"` : '_None_'}\n` +
+        `› **Author:** ${session.authorName ? `"${session.authorName}"` : '_None_'}`;
+        
+    container.addTextDisplayComponents(ComponentsV2.text(body));
+    
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('embed_edit:select_field')
+        .setPlaceholder('Choose a section to modify...')
+        .addOptions([
+            { label: '📝 Edit Title & Description', value: 'field:basic', description: 'Modify the embed header text and description body' },
+            { label: '👤 Edit Author Information', value: 'field:author', description: 'Modify the author name, icon URL, and hyperlink' },
+            { label: '🖼️ Edit Thumbnail & Image Banner', value: 'field:media', description: 'Modify thumbnail and main image URLs' },
+            { label: '🔤 Edit Footer Info', value: 'field:footer', description: 'Modify footer text and footer icon URL' },
+            { label: '🎨 Edit Theme Color', value: 'field:color', description: 'Select a preset color or set a custom HEX value' }
+        ]);
+        
+    const buttonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('embed_edit:save').setLabel('Save & Publish').setStyle(ButtonStyle.Success).setEmoji('💾'),
+        new ButtonBuilder().setCustomId('embed_edit:cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger).setEmoji('❌')
+    );
+    
+    container.addActionRowComponents(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu));
+    container.addActionRowComponents(buttonsRow);
+    
+    return container;
+}
+
+function renderEditorColorPage(session: any): any {
+    const container = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
+    
+    const body = `# 🎨 Select Theme Color\n` +
+        `Choose a preset color below or enter a custom HEX value.\n\n` +
+        `› **Current Color:** \`${session.color}\``;
+        
+    container.addTextDisplayComponents(ComponentsV2.text(body));
+    
+    const colorSelect = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('embed_edit:select_color_preset')
+            .setPlaceholder('Choose a preset color')
+            .addOptions([
+                { label: 'Purple', value: 'purple' },
+                { label: 'Blue', value: 'blue' },
+                { label: 'Green', value: 'green' },
+                { label: 'Red', value: 'red' },
+                { label: 'Orange', value: 'orange' },
+                { label: 'White', value: 'white' },
+                { label: 'Black', value: 'black' }
+            ])
+    );
+    
+    const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('embed_edit:modal_hex_trigger').setLabel('Enter Custom HEX').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('embed_edit:back_to_dashboard').setLabel('⬅️ Back to Editor').setStyle(ButtonStyle.Primary)
+    );
+    
+    container.addActionRowComponents(colorSelect).addActionRowComponents(btnRow);
+    return container;
+}
 
 function renderWizardPage(session: any): any {
     const page = session.page;
@@ -288,6 +360,10 @@ export const embedCommand: Command = {
         .addSubcommand(sub =>
             sub.setName('settings')
                 .setDescription('Configure default settings for custom embeds')
+        )
+        .addSubcommand(sub =>
+            sub.setName('edit')
+                .setDescription('Edit an existing custom embed')
         ),
 
     async execute(interaction) {
@@ -318,6 +394,38 @@ export const embedCommand: Command = {
                 flags: V2 | EPH
             });
         } 
+        else if (sub === 'edit') {
+            await interaction.deferReply({ flags: EPH });
+            const list = await supabase.listCustomEmbeds(interaction.guildId!);
+            
+            if (list.length === 0) {
+                await interaction.editReply({
+                    components: [ComponentsV2.warningContainer('No Custom Embeds Found', 'Use `/embed create` to build a new template.')],
+                    flags: V2
+                });
+                return;
+            }
+            
+            const selectMenu = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('embed_edit:select_embed')
+                    .setPlaceholder('Choose an embed to edit...')
+                    .addOptions(list.slice(0, 25).map(e => ({
+                        label: e.name,
+                        description: `Edit fields of "${e.name}"`,
+                        value: e.name
+                    })))
+            );
+            
+            const container = ComponentsV2.baseContainer(ComponentsV2.Accents.primary)
+                .addTextDisplayComponents(ComponentsV2.text('# 📝 Edit Custom Embed\nSelect the custom embed you would like to edit from the dropdown below.'))
+                .addActionRowComponents(selectMenu);
+                
+            await interaction.editReply({
+                components: [container],
+                flags: V2
+            });
+        }
         else if (sub === 'list') {
             await interaction.deferReply({ flags: EPH });
             const search = interaction.options.getString('search') || '';
@@ -486,9 +594,78 @@ export const embedCommand: Command = {
     },
 
     async handleButton(interaction) {
-        if (!interaction.customId.startsWith('embed_wiz:') && !interaction.customId.startsWith('embed_act_del:') && !interaction.customId.startsWith('embed_settings:')) return;
+        if (!interaction.customId.startsWith('embed_wiz:') && !interaction.customId.startsWith('embed_act_del:') && !interaction.customId.startsWith('embed_settings:') && !interaction.customId.startsWith('embed_edit:')) return;
 
         const key = getSessionKey(interaction.user.id, interaction.guildId!);
+
+        if (interaction.customId.startsWith('embed_edit:')) {
+            const session = editors.get(key);
+            
+            if (interaction.customId === 'embed_edit:cancel') {
+                editors.delete(key);
+                await interaction.update({
+                    components: [ComponentsV2.warningContainer('Cancelled', 'Embed editor session closed without saving.')],
+                    embeds: [],
+                    files: []
+                });
+                return;
+            }
+            
+            if (!session) {
+                await interaction.reply({ content: '❌ Session expired.', flags: EPH });
+                return;
+            }
+            
+            const action = interaction.customId.split(':')[1];
+            
+            if (action === 'back_to_dashboard') {
+                const container = renderEditorDashboard(session);
+                await interaction.update({ components: [container], embeds: [] });
+            }
+            else if (action === 'modal_hex_trigger') {
+                const modal = new ModalBuilder().setCustomId('embed_edit_modal:color').setTitle('Custom HEX Color');
+                modal.addComponents(
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(
+                        new TextInputBuilder()
+                            .setCustomId('color')
+                            .setLabel('HEX Color Code')
+                            .setPlaceholder('#8b5cf6')
+                            .setValue(session.color)
+                            .setStyle(TextInputStyle.Short)
+                            .setRequired(true)
+                    )
+                );
+                await interaction.showModal(modal);
+            }
+            else if (action === 'save') {
+                try {
+                    await supabase.saveCustomEmbed(interaction.guildId!, session.name, {
+                        title: session.title || null,
+                        description: session.description || null,
+                        thumbnail_url: session.thumbnailUrl || null,
+                        image_url: session.imageUrl || null,
+                        footer_text: session.footerText || null,
+                        footer_icon_url: session.footerIconUrl || null,
+                        color: session.color || null,
+                        author_name: session.authorName || null,
+                        author_icon_url: session.authorIconUrl || null,
+                        author_url: session.authorUrl || null,
+                        buttons: session.buttons,
+                        select_menu: session.selectMenu
+                    });
+                    
+                    editors.delete(key);
+                    
+                    const successContainer = ComponentsV2.successContainer('Embed Updated', `Successfully updated and saved changes to custom embed **\`${session.name}\`**.`);
+                    await interaction.update({ components: [successContainer], embeds: [], files: [] });
+                } catch (err) {
+                    logger.error('Failed to update custom embed:', err);
+                    await interaction.reply({ content: '❌ Failed to save embed changes to database.', flags: EPH });
+                }
+            }
+            return;
+        }
+
         const session = wizards.get(key);
 
         if (interaction.customId.startsWith('embed_wiz:')) {
@@ -643,9 +820,109 @@ export const embedCommand: Command = {
     },
 
     async handleSelectMenu(interaction) {
-        if (!interaction.customId.startsWith('embed_wiz:') && !interaction.customId.startsWith('embed_list:') && !interaction.customId.startsWith('embed_link:')) return;
+        if (!interaction.customId.startsWith('embed_wiz:') && !interaction.customId.startsWith('embed_list:') && !interaction.customId.startsWith('embed_link:') && !interaction.customId.startsWith('embed_edit:')) return;
 
         const key = getSessionKey(interaction.user.id, interaction.guildId!);
+
+        if (interaction.customId.startsWith('embed_edit:')) {
+            if (interaction.customId === 'embed_edit:select_embed') {
+                const embedName = interaction.values[0];
+                const embed = await supabase.getCustomEmbed(interaction.guildId!, embedName);
+                if (!embed) {
+                    await interaction.reply({ content: '❌ Custom embed not found.', flags: EPH });
+                    return;
+                }
+                
+                editors.set(key, {
+                    originalName: embed.name,
+                    name: embed.name,
+                    title: embed.title || '',
+                    description: embed.description || '',
+                    thumbnailUrl: embed.thumbnail_url || '',
+                    imageUrl: embed.image_url || '',
+                    footerText: embed.footer_text || '',
+                    footerIconUrl: embed.footer_icon_url || '',
+                    color: embed.color || 'purple',
+                    authorName: embed.author_name || '',
+                    authorIconUrl: embed.author_icon_url || '',
+                    authorUrl: embed.author_url || '',
+                    buttons: embed.buttons || [],
+                    selectMenu: embed.select_menu || null
+                });
+                
+                const container = renderEditorDashboard(editors.get(key));
+                await interaction.update({ components: [container], embeds: [] });
+                return;
+            }
+            
+            const session = editors.get(key);
+            if (!session) {
+                await interaction.reply({ content: '❌ Session expired.', flags: EPH });
+                return;
+            }
+            
+            if (interaction.customId === 'embed_edit:select_color_preset') {
+                session.color = interaction.values[0];
+                const container = renderEditorColorPage(session);
+                await interaction.update({ components: [container], embeds: [] });
+            }
+            else if (interaction.customId === 'embed_edit:select_field') {
+                const choice = interaction.values[0];
+                
+                if (choice === 'field:color') {
+                    const container = renderEditorColorPage(session);
+                    await interaction.update({ components: [container], embeds: [] });
+                }
+                else if (choice === 'field:basic') {
+                    const modal = new ModalBuilder().setCustomId('embed_edit_modal:basic').setTitle('Edit Basic Info');
+                    const titleInput = new TextInputBuilder().setCustomId('title').setLabel('Title').setValue(session.title || '').setStyle(TextInputStyle.Short).setRequired(false);
+                    const descInput = new TextInputBuilder().setCustomId('description').setLabel('Description').setValue(session.description || '').setStyle(TextInputStyle.Paragraph).setRequired(false);
+                    
+                    modal.addComponents(
+                        new ActionRowBuilder<TextInputBuilder>().addComponents(titleInput),
+                        new ActionRowBuilder<TextInputBuilder>().addComponents(descInput)
+                    );
+                    await interaction.showModal(modal);
+                }
+                else if (choice === 'field:author') {
+                    const modal = new ModalBuilder().setCustomId('embed_edit_modal:author').setTitle('Edit Author Info');
+                    const nameInput = new TextInputBuilder().setCustomId('authorName').setLabel('Author Name').setValue(session.authorName || '').setStyle(TextInputStyle.Short).setRequired(false);
+                    const iconInput = new TextInputBuilder().setCustomId('authorIconUrl').setLabel('Author Icon URL').setValue(session.authorIconUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
+                    const urlInput = new TextInputBuilder().setCustomId('authorUrl').setLabel('Author Link URL').setValue(session.authorUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
+                    
+                    modal.addComponents(
+                        new ActionRowBuilder<TextInputBuilder>().addComponents(nameInput),
+                        new ActionRowBuilder<TextInputBuilder>().addComponents(iconInput),
+                        new ActionRowBuilder<TextInputBuilder>().addComponents(urlInput)
+                    );
+                    await interaction.showModal(modal);
+                }
+                else if (choice === 'field:media') {
+                    const modal = new ModalBuilder().setCustomId('embed_edit_modal:media').setTitle('Edit Media Assets');
+                    const thumbInput = new TextInputBuilder().setCustomId('thumbnailUrl').setLabel('Thumbnail URL').setValue(session.thumbnailUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
+                    const imgInput = new TextInputBuilder().setCustomId('imageUrl').setLabel('Main Image URL').setValue(session.imageUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
+                    
+                    modal.addComponents(
+                        new ActionRowBuilder<TextInputBuilder>().addComponents(thumbInput),
+                        new ActionRowBuilder<TextInputBuilder>().addComponents(imgInput)
+                    );
+                    await interaction.showModal(modal);
+                }
+                else if (choice === 'field:footer') {
+                    const modal = new ModalBuilder().setCustomId('embed_edit_modal:footer').setTitle('Edit Footer Info');
+                    const textInput = new TextInputBuilder().setCustomId('footerText').setLabel('Footer Text').setValue(session.footerText || '').setStyle(TextInputStyle.Short).setRequired(false);
+                    const iconInput = new TextInputBuilder().setCustomId('footerIconUrl').setLabel('Footer Icon URL').setValue(session.footerIconUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
+                    
+                    modal.addComponents(
+                        new ActionRowBuilder<TextInputBuilder>().addComponents(textInput),
+                        new ActionRowBuilder<TextInputBuilder>().addComponents(iconInput)
+                    );
+                    await interaction.showModal(modal);
+                }
+            }
+            return;
+        }
+
         const session = wizards.get(key);
 
         if (interaction.customId === 'embed_wiz:select:color') {
@@ -691,9 +968,49 @@ export const embedCommand: Command = {
     },
 
     async handleModal(interaction) {
-        if (!interaction.customId.startsWith('embed_wiz_modal:') && !interaction.customId.startsWith('embed_settings_modal:')) return;
+        if (!interaction.customId.startsWith('embed_wiz_modal:') && !interaction.customId.startsWith('embed_settings_modal:') && !interaction.customId.startsWith('embed_edit_modal:')) return;
 
         const key = getSessionKey(interaction.user.id, interaction.guildId!);
+
+        if (interaction.customId.startsWith('embed_edit_modal:')) {
+            const session = editors.get(key);
+            if (!session) {
+                await interaction.reply({ content: '❌ Session expired.', flags: EPH });
+                return;
+            }
+
+            const modalType = interaction.customId.split(':')[1];
+
+            if (modalType === 'basic') {
+                session.title = interaction.fields.getTextInputValue('title').trim();
+                session.description = interaction.fields.getTextInputValue('description').trim();
+            }
+            else if (modalType === 'author') {
+                session.authorName = interaction.fields.getTextInputValue('authorName').trim();
+                session.authorIconUrl = interaction.fields.getTextInputValue('authorIconUrl').trim();
+                session.authorUrl = interaction.fields.getTextInputValue('authorUrl').trim();
+            }
+            else if (modalType === 'media') {
+                session.thumbnailUrl = interaction.fields.getTextInputValue('thumbnailUrl').trim();
+                session.imageUrl = interaction.fields.getTextInputValue('imageUrl').trim();
+            }
+            else if (modalType === 'footer') {
+                session.footerText = interaction.fields.getTextInputValue('footerText').trim();
+                session.footerIconUrl = interaction.fields.getTextInputValue('footerIconUrl').trim();
+            }
+            else if (modalType === 'color') {
+                const hex = interaction.fields.getTextInputValue('color').trim();
+                session.color = hex.startsWith('#') ? hex : `#${hex}`;
+                const container = renderEditorColorPage(session);
+                await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
+                return;
+            }
+
+            const container = renderEditorDashboard(session);
+            await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
+            return;
+        }
+
         const session = wizards.get(key);
 
         if (interaction.customId.startsWith('embed_wiz_modal:')) {
