@@ -150,10 +150,14 @@ export const helpCommand: Command = {
                 title = 'Moderation Suite';
                 desc = `Keep your server secure and track suggestions/tickets.\n\n` +
                     `### Command Catalog\n` +
+                    `› \`/kick <user> [reason]\` • Kick a user from the guild.\n` +
+                    `› \`/ban <user> [reason]\` • Permanently ban a user.\n` +
+                    `› \`/timeout <user> <duration> [reason]\` • Place a user in timeout (mute).\n` +
+                    `› \`/purge <count> [user]\` • Bulk-delete channel messages.\n` +
                     `› \`/ticket close\` • Terminate support thread.\n` +
                     `› \`/ticket claim\` • Allocate ticket to active staff.\n` +
                     `› \`/suggest modapprove <id>\` • Instantly implement suggestions.\n` +
-                    `› \`/suggest moddeny <id>\` • Deny suggestions with custom reason.\n\n` +
+                    `› \`/suggest moddeny <id>\` • Deny suggestions.\n\n` +
                     `_All moderator actions log directly to your configured Discord log channel._`;
                 break;
 
@@ -177,7 +181,12 @@ export const helpCommand: Command = {
                 desc = `Core utilities and account support interfaces.\n\n` +
                     `### Command Catalog\n` +
                     `› \`/ask <question>\` • Consult Groq-powered AI for server management.\n` +
-                    `› \`/afk [reason]\` • Set your status to AFK (Away From Keyboard).\n` +
+                    `› \`/afk [reason]\` • Set your status to AFK.\n` +
+                    `› \`/poll create\` • Launch a server-wide interactive poll.\n` +
+                    `› \`/reactroles setup\` • Create self-assignable role panels.\n` +
+                    `› \`/serverstats setup\` • Auto-update voice channels showing server statistics.\n` +
+                    `› \`/vpsstats\` • View host resource usage of the Victus Cloud VPS.\n` +
+                    `› \`/welcome setup\` • Configure welcome system and join auto-roles.\n` +
                     `› \`/link <token>\` • Connect Discord with your website account.\n` +
                     `› \`/unlink\` • Disconnect linked profile.\n` +
                     `› \`/help\` • Toggle this support dashboard.`;
@@ -226,8 +235,9 @@ export const helpCommand: Command = {
 
             case 'logging':
                 title = 'Alert Log Channels';
-                desc = `Keep track of administration and audit operations.\n\n` +
+                desc = `Keep track of server logs, user actions, and audit logs.\n\n` +
                     `### Command Catalog\n` +
+                    `› \`/audit-log setup\` • Configure logging for edits, deletes, joins, and bans.\n` +
                     `› \`/config logs <channel>\` • Set target discord channel for logs.\n` +
                     `› \`/embed settings\` • Toggle logging for custom publish templates.`;
                 break;
@@ -254,6 +264,7 @@ export const helpCommand: Command = {
 
         await interaction.update({
             components: [container],
+            embeds: [],
             flags: V2,
         });
     },

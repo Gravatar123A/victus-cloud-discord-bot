@@ -10,7 +10,8 @@ import {
     SlashCommandBuilder, 
     StringSelectMenuBuilder,
     TextInputBuilder, 
-    TextInputStyle 
+    TextInputStyle,
+    RoleSelectMenuBuilder
 } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { welcomeSettings, WelcomeConfig } from '../services/welcomeSettings.js';
@@ -29,7 +30,8 @@ function renderWelcomeDashboard(config: WelcomeConfig): any {
         `Configure how the bot welcomes new server members.\n\n` +
         `› **Status:** ${config.enabled ? '🟢 **Enabled**' : '🔴 **Disabled**'}\n` +
         `› **Welcome Channel:** ${config.channelId ? `<#${config.channelId}>` : '*Not configured (Required)*'}\n` +
-        `› **Welcome Format:** **\`${config.welcomeType.toUpperCase()}\`**\n`;
+        `› **Welcome Format:** **\`${config.welcomeType.toUpperCase()}\`**\n` +
+        `› **Auto-Assign Roles:** ${config.autoRoleIds && config.autoRoleIds.length > 0 ? config.autoRoleIds.map(id => `<@&${id}>`).join(', ') : '*None configured*'}\n`;
         
     if (config.welcomeType === 'custom_embed') {
         text += `› **Saved Embed Name:** \`${config.customEmbedName || '*Not configured (Required)*'}\` *(Created via /embed create)*\n`;
@@ -54,6 +56,15 @@ function renderWelcomeDashboard(config: WelcomeConfig): any {
             .setCustomId('welcome_wiz:channel')
             .setPlaceholder('Select welcome text channel...')
             .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+    );
+
+    // Row 1.5: Role selection (native Role Select Menu)
+    const roleSelect = new ActionRowBuilder<RoleSelectMenuBuilder>().addComponents(
+        new RoleSelectMenuBuilder()
+            .setCustomId('welcome_wiz:autoroles')
+            .setPlaceholder('Select auto-assign roles on join...')
+            .setMinValues(0)
+            .setMaxValues(5)
     );
 
     // Row 2: Select Format Type
@@ -101,6 +112,7 @@ function renderWelcomeDashboard(config: WelcomeConfig): any {
     );
     
     c.addActionRowComponents(channelSelect);
+    c.addActionRowComponents(roleSelect);
     c.addActionRowComponents(formatSelect);
     c.addActionRowComponents(toggleRow);
     c.addActionRowComponents(editRow);
@@ -223,7 +235,7 @@ export const welcomeCommand: Command = {
 
         if (action === 'toggle_status') {
             const updated = await welcomeSettings.set(interaction.guildId!, { enabled: !config.enabled });
-            await interaction.update({ components: [renderWelcomeDashboard(updated)] });
+            await interaction.update({ components: [renderWelcomeDashboard(updated)], embeds: [] });
         }
         else if (action === 'test') {
             await interaction.deferReply({ flags: EPH });
@@ -319,11 +331,16 @@ export const welcomeCommand: Command = {
 
         if (action === 'channel') {
             const updated = await welcomeSettings.set(interaction.guildId!, { channelId: val });
-            await interaction.update({ components: [renderWelcomeDashboard(updated)] });
+            await interaction.update({ components: [renderWelcomeDashboard(updated)], embeds: [] });
+        }
+        else if (action === 'autoroles') {
+            const roleIds = interaction.values;
+            const updated = await welcomeSettings.set(interaction.guildId!, { autoRoleIds: roleIds });
+            await interaction.update({ components: [renderWelcomeDashboard(updated)], embeds: [] });
         }
         else if (action === 'select' && interaction.customId.endsWith(':format')) {
             const updated = await welcomeSettings.set(interaction.guildId!, { welcomeType: val as any });
-            await interaction.update({ components: [renderWelcomeDashboard(updated)] });
+            await interaction.update({ components: [renderWelcomeDashboard(updated)], embeds: [] });
         }
     },
 
@@ -334,7 +351,7 @@ export const welcomeCommand: Command = {
         if (type === 'msg') {
             const template = interaction.fields.getTextInputValue('template').trim();
             const updated = await welcomeSettings.set(interaction.guildId!, { template });
-            await (interaction as any).update({ components: [renderWelcomeDashboard(updated)] });
+            await (interaction as any).update({ components: [renderWelcomeDashboard(updated)], embeds: [], flags: V2 });
         }
         else if (type === 'embed') {
             const embedTitle = interaction.fields.getTextInputValue('title').trim();
@@ -347,12 +364,12 @@ export const welcomeCommand: Command = {
                 embedColor,
                 embedImage
             });
-            await (interaction as any).update({ components: [renderWelcomeDashboard(updated)] });
+            await (interaction as any).update({ components: [renderWelcomeDashboard(updated)], embeds: [], flags: V2 });
         }
         else if (type === 'custom_embed') {
             const customEmbedName = interaction.fields.getTextInputValue('embedName').trim().toLowerCase();
             const updated = await welcomeSettings.set(interaction.guildId!, { customEmbedName });
-            await (interaction as any).update({ components: [renderWelcomeDashboard(updated)] });
+            await (interaction as any).update({ components: [renderWelcomeDashboard(updated)], embeds: [], flags: V2 });
         }
     }
 };

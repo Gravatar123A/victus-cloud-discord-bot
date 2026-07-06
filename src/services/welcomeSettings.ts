@@ -11,6 +11,7 @@ export interface WelcomeConfig {
     embedImage: string | null;
     customEmbedName: string | null;
     welcomeType: 'text' | 'embed' | 'custom_embed';
+    autoRoleIds: string[];
 }
 
 const DEFAULT_CONFIG: WelcomeConfig = {
@@ -22,7 +23,8 @@ const DEFAULT_CONFIG: WelcomeConfig = {
     embedColor: '#8b5cf6',
     embedImage: null,
     customEmbedName: null,
-    welcomeType: 'embed'
+    welcomeType: 'embed',
+    autoRoleIds: []
 };
 
 export class WelcomeSettingsService {

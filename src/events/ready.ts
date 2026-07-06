@@ -11,6 +11,7 @@ import { initTicketBridge } from '../services/ticketBridge.js';
 import { startUptimeHeartbeat } from '../services/uptimeHeartbeat.js';
 import { initializeFonts } from 'musicard';
 import { startGiveawayScheduler } from '../commands/giveaway.js';
+import { updateServerStats } from '../commands/serverstats.js';
 
 let dmQueueProcessing = false;
 
@@ -116,6 +117,15 @@ export const readyEvent: Event = {
 
         // Start background giveaway ends_at checks scheduler
         startGiveawayScheduler(client);
+
+        // Server Stats Auto-Updater
+        const runServerStats = async () => {
+            for (const guild of client.guilds.cache.values()) {
+                await updateServerStats(guild).catch(() => {});
+            }
+        };
+        await runServerStats();
+        setInterval(runServerStats, 5 * 60 * 1000);
 
         await processAdminDmQueue(client);
         setInterval(() => {

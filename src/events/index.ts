@@ -9,6 +9,11 @@ import { messageCreateEvent } from './messageCreate.js';
 import { voiceStateUpdateEvent } from './voiceStateUpdate.js';
 import { guildMemberAddEvent } from './guildMemberAdd.js';
 import { channelDeleteEvent } from './channelDelete.js';
+import { messageUpdateEvent } from './messageUpdate.js';
+import { messageDeleteEvent } from './messageDelete.js';
+import { guildMemberRemoveEvent } from './guildMemberRemove.js';
+import { guildBanAddEvent } from './guildBanAdd.js';
+import { guildBanRemoveEvent } from './guildBanRemove.js';
 
 const events: Event[] = [
     readyEvent,
@@ -17,6 +22,11 @@ const events: Event[] = [
     voiceStateUpdateEvent,
     guildMemberAddEvent,
     channelDeleteEvent,
+    messageUpdateEvent,
+    messageDeleteEvent,
+    guildMemberRemoveEvent,
+    guildBanAddEvent,
+    guildBanRemoveEvent,
 ];
 
 /**

@@ -35,6 +35,15 @@ import { warnCommand } from './warn.js';
 import { dmCommand } from './dm.js';
 import { playlistCommand } from './playlist.js';
 import { afkCommand } from './afk.js';
+import { purgeCommand } from './purge.js';
+import { kickCommand } from './kick.js';
+import { banCommand } from './ban.js';
+import { timeoutCommand } from './timeout.js';
+import { vpsStatsCommand } from './vpsstats.js';
+import { pollCommand } from './poll.js';
+import { auditLogCommand } from './auditLog.js';
+import { reactRolesCommand } from './reactroles.js';
+import { serverStatsCommand } from './serverstats.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -77,6 +86,15 @@ const allCommands: Command[] = [
     dmCommand,
     playlistCommand,
     afkCommand,
+    purgeCommand,
+    kickCommand,
+    banCommand,
+    timeoutCommand,
+    vpsStatsCommand,
+    pollCommand,
+    auditLogCommand,
+    reactRolesCommand,
+    serverStatsCommand,
     ...musicCommands,
 ];
 
