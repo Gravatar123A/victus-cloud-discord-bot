@@ -96,7 +96,7 @@ function renderCategorySubDashboard(cat: StaffAppCategory): any {
         new ChannelSelectMenuBuilder()
             .setCustomId(`staff_app_wiz:channel:${cat.id}`)
             .setPlaceholder('Select review channel...')
-            .addChannelTypes(ChannelType.GuildText)
+            .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
     );
     
     // Row 2: Edit controls

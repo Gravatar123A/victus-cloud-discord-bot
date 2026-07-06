@@ -53,7 +53,7 @@ function renderWelcomeDashboard(config: WelcomeConfig): any {
         new ChannelSelectMenuBuilder()
             .setCustomId('welcome_wiz:channel')
             .setPlaceholder('Select welcome text channel...')
-            .addChannelTypes(ChannelType.GuildText)
+            .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
     );
 
     // Row 2: Select Format Type

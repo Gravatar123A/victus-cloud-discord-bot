@@ -34,7 +34,7 @@ function renderWarnDashboard(config: WarnConfig): any {
         new ChannelSelectMenuBuilder()
             .setCustomId('warn_wiz:channel')
             .setPlaceholder('Select warning logs channel...')
-            .addChannelTypes(ChannelType.GuildText)
+            .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
     );
     
     // Row 2: Status Toggle Button
