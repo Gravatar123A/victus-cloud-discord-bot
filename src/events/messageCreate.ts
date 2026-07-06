@@ -173,7 +173,7 @@ export const messageCreateEvent: Event = {
                     const loggedMentions = afkData.mentions || [];
                     if (loggedMentions.length > 0) {
                         const mentionList = loggedMentions
-                            .map((m: any) => `› **${m.authorTag}** in <#${m.channelId}>: [Jump to Message](https://discord.com/channels/${guildId}/${m.channelId}/${m.messageId}) (<t:${Math.floor(new Date(m.timestamp).getTime() / 1000)}:R>)`)
+                            .map((m: any) => `› **${m.authorTag || m.username || m.tag || m.authorName || 'Unknown User'}** in <#${m.channelId}>: [Jump to Message](https://discord.com/channels/${guildId}/${m.channelId}/${m.messageId}) (<t:${Math.floor(new Date(m.timestamp).getTime() / 1000)}:R>)`)
                             .slice(0, 10)
                             .join('\n');
                         welcomeEmbed.addFields({ name: '📝 Mentions while you were AFK', value: mentionList, inline: false });
@@ -206,7 +206,8 @@ export const messageCreateEvent: Event = {
                             // Log the mention into their AFK data
                             const loggedMentions = afkData.mentions || [];
                             loggedMentions.push({
-                                authorTag: message.author.username,
+                                authorTag: message.author.tag || message.author.username,
+                                username: message.author.username,
                                 content: message.content.slice(0, 100),
                                 channelId: message.channelId,
                                 messageId: message.id,

@@ -1653,6 +1653,8 @@ class SupabaseService {
             .select('*')
             .eq('guild_id', guildId)
             .eq('name', name)
+            .order('updated_at', { ascending: false })
+            .limit(1)
             .maybeSingle();
 
         if (error) {
@@ -1663,18 +1665,34 @@ class SupabaseService {
     }
 
     async saveCustomEmbed(guildId: string, name: string, embed: Partial<CustomEmbed>): Promise<boolean> {
-        const { error } = await this.client
-            .from('custom_embeds')
-            .upsert({
-                guild_id: guildId,
-                name: name,
-                ...embed,
-                updated_at: new Date().toISOString()
-            });
+        const existing = await this.getCustomEmbed(guildId, name);
+        if (existing) {
+            const { error } = await this.client
+                .from('custom_embeds')
+                .update({
+                    ...embed,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', existing.id);
 
-        if (error) {
-            logger.error(`Failed to save custom embed ${name} for ${guildId}:`, error);
-            return false;
+            if (error) {
+                logger.error(`Failed to update custom embed ${name} for ${guildId}:`, error);
+                return false;
+            }
+        } else {
+            const { error } = await this.client
+                .from('custom_embeds')
+                .insert({
+                    guild_id: guildId,
+                    name: name,
+                    ...embed,
+                    updated_at: new Date().toISOString()
+                });
+
+            if (error) {
+                logger.error(`Failed to insert custom embed ${name} for ${guildId}:`, error);
+                return false;
+            }
         }
         return true;
     }

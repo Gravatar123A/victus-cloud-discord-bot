@@ -1,4 +1,4 @@
-import { Client, Collection, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, Collection, GatewayIntentBits, Partials, ContainerBuilder } from 'discord.js';
 import type { LavalinkManager } from 'lavalink-client';
 import { config } from './config.js';
 import { logger } from './utils/logger.js';
@@ -6,6 +6,11 @@ import { loadCommands, commands } from './commands/index.js';
 import { loadEvents } from './events/index.js';
 import { createLavalinkManager } from './services/music.js';
 import type { Command, ButtonHandler, SelectMenuHandler, ModalHandler } from './types/index.js';
+
+// Global override: Disable accent colors for all V2 layout containers to achieve clean slate designs
+(ContainerBuilder.prototype as any).setAccentColor = function () {
+    return this;
+};
 
 // Extend Discord.js Client type to include our custom properties
 declare module 'discord.js' {

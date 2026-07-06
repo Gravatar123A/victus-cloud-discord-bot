@@ -139,6 +139,7 @@ export const helpCommand: Command = {
                 desc = `Commands to customize your server layout, bind database profiles, and set roles.\n\n` +
                     `### Command Catalog\n` +
                     `› \`/config\` • Configure log channels, role locks, and tickets.\n` +
+                    `› \`/annc\` • Configure and send announcements (Admin only).\n` +
                     `› \`/link-panel\` • Spawns a premium account verification button.\n` +
                     `› \`/setprefix <prefix>\` • Changes the server-specific prefix.\n` +
                     `› \`/prefix\` • Inspect current server prefix.\n\n` +
@@ -160,6 +161,7 @@ export const helpCommand: Command = {
                 title = 'Premium Music Card Player';
                 desc = `Listen to high-fidelity audio directly inside Stage/Voice channels.\n\n` +
                     `### Command Catalog\n` +
+                    `› \`/music\` • Open the interactive Now Playing & controls panel.\n` +
                     `› \`/play <query/URL>\` • Starts a track from YouTube, SoundCloud, or direct URLs.\n` +
                     `› \`/nowplaying\` • Spawns the compact Bloom music player.\n` +
                     `› \`/skip\` • Skip current song.\n` +
@@ -175,6 +177,7 @@ export const helpCommand: Command = {
                 desc = `Core utilities and account support interfaces.\n\n` +
                     `### Command Catalog\n` +
                     `› \`/ask <question>\` • Consult Groq-powered AI for server management.\n` +
+                    `› \`/afk [reason]\` • Set your status to AFK (Away From Keyboard).\n` +
                     `› \`/link <token>\` • Connect Discord with your website account.\n` +
                     `› \`/unlink\` • Disconnect linked profile.\n` +
                     `› \`/help\` • Toggle this support dashboard.`;
