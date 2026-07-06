@@ -700,7 +700,7 @@ export const embedCommand: Command = {
             
             if (action === 'back_to_dashboard') {
                 const container = renderEditorDashboard(session);
-                await interaction.update({ components: [container], embeds: [] });
+                await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
             }
             else if (action === 'modal_hex_trigger') {
                 const modal = new ModalBuilder().setCustomId(`embed_edit_modal:color:${Date.now()}`).setTitle('Custom HEX Color');
@@ -720,12 +720,12 @@ export const embedCommand: Command = {
             else if (action === 'clear_buttons') {
                 session.buttons = [];
                 const container = renderEditorButtonsPage(session);
-                await interaction.update({ components: [container], embeds: [] });
+                await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
             }
             else if (action === 'clear_select') {
                 session.selectMenu = null;
                 const container = renderEditorSelectPage(session);
-                await interaction.update({ components: [container], embeds: [] });
+                await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
             }
             else if (action === 'modal_select_trigger') {
                 const modal = new ModalBuilder().setCustomId(`embed_edit_modal:select_menu:${Date.now()}`).setTitle('Set Select Menu');
@@ -787,12 +787,12 @@ export const embedCommand: Command = {
             if (action === 'prev') {
                 session.page = Math.max(1, session.page - 1);
                 const container = renderWizardPage(session);
-                await interaction.update({ components: [container], embeds: [] });
+                await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
             } 
             else if (action === 'next') {
                 session.page = Math.min(7, session.page + 1);
                 const container = renderWizardPage(session);
-                await interaction.update({ components: [container], embeds: [] });
+                await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
             }
             else if (action === 'modal') {
                 const subModal = interaction.customId.split(':')[2];
@@ -843,12 +843,12 @@ export const embedCommand: Command = {
             else if (action === 'clear_buttons') {
                 session.buttons = [];
                 const container = renderWizardPage(session);
-                await interaction.update({ components: [container], embeds: [] });
+                await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
             }
             else if (action === 'clear_select') {
                 session.selectMenu = null;
                 const container = renderWizardPage(session);
-                await interaction.update({ components: [container], embeds: [] });
+                await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
             }
             else if (action === 'test_preview') {
                 const previewPayload = buildFinalEmbedPayload(session);
@@ -977,14 +977,14 @@ export const embedCommand: Command = {
             if (interaction.customId === 'embed_edit:select_color_preset') {
                 session.color = interaction.values[0];
                 const container = renderEditorColorPage(session);
-                await interaction.update({ components: [container], embeds: [] });
+                await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
             }
             else if (interaction.customId === 'embed_edit:select_field') {
                 const choice = interaction.values[0];
                 
                 if (choice === 'field:color') {
                     const container = renderEditorColorPage(session);
-                    await interaction.update({ components: [container], embeds: [] });
+                    await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
                 }
                 else if (choice === 'field:basic') {
                     const modal = new ModalBuilder().setCustomId(`embed_edit_modal:basic:${Date.now()}`).setTitle('Edit Basic Info');
@@ -1034,11 +1034,11 @@ export const embedCommand: Command = {
                 }
                 else if (choice === 'field:buttons') {
                     const container = renderEditorButtonsPage(session);
-                    await interaction.update({ components: [container], embeds: [] });
+                    await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
                 }
                 else if (choice === 'field:select_menu') {
                     const container = renderEditorSelectPage(session);
-                    await interaction.update({ components: [container], embeds: [] });
+                    await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
                 }
             }
             return;
@@ -1050,7 +1050,7 @@ export const embedCommand: Command = {
             if (!session) return;
             session.color = interaction.values[0];
             const container = renderWizardPage(session);
-            await interaction.update({ components: [container], embeds: [] });
+            await interaction.update({ content: '', components: [container], embeds: [], flags: V2 });
         }
         else if (interaction.customId === 'embed_wiz:select:button_style') {
             if (!session) return;
@@ -1124,7 +1124,7 @@ export const embedCommand: Command = {
                 const hex = interaction.fields.getTextInputValue('color').trim();
                 session.color = hex.startsWith('#') ? hex : `#${hex}`;
                 const container = renderEditorColorPage(session);
-                await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
+                await (interaction as any).update({ content: '', components: [container], embeds: [], flags: V2 });
                 return;
             }
             else if (modalType === 'add_button') {
@@ -1145,7 +1145,7 @@ export const embedCommand: Command = {
                 });
                 
                 const container = renderEditorButtonsPage(session);
-                await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
+                await (interaction as any).update({ content: '', components: [container], embeds: [], flags: V2 });
                 return;
             }
             else if (modalType === 'select_menu') {
@@ -1172,12 +1172,12 @@ export const embedCommand: Command = {
                 };
                 
                 const container = renderEditorSelectPage(session);
-                await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
+                await (interaction as any).update({ content: '', components: [container], embeds: [], flags: V2 });
                 return;
             }
 
             const container = renderEditorDashboard(session);
-            await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
+            await (interaction as any).update({ content: '', components: [container], embeds: [], flags: V2 });
             return;
         }
 
@@ -1254,7 +1254,7 @@ export const embedCommand: Command = {
             }
 
             const container = renderWizardPage(session);
-            await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
+            await (interaction as any).update({ content: '', components: [container], embeds: [], flags: V2 });
         }
         else if (interaction.customId === 'embed_settings_modal:edit') {
             const default_color = interaction.fields.getTextInputValue('color').trim();
