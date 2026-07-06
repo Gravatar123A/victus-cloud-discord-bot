@@ -103,6 +103,10 @@ export const warnCommand: Command = {
         }
 
         const targetUser = interaction.options.getUser('user', true);
+        if (targetUser.id === interaction.user.id) {
+            await interaction.reply({ content: '❌ You cannot warn yourself.', flags: EPH });
+            return;
+        }
         if (targetUser.bot) {
             await interaction.reply({ content: '❌ You cannot warn a bot user.', flags: EPH });
             return;

@@ -44,6 +44,20 @@ export const banCommand: Command = {
         if (!guild) return;
 
         const isPrefix = interaction.constructor.name === 'PrefixInteraction';
+
+        if (user.id === interaction.user.id) {
+            const err = '❌ You cannot ban yourself.';
+            if (isPrefix) {
+                await interaction.reply({ content: err });
+            } else {
+                await interaction.reply({
+                    components: [ComponentsV2.errorContainer('Invalid Target', err)],
+                    flags: V2 | EPH
+                });
+            }
+            return;
+        }
+
         const targetMember = await guild.members.fetch(user.id).catch(() => null);
 
         if (targetMember) {
