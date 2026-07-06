@@ -641,7 +641,7 @@ export const embedCommand: Command = {
                 await interaction.update({ components: [container], embeds: [] });
             }
             else if (action === 'modal_hex_trigger') {
-                const modal = new ModalBuilder().setCustomId('embed_edit_modal:color').setTitle('Custom HEX Color');
+                const modal = new ModalBuilder().setCustomId(`embed_edit_modal:color:${Date.now()}`).setTitle('Custom HEX Color');
                 modal.addComponents(
                     new ActionRowBuilder<TextInputBuilder>().addComponents(
                         new TextInputBuilder()
@@ -717,7 +717,7 @@ export const embedCommand: Command = {
             else if (action === 'modal') {
                 const subModal = interaction.customId.split(':')[2];
                 if (subModal === 'basic') {
-                    const modal = new ModalBuilder().setCustomId('embed_wiz_modal:basic').setTitle('Page 1: Basic Information');
+                    const modal = new ModalBuilder().setCustomId(`embed_wiz_modal:basic:${Date.now()}`).setTitle('Page 1: Basic Information');
                     modal.addComponents(
                         new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('name').setLabel('Embed Name (Unique Key)').setPlaceholder('rules').setValue(session.name).setStyle(TextInputStyle.Short).setRequired(true)),
                         new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('title').setLabel('Embed Title').setPlaceholder('Server Rules').setValue(session.title).setStyle(TextInputStyle.Short).setRequired(false)),
@@ -726,7 +726,7 @@ export const embedCommand: Command = {
                     await interaction.showModal(modal);
                 } 
                 else if (subModal === 'media') {
-                    const modal = new ModalBuilder().setCustomId('embed_wiz_modal:media').setTitle('Page 2: Media Assets');
+                    const modal = new ModalBuilder().setCustomId(`embed_wiz_modal:media:${Date.now()}`).setTitle('Page 2: Media Assets');
                     modal.addComponents(
                         new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('thumbnailUrl').setLabel('Thumbnail Image URL').setPlaceholder('https://example.com/logo.png').setValue(session.thumbnailUrl).setStyle(TextInputStyle.Short).setRequired(false)),
                         new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('imageUrl').setLabel('Main Image URL').setPlaceholder('https://example.com/banner.png').setValue(session.imageUrl).setStyle(TextInputStyle.Short).setRequired(false)),
@@ -736,14 +736,14 @@ export const embedCommand: Command = {
                     await interaction.showModal(modal);
                 }
                 else if (subModal === 'color') {
-                    const modal = new ModalBuilder().setCustomId('embed_wiz_modal:color').setTitle('Page 3: HEX Color');
+                    const modal = new ModalBuilder().setCustomId(`embed_wiz_modal:color:${Date.now()}`).setTitle('Page 3: HEX Color');
                     modal.addComponents(
                         new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('color').setLabel('Custom Color HEX').setPlaceholder('#6366f1').setValue(session.color).setStyle(TextInputStyle.Short).setRequired(true))
                     );
                     await interaction.showModal(modal);
                 }
                 else if (subModal === 'author') {
-                    const modal = new ModalBuilder().setCustomId('embed_wiz_modal:author').setTitle('Page 4: Author Parameters');
+                    const modal = new ModalBuilder().setCustomId(`embed_wiz_modal:author:${Date.now()}`).setTitle('Page 4: Author Parameters');
                     modal.addComponents(
                         new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('authorName').setLabel('Author Name').setPlaceholder('Victus Support Guild').setValue(session.authorName).setStyle(TextInputStyle.Short).setRequired(false)),
                         new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('authorIconUrl').setLabel('Author Icon URL').setPlaceholder('https://example.com/author.png').setValue(session.authorIconUrl).setStyle(TextInputStyle.Short).setRequired(false)),
@@ -752,7 +752,7 @@ export const embedCommand: Command = {
                     await interaction.showModal(modal);
                 }
                 else if (subModal === 'select_menu') {
-                    const modal = new ModalBuilder().setCustomId('embed_wiz_modal:select_menu').setTitle('Page 6: Dropdown Options');
+                    const modal = new ModalBuilder().setCustomId(`embed_wiz_modal:select_menu:${Date.now()}`).setTitle('Page 6: Dropdown Options');
                     modal.addComponents(
                         new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('placeholder').setLabel('Menu Placeholder').setPlaceholder('Select a category...').setValue(session.selectMenu?.placeholder || '').setStyle(TextInputStyle.Short).setRequired(true)),
                         new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('options').setLabel('Options (CSV: Label:Value,Label:Value)').setPlaceholder('Rules:rules,FAQ:faq,Support:support').setValue(session.selectMenu?.options ? session.selectMenu.options.map((o: any) => `${o.label}:${o.value.replace('embed_link:', '')}`).join(',') : '').setStyle(TextInputStyle.Paragraph).setRequired(true))
@@ -892,7 +892,7 @@ export const embedCommand: Command = {
                     await interaction.update({ components: [container], embeds: [] });
                 }
                 else if (choice === 'field:basic') {
-                    const modal = new ModalBuilder().setCustomId('embed_edit_modal:basic').setTitle('Edit Basic Info');
+                    const modal = new ModalBuilder().setCustomId(`embed_edit_modal:basic:${Date.now()}`).setTitle('Edit Basic Info');
                     const titleInput = new TextInputBuilder().setCustomId('title').setLabel('Title').setValue(session.title || '').setStyle(TextInputStyle.Short).setRequired(false);
                     const descInput = new TextInputBuilder().setCustomId('description').setLabel('Description').setValue(session.description || '').setStyle(TextInputStyle.Paragraph).setRequired(false);
                     
@@ -903,7 +903,7 @@ export const embedCommand: Command = {
                     await interaction.showModal(modal);
                 }
                 else if (choice === 'field:author') {
-                    const modal = new ModalBuilder().setCustomId('embed_edit_modal:author').setTitle('Edit Author Info');
+                    const modal = new ModalBuilder().setCustomId(`embed_edit_modal:author:${Date.now()}`).setTitle('Edit Author Info');
                     const nameInput = new TextInputBuilder().setCustomId('authorName').setLabel('Author Name').setValue(session.authorName || '').setStyle(TextInputStyle.Short).setRequired(false);
                     const iconInput = new TextInputBuilder().setCustomId('authorIconUrl').setLabel('Author Icon URL').setValue(session.authorIconUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
                     const urlInput = new TextInputBuilder().setCustomId('authorUrl').setLabel('Author Link URL').setValue(session.authorUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
@@ -916,7 +916,7 @@ export const embedCommand: Command = {
                     await interaction.showModal(modal);
                 }
                 else if (choice === 'field:media') {
-                    const modal = new ModalBuilder().setCustomId('embed_edit_modal:media').setTitle('Edit Media Assets');
+                    const modal = new ModalBuilder().setCustomId(`embed_edit_modal:media:${Date.now()}`).setTitle('Edit Media Assets');
                     const thumbInput = new TextInputBuilder().setCustomId('thumbnailUrl').setLabel('Thumbnail URL').setValue(session.thumbnailUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
                     const imgInput = new TextInputBuilder().setCustomId('imageUrl').setLabel('Main Image URL').setValue(session.imageUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
                     
@@ -927,7 +927,7 @@ export const embedCommand: Command = {
                     await interaction.showModal(modal);
                 }
                 else if (choice === 'field:footer') {
-                    const modal = new ModalBuilder().setCustomId('embed_edit_modal:footer').setTitle('Edit Footer Info');
+                    const modal = new ModalBuilder().setCustomId(`embed_edit_modal:footer:${Date.now()}`).setTitle('Edit Footer Info');
                     const textInput = new TextInputBuilder().setCustomId('footerText').setLabel('Footer Text').setValue(session.footerText || '').setStyle(TextInputStyle.Short).setRequired(false);
                     const iconInput = new TextInputBuilder().setCustomId('footerIconUrl').setLabel('Footer Icon URL').setValue(session.footerIconUrl || '').setStyle(TextInputStyle.Short).setRequired(false);
                     
@@ -956,7 +956,7 @@ export const embedCommand: Command = {
             wizards.set(key + '-btnStyle', style);
 
             // Open modal to get label and URL/action for this button
-            const modal = new ModalBuilder().setCustomId('embed_wiz_modal:add_button').setTitle('Configure Button Parameters');
+            const modal = new ModalBuilder().setCustomId(`embed_wiz_modal:add_button:${Date.now()}`).setTitle('Configure Button Parameters');
             modal.addComponents(
                 new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('label').setLabel('Button Label').setPlaceholder('Click Here').setStyle(TextInputStyle.Short).setRequired(true)),
                 new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('emoji').setLabel('Emoji Name/Icon (Optional)').setPlaceholder('🔥').setStyle(TextInputStyle.Short).setRequired(false)),
