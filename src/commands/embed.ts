@@ -360,8 +360,9 @@ export function buildFinalEmbedPayload(session: any): any {
             if (b.style === 5 && b.url) {
                 btn.setURL(b.url);
             } else {
+                const isEph = b.ephemeral ? 'eph' : 'pub';
                 // If it's a normal custom action button, name it with our embed link router ID
-                btn.setCustomId(b.url ? `embed_link:${b.url}` : `embed_action:${session.name}:${index}`);
+                btn.setCustomId(b.url ? `embed_link:${b.url}:${isEph}` : `embed_action:${session.name}:${index}:${isEph}`);
             }
 
             if (b.disabled) btn.setDisabled(true);
@@ -378,10 +379,11 @@ export function buildFinalEmbedPayload(session: any): any {
             .setPlaceholder(selectMenu.placeholder || 'Select an option...');
 
         selectMenu.options.forEach((o: any) => {
+            const isEph = o.ephemeral ? 'eph' : 'pub';
             menu.addOptions({
                 label: o.label,
                 description: o.description || undefined,
-                value: o.value.startsWith('embed_link:') ? o.value : `embed_select_val:${session.name}:${o.value}`
+                value: o.value.startsWith('embed_link:') ? `${o.value}:${isEph}` : `embed_select_val:${session.name}:${o.value}:${isEph}`
             });
         });
         selectRow.addComponents(menu);
@@ -959,7 +961,8 @@ export const embedCommand: Command = {
                 modal.addComponents(
                     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('label').setLabel('Button Label').setPlaceholder('Click Here').setStyle(TextInputStyle.Short).setRequired(true)),
                     new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('emoji').setLabel('Emoji Name/Icon (Optional)').setPlaceholder('🔥').setStyle(TextInputStyle.Short).setRequired(false)),
-                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('url').setLabel(style === 5 ? 'URL Link (Link style requires URL)' : 'Linked Child Embed Name / CustomId').setPlaceholder(style === 5 ? 'https://example.com' : 'support').setStyle(TextInputStyle.Short).setRequired(style === 5))
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('url').setLabel(style === 5 ? 'URL Link (Link style requires URL)' : 'Linked Child Embed Name / CustomId').setPlaceholder(style === 5 ? 'https://example.com' : 'support').setStyle(TextInputStyle.Short).setRequired(style === 5)),
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('ephemeral').setLabel('Load Embed Ephemerally? (yes/no)').setPlaceholder('no').setStyle(TextInputStyle.Short).setRequired(false))
                 );
                 await interaction.showModal(modal);
                 return;
@@ -1060,7 +1063,8 @@ export const embedCommand: Command = {
             modal.addComponents(
                 new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('label').setLabel('Button Label').setPlaceholder('Click Here').setStyle(TextInputStyle.Short).setRequired(true)),
                 new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('emoji').setLabel('Emoji Name/Icon (Optional)').setPlaceholder('🔥').setStyle(TextInputStyle.Short).setRequired(false)),
-                new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('url').setLabel(style === 5 ? 'URL Link (Link style requires URL)' : 'Linked Child Embed Name / CustomId').setPlaceholder(style === 5 ? 'https://example.com' : 'support').setStyle(TextInputStyle.Short).setRequired(style === 5))
+                new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('url').setLabel(style === 5 ? 'URL Link (Link style requires URL)' : 'Linked Child Embed Name / CustomId').setPlaceholder(style === 5 ? 'https://example.com' : 'support').setStyle(TextInputStyle.Short).setRequired(style === 5)),
+                new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('ephemeral').setLabel('Load Embed Ephemerally? (yes/no)').setPlaceholder('no').setStyle(TextInputStyle.Short).setRequired(false))
             );
             await interaction.showModal(modal);
         }
@@ -1127,6 +1131,8 @@ export const embedCommand: Command = {
                 const label = interaction.fields.getTextInputValue('label').trim();
                 const emoji = interaction.fields.getTextInputValue('emoji').trim();
                 const url = interaction.fields.getTextInputValue('url').trim();
+                const ephemeralInput = interaction.fields.getTextInputValue('ephemeral').trim().toLowerCase();
+                const ephemeral = ephemeralInput === 'yes' || ephemeralInput === 'true' || ephemeralInput === 'y';
                 const style = editors.get(key + '-btnStyle') || 1;
 
                 if (!session.buttons) session.buttons = [];
@@ -1134,7 +1140,8 @@ export const embedCommand: Command = {
                     label,
                     emoji: emoji || undefined,
                     style,
-                    url: url || undefined
+                    url: url || undefined,
+                    ephemeral
                 });
                 
                 const container = renderEditorButtonsPage(session);
@@ -1149,9 +1156,13 @@ export const embedCommand: Command = {
                     const parts = pair.split(':');
                     const label = parts[0]?.trim();
                     const value = parts[1]?.trim() || label?.toLowerCase();
+                    const ephRaw = parts[2]?.trim()?.toLowerCase();
+                    const ephemeral = ephRaw === 'yes' || ephRaw === 'true' || ephRaw === 'y' || ephRaw === 'eph';
+
                     return {
                         label,
-                        value: value.startsWith('embed_link:') ? value : value
+                        value: value.startsWith('embed_link:') ? value : value,
+                        ephemeral
                     };
                 }).filter(o => o.label);
 
@@ -1207,12 +1218,15 @@ export const embedCommand: Command = {
                 const label = interaction.fields.getTextInputValue('label').trim();
                 const emoji = interaction.fields.getTextInputValue('emoji').trim();
                 const url = interaction.fields.getTextInputValue('url').trim();
+                const ephemeralInput = interaction.fields.getTextInputValue('ephemeral').trim().toLowerCase();
+                const ephemeral = ephemeralInput === 'yes' || ephemeralInput === 'true' || ephemeralInput === 'y';
 
                 session.buttons.push({
                     label,
                     emoji: emoji || undefined,
                     style,
-                    url: url || undefined
+                    url: url || undefined,
+                    ephemeral
                 });
             }
             else if (modalType === 'select_menu') {
@@ -1223,9 +1237,13 @@ export const embedCommand: Command = {
                     const parts = pair.split(':');
                     const label = parts[0]?.trim();
                     const value = parts[1]?.trim() || label?.toLowerCase();
+                    const ephRaw = parts[2]?.trim()?.toLowerCase();
+                    const ephemeral = ephRaw === 'yes' || ephRaw === 'true' || ephRaw === 'y' || ephRaw === 'eph';
+
                     return {
                         label,
-                        value: value.startsWith('embed_link:') ? value : value
+                        value: value.startsWith('embed_link:') ? value : value,
+                        ephemeral
                     };
                 }).filter(o => o.label);
 
@@ -1366,19 +1384,28 @@ export const embedLinksRouter: Command = {
     async handleButton(interaction) {
         if (!interaction.customId.startsWith('embed_link:') && !interaction.customId.startsWith('embed_action:')) return;
 
+        const parts = interaction.customId.split(':');
+        const actionType = parts[0];
+        
         let targetName = '';
-        if (interaction.customId.startsWith('embed_link:')) {
-            targetName = interaction.customId.split(':')[1];
+        let isEphemeral = false;
+
+        if (actionType === 'embed_link') {
+            targetName = parts[1];
+            isEphemeral = parts[2] === 'eph';
         } else {
-            // It is embed_action:parentName:index
-            const parts = interaction.customId.split(':');
+            // It is embed_action:parentName:index:isEph
             const parentName = parts[1];
             const index = parseInt(parts[2], 10);
+            isEphemeral = parts[3] === 'eph';
 
             const parentEmbed = await supabase.getCustomEmbed(interaction.guildId!, parentName);
             const buttonObj = parentEmbed?.buttons?.[index];
-            if (buttonObj && buttonObj.url) {
-                targetName = buttonObj.url;
+            if (buttonObj) {
+                targetName = buttonObj.url || '';
+                if (parts[3] === undefined) {
+                    isEphemeral = !!buttonObj.ephemeral;
+                }
             }
         }
 
@@ -1386,14 +1413,15 @@ export const embedLinksRouter: Command = {
 
         // Strip "embed_link:" prefix if present
         if (targetName.startsWith('embed_link:')) {
-            targetName = targetName.split(':')[1];
+            const linkParts = targetName.split(':');
+            targetName = linkParts[1];
+            if (linkParts[2] === 'eph') isEphemeral = true;
         }
 
         const embed = await supabase.getCustomEmbed(interaction.guildId!, targetName);
 
         if (!embed) {
-            // Only report not found if they explicitly marked it as link style button
-            if (interaction.customId.startsWith('embed_link:')) {
+            if (actionType === 'embed_link') {
                 await interaction.deferUpdate().catch(() => {});
                 await interaction.followUp({
                     content: `❌ Linked child embed template **\`${targetName}\`** not found in the database.`,
@@ -1403,11 +1431,11 @@ export const embedLinksRouter: Command = {
             return;
         }
 
-        await interaction.deferUpdate().catch(() => {});
         const payload = buildFinalEmbedPayload(embed);
-        await interaction.editReply({
+        
+        await interaction.reply({
             components: [payload],
-            flags: V2
+            flags: isEphemeral ? (EPH | V2) : V2
         }).catch(() => {});
     },
 
@@ -1416,13 +1444,25 @@ export const embedLinksRouter: Command = {
         if (!interaction.customId.startsWith('embed_select:') && !interaction.customId.startsWith('embed_link:')) return;
 
         const val = interaction.values[0] || '';
+        const parts = val.split(':');
         
-        let targetName = val;
+        let targetName = '';
+        let isEphemeral = false;
+
         if (val.startsWith('embed_link:')) {
-            targetName = val.split(':')[1];
+            targetName = parts[1];
+            isEphemeral = parts[2] === 'eph';
         } else if (val.startsWith('embed_select_val:')) {
-            const parts = val.split(':');
-            targetName = parts.slice(2).join(':');
+            // embed_select_val:parentName:optionValue:isEph
+            targetName = parts[2];
+            isEphemeral = parts[3] === 'eph';
+            
+            if (parts.length > 4) {
+                targetName = parts.slice(2, -1).join(':');
+                isEphemeral = parts[parts.length - 1] === 'eph';
+            }
+        } else {
+            targetName = val;
         }
 
         const embed = await supabase.getCustomEmbed(interaction.guildId!, targetName);
@@ -1438,11 +1478,11 @@ export const embedLinksRouter: Command = {
             return;
         }
 
-        await interaction.deferUpdate().catch(() => {});
         const payload = buildFinalEmbedPayload(embed);
-        await interaction.editReply({
+
+        await interaction.reply({
             components: [payload],
-            flags: V2
+            flags: isEphemeral ? (EPH | V2) : V2
         }).catch(() => {});
     }
 };
