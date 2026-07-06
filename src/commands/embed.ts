@@ -755,7 +755,7 @@ export const embedCommand: Command = {
             }
 
             const container = renderWizardPage(session);
-            await (interaction as any).update({ components: [container] });
+            await (interaction as any).update({ components: [container], flags: V2 });
         }
         else if (interaction.customId === 'embed_settings_modal:edit') {
             const default_color = interaction.fields.getTextInputValue('color').trim();
@@ -771,7 +771,8 @@ export const embedCommand: Command = {
             });
 
             await (interaction as any).update({
-                components: [ComponentsV2.successContainer('Settings Updated', 'Default embed creators configurations updated.')]
+                components: [ComponentsV2.successContainer('Settings Updated', 'Default embed creators configurations updated.')],
+                flags: V2
             });
         }
     }
