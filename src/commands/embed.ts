@@ -503,6 +503,7 @@ export const embedCommand: Command = {
                 wizards.delete(key);
                 await interaction.update({
                     components: [ComponentsV2.warningContainer('Cancelled', 'Embed builder wizard session cancelled.')],
+                    embeds: [],
                     files: []
                 });
                 return;
@@ -511,12 +512,12 @@ export const embedCommand: Command = {
             if (action === 'prev') {
                 session.page = Math.max(1, session.page - 1);
                 const container = renderWizardPage(session);
-                await interaction.update({ components: [container] });
+                await interaction.update({ components: [container], embeds: [] });
             } 
             else if (action === 'next') {
                 session.page = Math.min(7, session.page + 1);
                 const container = renderWizardPage(session);
-                await interaction.update({ components: [container] });
+                await interaction.update({ components: [container], embeds: [] });
             }
             else if (action === 'modal') {
                 const subModal = interaction.customId.split(':')[2];
@@ -567,12 +568,12 @@ export const embedCommand: Command = {
             else if (action === 'clear_buttons') {
                 session.buttons = [];
                 const container = renderWizardPage(session);
-                await interaction.update({ components: [container] });
+                await interaction.update({ components: [container], embeds: [] });
             }
             else if (action === 'clear_select') {
                 session.selectMenu = null;
                 const container = renderWizardPage(session);
-                await interaction.update({ components: [container] });
+                await interaction.update({ components: [container], embeds: [] });
             }
             else if (action === 'test_preview') {
                 const previewPayload = buildFinalEmbedPayload(session);
@@ -603,6 +604,7 @@ export const embedCommand: Command = {
 
                     await interaction.update({
                         components: [ComponentsV2.successContainer('Embed Saved Successfully', `Custom embed template **\`${session.name}\`** has been written to the database!`)],
+                        embeds: [],
                         files: []
                     });
                 } catch (error) {
@@ -615,13 +617,15 @@ export const embedCommand: Command = {
             const action = interaction.customId.split(':')[1];
             if (action === 'cancel') {
                 await interaction.update({
-                    components: [ComponentsV2.warningContainer('Cancelled', 'Deletion cancelled.')]
+                    components: [ComponentsV2.warningContainer('Cancelled', 'Deletion cancelled.')],
+                    embeds: []
                 });
             } else {
                 const name = interaction.customId.split(':')[2];
                 await supabase.deleteCustomEmbed(interaction.guildId!, name);
                 await interaction.update({
-                    components: [ComponentsV2.successContainer('Deleted', `Custom embed template \`${name}\` has been permanently deleted.`)]
+                    components: [ComponentsV2.successContainer('Deleted', `Custom embed template \`${name}\` has been permanently deleted.`)],
+                    embeds: []
                 });
             }
         }
@@ -648,7 +652,7 @@ export const embedCommand: Command = {
             if (!session) return;
             session.color = interaction.values[0];
             const container = renderWizardPage(session);
-            await interaction.update({ components: [container] });
+            await interaction.update({ components: [container], embeds: [] });
         }
         else if (interaction.customId === 'embed_wiz:select:button_style') {
             if (!session) return;
@@ -680,7 +684,8 @@ export const embedCommand: Command = {
                 ));
 
             await interaction.update({
-                components: [actionContainer]
+                components: [actionContainer],
+                embeds: []
             });
         }
     },
@@ -755,7 +760,7 @@ export const embedCommand: Command = {
             }
 
             const container = renderWizardPage(session);
-            await (interaction as any).update({ components: [container], flags: V2 });
+            await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
         }
         else if (interaction.customId === 'embed_settings_modal:edit') {
             const default_color = interaction.fields.getTextInputValue('color').trim();
@@ -772,6 +777,7 @@ export const embedCommand: Command = {
 
             await (interaction as any).update({
                 components: [ComponentsV2.successContainer('Settings Updated', 'Default embed creators configurations updated.')],
+                embeds: [],
                 flags: V2
             });
         }
@@ -813,7 +819,8 @@ export const embedListActionButtons: Command = {
             listContainer.addActionRowComponents(channelSelect);
 
             await interaction.update({
-                components: [listContainer]
+                components: [listContainer],
+                embeds: []
             });
         }
         else if (action === 'duplicate') {
@@ -837,7 +844,8 @@ export const embedListActionButtons: Command = {
             });
 
             await interaction.update({
-                components: [ComponentsV2.successContainer('Duplicated', `Duplicated custom embed template as **\`${duplicateName}\`**.`)]
+                components: [ComponentsV2.successContainer('Duplicated', `Duplicated custom embed template as **\`${duplicateName}\`**.`)],
+                embeds: []
             });
         }
     },
@@ -869,7 +877,8 @@ export const embedListActionButtons: Command = {
         });
 
         await interaction.update({
-            components: [ComponentsV2.successContainer('Published Successfully', `Custom embed **\`${name}\`** has been published to <#${channelId}>.`)]
+            components: [ComponentsV2.successContainer('Published Successfully', `Custom embed **\`${name}\`** has been published to <#${channelId}>.`)],
+            embeds: []
         });
     }
 };
