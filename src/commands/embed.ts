@@ -51,7 +51,9 @@ function renderEditorDashboard(session: any): any {
         `› **Thumbnail:** ${session.thumbnailUrl ? `[Link](${session.thumbnailUrl})` : '_None_'}\n` +
         `› **Image Banner:** ${session.imageUrl ? `[Link](${session.imageUrl})` : '_None_'}\n` +
         `› **Footer:** ${session.footerText ? `"${session.footerText}"` : '_None_'}\n` +
-        `› **Author:** ${session.authorName ? `"${session.authorName}"` : '_None_'}`;
+        `› **Author:** ${session.authorName ? `"${session.authorName}"` : '_None_'}\n` +
+        `› **Buttons:** **${session.buttons?.length || 0}** / 5\n` +
+        `› **Dropdown Menu:** ${session.selectMenu ? `**${session.selectMenu.options.length} options**` : '_None_'}`;
         
     container.addTextDisplayComponents(ComponentsV2.text(body));
     
@@ -63,7 +65,9 @@ function renderEditorDashboard(session: any): any {
             { label: '👤 Edit Author Information', value: 'field:author', description: 'Modify the author name, icon URL, and hyperlink' },
             { label: '🖼️ Edit Thumbnail & Image Banner', value: 'field:media', description: 'Modify thumbnail and main image URLs' },
             { label: '🔤 Edit Footer Info', value: 'field:footer', description: 'Modify footer text and footer icon URL' },
-            { label: '🎨 Edit Theme Color', value: 'field:color', description: 'Select a preset color or set a custom HEX value' }
+            { label: '🎨 Edit Theme Color', value: 'field:color', description: 'Select a preset color or set a custom HEX value' },
+            { label: '🖱️ Edit Custom Buttons', value: 'field:buttons', description: 'Add, clear, or link action buttons below the embed' },
+            { label: '📊 Edit Dropdown Select Menu', value: 'field:select_menu', description: 'Add, clear, or configure dropdown menu options' }
         ]);
         
     const buttonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -74,6 +78,62 @@ function renderEditorDashboard(session: any): any {
     container.addActionRowComponents(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu));
     container.addActionRowComponents(buttonsRow);
     
+    return container;
+}
+
+function renderEditorButtonsPage(session: any): any {
+    const accent = session.color ? (PRESET_COLORS[session.color.toLowerCase()] || parseInt(session.color.replace('#', ''), 16) || ComponentsV2.Accents.primary) : ComponentsV2.Accents.primary;
+    const container = ComponentsV2.baseContainer(accent);
+    
+    const body = `# 🖱️ Edit Custom Buttons: **\`${session.originalName}\`**\n` +
+        `Configure interactive buttons below your embed.\n\n` +
+        `› **Active Buttons:** **${session.buttons?.length || 0}** / 5\n` +
+        (session.buttons && session.buttons.length > 0 ? session.buttons.map((b: any, i: number) => `  \`${i+1}.\` **${b.label}** (${b.style === 5 ? `Link: ${b.url}` : `Linked Embed/Action: ${b.url || 'None'}`})`).join('\n') : '  _No buttons defined._') +
+        `\n\nChoose a style below to add a button, or clear all buttons.`;
+        
+    container.addTextDisplayComponents(ComponentsV2.text(body));
+    
+    const buttonSelect = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('embed_edit:select_button_style')
+            .setPlaceholder('Choose a button style to add...')
+            .addOptions([
+                { label: 'Primary (Blue)', value: '1' },
+                { label: 'Secondary (Gray)', value: '2' },
+                { label: 'Success (Green)', value: '3' },
+                { label: 'Danger (Red)', value: '4' },
+                { label: 'Link (URL Link)', value: '5' }
+            ])
+    );
+    
+    const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('embed_edit:clear_buttons').setLabel('Clear Buttons').setStyle(ButtonStyle.Danger).setDisabled(!session.buttons || session.buttons.length === 0),
+        new ButtonBuilder().setCustomId('embed_edit:back_to_dashboard').setLabel('⬅️ Back to Editor').setStyle(ButtonStyle.Primary)
+    );
+    
+    container.addActionRowComponents(buttonSelect).addActionRowComponents(btnRow);
+    return container;
+}
+
+function renderEditorSelectPage(session: any): any {
+    const accent = session.color ? (PRESET_COLORS[session.color.toLowerCase()] || parseInt(session.color.replace('#', ''), 16) || ComponentsV2.Accents.primary) : ComponentsV2.Accents.primary;
+    const container = ComponentsV2.baseContainer(accent);
+    
+    const body = `# 📊 Edit Dropdown Select Menu: **\`${session.originalName}\`**\n` +
+        `Configure a dropdown select menu below your embed.\n\n` +
+        `› **Dropdown Menu:** ${session.selectMenu ? `**${session.selectMenu.options.length} options**` : '_None_'}\n` +
+        (session.selectMenu ? `  Placeholder: "${session.selectMenu.placeholder}"\n` + session.selectMenu.options.map((o: any, i: number) => `  \`${i+1}.\` **${o.label}** (${o.value})`).join('\n') : '') +
+        `\n\nClick the buttons below to set or clear the dropdown.`;
+        
+    container.addTextDisplayComponents(ComponentsV2.text(body));
+    
+    const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('embed_edit:modal_select_trigger').setLabel('Set Select Menu').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('embed_edit:clear_select').setLabel('Clear Menu').setStyle(ButtonStyle.Danger).setDisabled(!session.selectMenu),
+        new ButtonBuilder().setCustomId('embed_edit:back_to_dashboard').setLabel('⬅️ Back to Editor').setStyle(ButtonStyle.Primary)
+    );
+    
+    container.addActionRowComponents(btnRow);
     return container;
 }
 
@@ -655,6 +715,24 @@ export const embedCommand: Command = {
                 );
                 await interaction.showModal(modal);
             }
+            else if (action === 'clear_buttons') {
+                session.buttons = [];
+                const container = renderEditorButtonsPage(session);
+                await interaction.update({ components: [container], embeds: [] });
+            }
+            else if (action === 'clear_select') {
+                session.selectMenu = null;
+                const container = renderEditorSelectPage(session);
+                await interaction.update({ components: [container], embeds: [] });
+            }
+            else if (action === 'modal_select_trigger') {
+                const modal = new ModalBuilder().setCustomId(`embed_edit_modal:select_menu:${Date.now()}`).setTitle('Set Select Menu');
+                modal.addComponents(
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('placeholder').setLabel('Menu Placeholder').setPlaceholder('Select a category...').setValue(session.selectMenu?.placeholder || '').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('options').setLabel('Options (CSV: Label:Value,Label:Value)').setPlaceholder('Rules:rules,FAQ:faq,Support:support').setValue(session.selectMenu?.options ? session.selectMenu.options.map((o: any) => `${o.label}:${o.value.replace('embed_link:', '')}`).join(',') : '').setStyle(TextInputStyle.Paragraph).setRequired(true))
+                );
+                await interaction.showModal(modal);
+            }
             else if (action === 'save') {
                 try {
                     await supabase.saveCustomEmbed(interaction.guildId!, session.name, {
@@ -873,6 +951,20 @@ export const embedCommand: Command = {
                 return;
             }
             
+            else if (interaction.customId === 'embed_edit:select_button_style') {
+                const style = parseInt(interaction.values[0], 10);
+                editors.set(key + '-btnStyle', style);
+                
+                const modal = new ModalBuilder().setCustomId(`embed_edit_modal:add_button:${Date.now()}`).setTitle('Configure Button Parameters');
+                modal.addComponents(
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('label').setLabel('Button Label').setPlaceholder('Click Here').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('emoji').setLabel('Emoji Name/Icon (Optional)').setPlaceholder('🔥').setStyle(TextInputStyle.Short).setRequired(false)),
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('url').setLabel(style === 5 ? 'URL Link (Link style requires URL)' : 'Linked Child Embed Name / CustomId').setPlaceholder(style === 5 ? 'https://example.com' : 'support').setStyle(TextInputStyle.Short).setRequired(style === 5))
+                );
+                await interaction.showModal(modal);
+                return;
+            }
+            
             const session = editors.get(key);
             if (!session) {
                 await interaction.reply({ content: '❌ Session expired.', flags: EPH });
@@ -936,6 +1028,14 @@ export const embedCommand: Command = {
                         new ActionRowBuilder<TextInputBuilder>().addComponents(iconInput)
                     );
                     await interaction.showModal(modal);
+                }
+                else if (choice === 'field:buttons') {
+                    const container = renderEditorButtonsPage(session);
+                    await interaction.update({ components: [container], embeds: [] });
+                }
+                else if (choice === 'field:select_menu') {
+                    const container = renderEditorSelectPage(session);
+                    await interaction.update({ components: [container], embeds: [] });
                 }
             }
             return;
@@ -1020,6 +1120,47 @@ export const embedCommand: Command = {
                 const hex = interaction.fields.getTextInputValue('color').trim();
                 session.color = hex.startsWith('#') ? hex : `#${hex}`;
                 const container = renderEditorColorPage(session);
+                await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
+                return;
+            }
+            else if (modalType === 'add_button') {
+                const label = interaction.fields.getTextInputValue('label').trim();
+                const emoji = interaction.fields.getTextInputValue('emoji').trim();
+                const url = interaction.fields.getTextInputValue('url').trim();
+                const style = editors.get(key + '-btnStyle') || 1;
+
+                if (!session.buttons) session.buttons = [];
+                session.buttons.push({
+                    label,
+                    emoji: emoji || undefined,
+                    style,
+                    url: url || undefined
+                });
+                
+                const container = renderEditorButtonsPage(session);
+                await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
+                return;
+            }
+            else if (modalType === 'select_menu') {
+                const placeholder = interaction.fields.getTextInputValue('placeholder').trim();
+                const optionsCSV = interaction.fields.getTextInputValue('options').trim();
+
+                const optionsList = optionsCSV.split(',').map(pair => {
+                    const parts = pair.split(':');
+                    const label = parts[0]?.trim();
+                    const value = parts[1]?.trim() || label?.toLowerCase();
+                    return {
+                        label,
+                        value: value.startsWith('embed_link:') ? value : value
+                    };
+                }).filter(o => o.label);
+
+                session.selectMenu = {
+                    placeholder,
+                    options: optionsList
+                };
+                
+                const container = renderEditorSelectPage(session);
                 await (interaction as any).update({ components: [container], embeds: [], flags: V2 });
                 return;
             }
@@ -1223,21 +1364,46 @@ export const embedLinksRouter: Command = {
     data: new SlashCommandBuilder().setName('_embed_router_internal').setDescription('internal'),
     async execute() {},
     async handleButton(interaction) {
-        if (!interaction.customId.startsWith('embed_link:')) return;
+        if (!interaction.customId.startsWith('embed_link:') && !interaction.customId.startsWith('embed_action:')) return;
 
-        await interaction.deferUpdate().catch(() => {});
+        let targetName = '';
+        if (interaction.customId.startsWith('embed_link:')) {
+            targetName = interaction.customId.split(':')[1];
+        } else {
+            // It is embed_action:parentName:index
+            const parts = interaction.customId.split(':');
+            const parentName = parts[1];
+            const index = parseInt(parts[2], 10);
 
-        const targetName = interaction.customId.split(':')[1];
+            const parentEmbed = await supabase.getCustomEmbed(interaction.guildId!, parentName);
+            const buttonObj = parentEmbed?.buttons?.[index];
+            if (buttonObj && buttonObj.url) {
+                targetName = buttonObj.url;
+            }
+        }
+
+        if (!targetName) return;
+
+        // Strip "embed_link:" prefix if present
+        if (targetName.startsWith('embed_link:')) {
+            targetName = targetName.split(':')[1];
+        }
+
         const embed = await supabase.getCustomEmbed(interaction.guildId!, targetName);
 
         if (!embed) {
-            await interaction.followUp({
-                content: `❌ Linked embed template **\`${targetName}\`** not found in the database.`,
-                flags: EPH
-            });
+            // Only report not found if they explicitly marked it as link style button
+            if (interaction.customId.startsWith('embed_link:')) {
+                await interaction.deferUpdate().catch(() => {});
+                await interaction.followUp({
+                    content: `❌ Linked child embed template **\`${targetName}\`** not found in the database.`,
+                    flags: EPH
+                }).catch(() => {});
+            }
             return;
         }
 
+        await interaction.deferUpdate().catch(() => {});
         const payload = buildFinalEmbedPayload(embed);
         await interaction.editReply({
             components: [payload],
@@ -1246,23 +1412,30 @@ export const embedLinksRouter: Command = {
     },
 
     async handleSelectMenu(interaction) {
-        // Intercept dropdown navigation if selection value starts with embed_link:
+        // Intercept dropdown navigation if selection value starts with embed_link: or matches an embed name
+        if (!interaction.customId.startsWith('embed_select:') && !interaction.customId.startsWith('embed_link:')) return;
+
         const val = interaction.values[0] || '';
-        if (!val.startsWith('embed_link:')) return;
+        
+        let targetName = val;
+        if (val.startsWith('embed_link:')) {
+            targetName = val.split(':')[1];
+        }
 
-        await interaction.deferUpdate().catch(() => {});
-
-        const targetName = val.split(':')[1];
         const embed = await supabase.getCustomEmbed(interaction.guildId!, targetName);
 
         if (!embed) {
-            await interaction.followUp({
-                content: `❌ Linked child embed template **\`${targetName}\`** not found in the database.`,
-                flags: EPH
-            });
+            if (val.startsWith('embed_link:')) {
+                await interaction.deferUpdate().catch(() => {});
+                await interaction.followUp({
+                    content: `❌ Linked child embed template **\`${targetName}\`** not found in the database.`,
+                    flags: EPH
+                }).catch(() => {});
+            }
             return;
         }
 
+        await interaction.deferUpdate().catch(() => {});
         const payload = buildFinalEmbedPayload(embed);
         await interaction.editReply({
             components: [payload],
