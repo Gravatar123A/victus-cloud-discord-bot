@@ -58,7 +58,7 @@ async function requireVoice(
 
     const fail = async (title: string, body: string) => {
         const embed = new EmbedBuilder()
-            .setColor(0xef4444)
+            .setColor(0x2b2d31)
             .setTitle(`⚠️ ${title}`)
             .setDescription(body);
         if (deferred && interaction.isChatInputCommand()) {
@@ -97,7 +97,7 @@ async function requirePlayer(
     const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
     const reply = async (title: string, body: string) => {
         const embed = new EmbedBuilder()
-            .setColor(0xef4444)
+            .setColor(0x2b2d31)
             .setTitle(`⚠️ ${title}`)
             .setDescription(body);
         if (deferred && interaction.isChatInputCommand()) {
@@ -120,14 +120,14 @@ async function requirePlayer(
 
 function ok(title: string, body: string) {
     const embed = new EmbedBuilder()
-        .setColor(0x10b981)
+        .setColor(0x2b2d31)
         .setTitle(`✅ ${title}`)
         .setDescription(body);
     return { embeds: [embed] } as const;
 }
 function info(title: string, body: string) {
     const embed = new EmbedBuilder()
-        .setColor(0x3b82f6)
+        .setColor(0x2b2d31)
         .setTitle(`ℹ️ ${title}`)
         .setDescription(body);
     return { embeds: [embed] } as const;
@@ -155,7 +155,7 @@ export const playCommand: Command = {
         let player = lavalink.getPlayer(interaction.guildId!);
         if (player && player.voiceChannelId && player.voiceChannelId !== ctx.voice.id) {
             const embed = new EmbedBuilder()
-                .setColor(0xef4444)
+                .setColor(0x2b2d31)
                 .setTitle('⚠️ Already in use')
                 .setDescription("I'm already playing in another voice channel. Join it to add songs.");
             await interaction.editReply({ embeds: [embed] });
@@ -195,7 +195,7 @@ export const playCommand: Command = {
         } catch (error) {
             logger.error('🎵 Lavalink search failed:', error);
             const embed = new EmbedBuilder()
-                .setColor(0xef4444)
+                .setColor(0x2b2d31)
                 .setTitle('❌ Search failed')
                 .setDescription('Could not reach the music server. Please try again in a moment.');
             await interaction.editReply({ embeds: [embed] });
@@ -207,7 +207,7 @@ export const playCommand: Command = {
                 ? ' Make sure the Lavalink server has LavaSrc configured for Spotify.'
                 : ' Try a different search or a direct link.';
             const embed = new EmbedBuilder()
-                .setColor(0xef4444)
+                .setColor(0x2b2d31)
                 .setTitle('⚠️ No results')
                 .setDescription(`Nothing found for **${query.slice(0, 120)}**.${hint}`);
             await interaction.editReply({ embeds: [embed] });
@@ -254,7 +254,7 @@ export const playCommand: Command = {
         switch (action) {
             case 'open_controls': {
                 const controls = musicControlsContainer(player);
-                await interaction.reply({ content: controls.content, components: controls.components, ephemeral: true });
+                await interaction.reply({ embeds: controls.embeds, components: controls.components, ephemeral: true });
                 return;
             }
             case 'like': {
@@ -363,7 +363,7 @@ export const playCommand: Command = {
 
         if (interaction.message.flags.has(MessageFlags.Ephemeral)) {
             const controls = musicControlsContainer(player);
-            await interaction.update({ content: controls.content, components: controls.components });
+            await interaction.update({ embeds: controls.embeds, components: controls.components });
         }
     },
 
@@ -373,7 +373,7 @@ export const playCommand: Command = {
         const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
         if (!player) {
             const embed = new EmbedBuilder()
-                .setColor(0xef4444)
+                .setColor(0x2b2d31)
                 .setTitle('⚠️ Nothing is playing')
                 .setDescription('This panel is no longer active. Use `/play` to start again.');
             await interaction.reply({ embeds: [embed], ephemeral: false });
@@ -382,7 +382,7 @@ export const playCommand: Command = {
         const member = interaction.member as GuildMember | null;
         if (member?.voice?.channelId !== player.voiceChannelId) {
             const embed = new EmbedBuilder()
-                .setColor(0xef4444)
+                .setColor(0x2b2d31)
                 .setTitle('⚠️ Wrong voice channel')
                 .setDescription('Join my voice channel to control playback.');
             await interaction.reply({ embeds: [embed], ephemeral: false });
@@ -410,7 +410,7 @@ export const playCommand: Command = {
             case 'stop': {
                 await player.destroy();
                 const embed = new EmbedBuilder()
-                    .setColor(0x3b82f6)
+                    .setColor(0x2b2d31)
                     .setTitle('⏹ Stopped')
                     .setDescription('Playback stopped and the queue was cleared. 👋');
                 await interaction.update({ embeds: [embed], components: [] });
@@ -687,7 +687,7 @@ export const disconnectCommand: Command = {
         const member = interaction.member as GuildMember | null;
         if (member?.voice?.channelId !== player.voiceChannelId) {
             const embed = new EmbedBuilder()
-                .setColor(0xef4444)
+                .setColor(0x2b2d31)
                 .setTitle('⚠️ Wrong voice channel')
                 .setDescription('Join my voice channel to disconnect me.');
             await interaction.editReply({ embeds: [embed] });

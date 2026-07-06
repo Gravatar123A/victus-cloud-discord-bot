@@ -68,7 +68,7 @@ export function generateProgressBar(pos: number, duration: number, length = 18):
 /** Idle control panel shown by /music when nothing is playing. */
 export function musicIdleContainer(): EmbedBuilder {
     return new EmbedBuilder()
-        .setColor(0x6366f1) // Indigo
+        .setColor(0x2b2d31) // Neutral dark background
         .setTitle('🎵 Music System')
         .setDescription(
             'Nothing is playing right now.\n\n' +
@@ -82,7 +82,7 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
     const track = player.queue.current;
     if (!track) {
         const embed = new EmbedBuilder()
-            .setColor(0x6366f1)
+            .setColor(0x2b2d31)
             .setTitle('🎵 Now Playing')
             .setDescription('Nothing is playing right now.');
         return { embeds: [embed], components: [], files: [] };
@@ -93,14 +93,6 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
     const pos = Math.min(player.position ?? 0, duration);
     const reqId = requesterId(track);
     const live = !!info?.isStream;
-
-    // Get voice channel name
-    let vcName = 'PUBLIC VC';
-    if (guild) {
-        const member = reqId ? guild.members.cache.get(reqId) : null;
-        const voiceChannel = member?.voice.channel;
-        if (voiceChannel) vcName = voiceChannel.name.toUpperCase();
-    }
 
     // Generate musicard Bloom image
     let cardBuffer: Buffer = Buffer.alloc(0);
@@ -123,11 +115,11 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
 
     const files: AttachmentBuilder[] = [];
     const embed = new EmbedBuilder()
-        .setColor(0x8b5cf6) // Purple
+        .setColor(0x2b2d31) // Neutral dark background (no accent color stripe)
         .setTitle('Now playing')
         .setDescription(
             `**[${escapeMd(info?.title)}](${info?.uri})**\n\n` +
-            `⊕ ${reqId ? `<@${reqId}>` : 'Unknown'} 👑 📍 🔊 🌍 • ${vcName} •\n\n` +
+            `⊕ ${reqId ? `<@${reqId}>` : 'Unknown'}\n\n` +
             `\`${formatDuration(pos)} / ${formatDuration(duration)}\`\n\n` +
             `${generateProgressBar(pos, duration)}`
         );
@@ -142,27 +134,23 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
         }
     }
 
-    // Row 1 Buttons
-    const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    // Unified single ActionRow with exactly 5 buttons for premium alignment
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId('music:like').setEmoji('🤍').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('music:skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('music:loop').setEmoji('🔁').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('music:open_controls').setEmoji('🎛️').setLabel('Open music controls').setStyle(ButtonStyle.Secondary),
-    );
-
-    // Row 2 Buttons
-    const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId('music:stop').setEmoji('❌').setStyle(ButtonStyle.Secondary),
     );
 
     return { 
         embeds: [embed], 
-        components: [row1, row2],
+        components: [row],
         files
     };
 }
 
-export function musicControlsContainer(player: Player): { content: string; components: any[] } {
+export function musicControlsContainer(player: Player): { embeds: EmbedBuilder[]; components: any[] } {
     const track = player.queue.current;
     const title = track ? track.info.title : 'Unknown Track';
     const pos = player.position ?? 0;
@@ -170,7 +158,18 @@ export function musicControlsContainer(player: Player): { content: string; compo
     const live = track ? track.info.isStream : false;
     
     const timeStr = live ? 'LIVE' : `${formatDuration(pos)} / ${formatDuration(duration)}`;
-    const header = `\`${escapeMd(title).slice(0, 50)}... (${timeStr})\``;
+    const header = `**${escapeMd(title).slice(0, 50)}... (${timeStr})**`;
+
+    const embed = new EmbedBuilder()
+        .setColor(0x2b2d31) // Neutral dark background
+        .setDescription(
+            `${header}\n` +
+            `───────────────────────────────────\n` +
+            `**Playback**\n\n\n\n` +
+            `**Music**\n\n\n\n` +
+            `**Controls**\n\n\n\n` +
+            `**Library**`
+        );
 
     const playbackRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId('music:previous').setEmoji('⏮️').setStyle(ButtonStyle.Secondary),
@@ -200,16 +199,7 @@ export function musicControlsContainer(player: Player): { content: string; compo
     );
 
     return {
-        content: 
-            `**${header}**\n` +
-            `───────────────────────────────────\n` +
-            `**Playback**\n` +
-            `⠀\n` +
-            `**Music**\n` +
-            `⠀\n` +
-            `**Controls**\n` +
-            `⠀\n` +
-            `**Library**`,
+        embeds: [embed],
         components: [playbackRow, musicRow, controlsRow, libraryRow]
     };
 }
@@ -220,7 +210,7 @@ export function addedContainer(
     playlistName: string | null,
     position: number,
 ): EmbedBuilder {
-    const embed = new EmbedBuilder().setColor(0x10b981); // Green
+    const embed = new EmbedBuilder().setColor(0x2b2d31); // Neutral dark background
 
     if (playlistName && tracks.length > 1) {
         const totalMs = tracks.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
@@ -258,7 +248,7 @@ export function queueContainer(player: Player, page = 0): EmbedBuilder {
     const upcoming = player.queue.tracks as AnyTrack[];
 
     const embed = new EmbedBuilder()
-        .setColor(0x6366f1)
+        .setColor(0x2b2d31) // Neutral dark background
         .setTitle('ℹ️ Music Queue');
 
     let description = '';

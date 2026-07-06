@@ -80,7 +80,7 @@ export const playlistCommand: Command = {
                 await playlistService.create(guildId, userId, name);
                 
                 const embed = new EmbedBuilder()
-                    .setColor(0x10b981)
+                    .setColor(0x2b2d31)
                     .setTitle('☑️ Playlist Created')
                     .setDescription(`Created playlist **${escapeMd(name)}** successfully. Use \`/playlist add\` to add tracks.`);
                 await interaction.reply({ embeds: [embed], flags: EPH });
@@ -95,7 +95,7 @@ export const playlistCommand: Command = {
                 }
 
                 const embed = new EmbedBuilder()
-                    .setColor(0x10b981)
+                    .setColor(0x2b2d31)
                     .setTitle('🗑️ Playlist Deleted')
                     .setDescription(`Deleted playlist **${escapeMd(name)}** successfully.`);
                 await interaction.reply({ embeds: [embed], flags: EPH });
@@ -106,7 +106,7 @@ export const playlistCommand: Command = {
                 await playlistService.rename(guildId, userId, name, newName);
 
                 const embed = new EmbedBuilder()
-                    .setColor(0x10b981)
+                    .setColor(0x2b2d31)
                     .setTitle('✏️ Playlist Renamed')
                     .setDescription(`Renamed playlist **${escapeMd(name)}** to **${escapeMd(newName)}** successfully.`);
                 await interaction.reply({ embeds: [embed], flags: EPH });
@@ -168,7 +168,7 @@ export const playlistCommand: Command = {
                 }
 
                 const successEmbed = new EmbedBuilder()
-                    .setColor(0x10b981)
+                    .setColor(0x2b2d31)
                     .setTitle('✅ Added to Playlist')
                     .setDescription(
                         isPlaylist 
@@ -198,7 +198,7 @@ export const playlistCommand: Command = {
                 await playlistService.removeTrack(guildId, userId, name, index);
 
                 const embed = new EmbedBuilder()
-                    .setColor(0x10b981)
+                    .setColor(0x2b2d31)
                     .setTitle('☑️ Track Removed')
                     .setDescription(`Removed **${escapeMd(removedTrack.title)}** from playlist **${escapeMd(playlist.name)}** successfully.`);
                 await interaction.reply({ embeds: [embed], flags: EPH });
@@ -207,7 +207,7 @@ export const playlistCommand: Command = {
                 const playlists = await playlistService.getAll(guildId, userId);
                 if (playlists.length === 0) {
                     const embed = new EmbedBuilder()
-                        .setColor(0x3b82f6)
+                        .setColor(0x2b2d31)
                         .setTitle('ℹ️ No Playlists')
                         .setDescription('You have not created any custom playlists yet. Use \`/playlist create <name>\` to start.');
                     await interaction.reply({ embeds: [embed], flags: EPH });
@@ -215,7 +215,7 @@ export const playlistCommand: Command = {
                 }
 
                 const listEmbed = new EmbedBuilder()
-                    .setColor(0x3b82f6)
+                    .setColor(0x2b2d31)
                     .setTitle('🎶 Your Music Playlists')
                     .setDescription('────────────────────────');
 
@@ -306,7 +306,7 @@ export const playlistCommand: Command = {
                 if (!player.playing && !player.paused) await player.play();
 
                 const successEmbed = new EmbedBuilder()
-                    .setColor(0x10b981)
+                    .setColor(0x2b2d31)
                     .setTitle('🎶 Playlist Queued')
                     .setDescription(`Successfully queued and loaded **${addedCount}** tracks from playlist **${escapeMd(playlist.name)}**.`);
                 await interaction.editReply({ embeds: [successEmbed] });

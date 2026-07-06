@@ -21,14 +21,14 @@ import { compactId, decodeDisplayText, formatCredits, formatDate, Icons, statusI
 export const IS_COMPONENTS_V2 = 1 << 15;
 
 export const Accents = {
-    primary: 0x8b5cf6,
-    success: 0x10b981,
-    warning: 0xf59e0b,
-    danger: 0xef4444,
-    info: 0x3b82f6,
-    purple: 0x8b5cf6,
-    discord: 0x5865f2,
-    midnight: 0x111827,
+    primary: 0x2b2d31,
+    success: 0x2b2d31,
+    warning: 0x2b2d31,
+    danger: 0x2b2d31,
+    info: 0x2b2d31,
+    purple: 0x2b2d31,
+    discord: 0x2b2d31,
+    midnight: 0x2b2d31,
 } as const;
 
 const HERO_IMAGE = `${config.branding.website}/images/discord-bot-manager-banner.png`;

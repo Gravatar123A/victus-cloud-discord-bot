@@ -32,7 +32,7 @@ export const afkCommand: Command = {
             });
 
             const embed = new EmbedBuilder()
-                .setColor(0x6366f1) // Indigo
+                .setColor(0x2b2d31)
                 .setTitle('AFK Status Set')
                 .setThumbnail(interaction.user.displayAvatarURL())
                 .setDescription(`${interaction.user.username} is now AFK.`)

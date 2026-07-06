@@ -147,7 +147,7 @@ export const warnCommand: Command = {
 
             // 2. DM the warned user (DMs must use EmbedBuilder to prevent component errors)
             const dmEmbed = new EmbedBuilder()
-                .setColor(0xef4444) // Danger Red
+                .setColor(0x2b2d31)
                 .setTitle('⚠️ Warning Notice')
                 .setDescription(
                     `You have been issued a warning in **${interaction.guild?.name}**.\n\n` +
@@ -162,7 +162,7 @@ export const warnCommand: Command = {
             // 3. Reply to Moderator
             if (isPrefix) {
                 const successEmbed = new EmbedBuilder()
-                    .setColor(0x10b981) // Success Green
+                    .setColor(0x2b2d31)
                     .setTitle('✅ Warning Issued')
                     .setDescription(`Successfully warned <@${targetUser.id}>.\n\n**Warning ID:** \`${warningId}\` | **Total Warns:** \`${warnCount}\``);
                 await interaction.reply({ embeds: [successEmbed] });
@@ -179,7 +179,7 @@ export const warnCommand: Command = {
             if (isPrefix) {
                 if (warnings.length === 0) {
                     const noWarnEmbed = new EmbedBuilder()
-                        .setColor(0x3b82f6)
+                        .setColor(0x2b2d31)
                         .setTitle('ℹ️ No Warnings')
                         .setDescription(`<@${targetUser.id}> currently has no warnings.`);
                     await interaction.reply({ embeds: [noWarnEmbed] });
@@ -187,7 +187,7 @@ export const warnCommand: Command = {
                 }
 
                 const listEmbed = new EmbedBuilder()
-                    .setColor(0x3b82f6)
+                    .setColor(0x2b2d31)
                     .setTitle(`⚠️ Warnings for ${targetUser.username}`)
                     .setDescription(`**Total Active Warnings:** \`${warnings.length}\`\n\n────────────────────────`);
                 warnings.forEach((w) => {
@@ -229,7 +229,7 @@ export const warnCommand: Command = {
 
             if (isPrefix) {
                 const successEmbed = new EmbedBuilder()
-                    .setColor(0x10b981)
+                    .setColor(0x2b2d31)
                     .setTitle('✅ Warning Removed')
                     .setDescription(`Removed warning ID \`${warnId}\` from <@${targetUser.id}>.\n\n**Total warnings remaining:** \`${updated.length}\``);
                 await interaction.reply({ embeds: [successEmbed] });
@@ -244,7 +244,7 @@ export const warnCommand: Command = {
             await warnSettings.resetWarnings(interaction.guildId!, targetUser.id);
             if (isPrefix) {
                 const successEmbed = new EmbedBuilder()
-                    .setColor(0x10b981)
+                    .setColor(0x2b2d31)
                     .setTitle('✅ Warnings Cleared')
                     .setDescription(`Successfully cleared all warnings for <@${targetUser.id}>.`);
                 await interaction.reply({ embeds: [successEmbed] });

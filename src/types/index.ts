@@ -402,12 +402,12 @@ export interface Announcement {
 // ============================================
 
 export const VICTUS_COLORS = {
-    primary: 0x6366f1,    // Indigo
-    success: 0x10b981,    // Emerald
-    warning: 0xf59e0b,    // Amber
-    error: 0xef4444,      // Red
-    info: 0x3b82f6,       // Blue
-    neutral: 0x64748b,    // Slate
+    primary: 0x2b2d31,
+    success: 0x2b2d31,
+    warning: 0x2b2d31,
+    error: 0x2b2d31,
+    info: 0x2b2d31,
+    neutral: 0x2b2d31,
 } as const;
 
 export type VictusColor = keyof typeof VICTUS_COLORS;
