@@ -14,12 +14,17 @@ import {
     EmbedBuilder,
     ButtonBuilder,
     ButtonStyle,
+    ActionRowBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
 } from 'discord.js';
 import type {
     ButtonInteraction,
     ChatInputCommandInteraction,
     StringSelectMenuInteraction,
     VoiceBasedChannel,
+    ModalSubmitInteraction,
 } from 'discord.js';
 import type { Player } from 'lavalink-client';
 
@@ -306,9 +311,23 @@ export const playCommand: Command = {
                 return;
             }
             case 'volume': {
-                const nextVol = player.volume === 0 ? 80 : 0;
-                await player.setVolume(nextVol);
-                break;
+                const modal = new ModalBuilder()
+                    .setCustomId('music:volume_modal')
+                    .setTitle('Adjust Volume');
+
+                const volInput = new TextInputBuilder()
+                    .setCustomId('volume_level')
+                    .setLabel('Volume Level (0-150)')
+                    .setStyle(TextInputStyle.Short)
+                    .setPlaceholder('Enter a number from 0 to 150')
+                    .setValue(String(player.volume))
+                    .setRequired(true)
+                    .setMinLength(1)
+                    .setMaxLength(3);
+
+                modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(volInput));
+                await interaction.showModal(modal);
+                return;
             }
             case 'history': {
                 const prev = player.queue.previous;
@@ -468,6 +487,39 @@ export const playCommand: Command = {
 
         const payload = await nowPlayingContainer(player, interaction.guild);
         await interaction.update({ embeds: payload.embeds, components: payload.components, files: payload.files });
+    },
+
+    async handleModal(interaction: ModalSubmitInteraction) {
+        if (interaction.customId !== 'music:volume_modal') return;
+
+        const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
+        if (!player) {
+            await interaction.reply({ content: '❌ Nothing is playing right now.', ephemeral: true });
+            return;
+        }
+
+        const member = interaction.member as GuildMember | null;
+        if (member?.voice?.channelId !== player.voiceChannelId) {
+            await interaction.reply({ content: '❌ Join my voice channel to control playback.', ephemeral: true });
+            return;
+        }
+
+        const input = interaction.fields.getTextInputValue('volume_level').trim();
+        const level = parseInt(input, 10);
+        if (isNaN(level) || level < 0 || level > 150) {
+            await interaction.reply({ content: '❌ Invalid volume. Please enter a number between 0 and 150.', ephemeral: true });
+            return;
+        }
+
+        await player.setVolume(level);
+        await refreshNowPlaying(player);
+
+        if (interaction.message?.flags.has(MessageFlags.Ephemeral)) {
+            const controls = musicControlsContainer(player);
+            await (interaction as any).update({ embeds: [], components: controls.components });
+        } else {
+            await interaction.reply({ content: `🔊 Volume set to **${level}%**.`, ephemeral: true });
+        }
     }
 };
 

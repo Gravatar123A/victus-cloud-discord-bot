@@ -72,7 +72,6 @@ export function generateProgressBar(pos: number, duration: number, length = 18):
 /** Idle control panel shown by /music when nothing is playing. */
 export function musicIdleContainer(): ContainerBuilder {
     return new ContainerBuilder()
-        .setAccentColor(0x6366f1)
         .addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
                 `-# 🎵 MUSIC SYSTEM • SESSION STANDBY\n` +
@@ -89,7 +88,6 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
     const track = player.queue.current;
     if (!track) {
         const container = new ContainerBuilder()
-            .setAccentColor(0x6366f1)
             .addTextDisplayComponents(
                 new TextDisplayBuilder().setContent(
                     `-# 🎵 NOW PLAYING • INACTIVE SESSION\n` +
@@ -143,8 +141,7 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
     }
 
     const files: AttachmentBuilder[] = [];
-    const container = new ContainerBuilder()
-        .setAccentColor(0x6366f1);
+    const container = new ContainerBuilder();
 
     const nextTrack = player.queue.tracks[0];
     const nextUpStr = nextTrack 
@@ -231,7 +228,6 @@ export function musicControlsContainer(player: Player): { embeds: any[]; compone
     const vol = player.volume;
 
     const container = new ContainerBuilder()
-        .setAccentColor(0x6366f1)
         .addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
                 `-# 🎛️ MUSIC SYSTEM • CONTROL PANEL\n` +
@@ -292,7 +288,7 @@ export function addedContainer(
     playlistName: string | null,
     position: number,
 ): ContainerBuilder {
-    const container = new ContainerBuilder().setAccentColor(0x6366f1);
+    const container = new ContainerBuilder();
 
     if (playlistName && tracks.length > 1) {
         const totalMs = tracks.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
@@ -341,7 +337,7 @@ export function queueContainer(player: Player, page = 0): ContainerBuilder {
     const current = player.queue.current;
     const upcoming = player.queue.tracks as AnyTrack[];
 
-    const container = new ContainerBuilder().setAccentColor(0x6366f1);
+    const container = new ContainerBuilder();
 
     let description = `-# 🎵 MUSIC SYSTEM • TRACK QUEUE\n# Live Playlist Queue\n\n`;
     
