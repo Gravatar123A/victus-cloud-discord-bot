@@ -397,8 +397,9 @@ export const embedCommand: Command = {
         else if (sub === 'edit') {
             await interaction.deferReply({ flags: EPH });
             const list = await supabase.listCustomEmbeds(interaction.guildId!);
+            const filtered = list.filter(e => !e.name.startsWith('_') && e.name !== 'suggestion_system_live');
             
-            if (list.length === 0) {
+            if (filtered.length === 0) {
                 await interaction.editReply({
                     components: [ComponentsV2.warningContainer('No Custom Embeds Found', 'Use `/embed create` to build a new template.')],
                     flags: V2
@@ -410,7 +411,7 @@ export const embedCommand: Command = {
                 new StringSelectMenuBuilder()
                     .setCustomId('embed_edit:select_embed')
                     .setPlaceholder('Choose an embed to edit...')
-                    .addOptions(list.slice(0, 25).map(e => ({
+                    .addOptions(filtered.slice(0, 25).map(e => ({
                         label: e.name,
                         description: `Edit fields of "${e.name}"`,
                         value: e.name
@@ -431,7 +432,7 @@ export const embedCommand: Command = {
             const search = interaction.options.getString('search') || '';
             const list = await supabase.listCustomEmbeds(interaction.guildId!);
 
-            const filtered = list.filter(e => e.name.toLowerCase().includes(search.toLowerCase()));
+            const filtered = list.filter(e => !e.name.startsWith('_') && e.name !== 'suggestion_system_live' && e.name.toLowerCase().includes(search.toLowerCase()));
 
             if (filtered.length === 0) {
                 await interaction.editReply({
@@ -473,6 +474,15 @@ export const embedCommand: Command = {
         else if (sub === 'delete') {
             await interaction.deferReply({ flags: EPH });
             const name = interaction.options.getString('name', true).trim();
+
+            if (name.startsWith('_') || name === 'suggestion_system_live') {
+                await interaction.editReply({
+                    components: [ComponentsV2.errorContainer('Invalid Action', 'You cannot delete internal system configuration embeds.')],
+                    flags: V2
+                });
+                return;
+            }
+
             const embed = await supabase.getCustomEmbed(interaction.guildId!, name);
 
             if (!embed) {
@@ -500,6 +510,14 @@ export const embedCommand: Command = {
             const parentName = interaction.options.getString('parent', true).trim();
             const childName = interaction.options.getString('child', true).trim();
             const label = interaction.options.getString('trigger_label', true).trim();
+
+            if (parentName.startsWith('_') || parentName === 'suggestion_system_live' || childName.startsWith('_') || childName === 'suggestion_system_live') {
+                await interaction.editReply({
+                    components: [ComponentsV2.errorContainer('Invalid Target', 'You cannot link internal system configuration embeds.')],
+                    flags: V2
+                });
+                return;
+            }
 
             const parent = await supabase.getCustomEmbed(interaction.guildId!, parentName);
             const child = await supabase.getCustomEmbed(interaction.guildId!, childName);
