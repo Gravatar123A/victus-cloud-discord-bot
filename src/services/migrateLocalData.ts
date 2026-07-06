@@ -39,6 +39,11 @@ export async function migrateLocalDataToSupabase() {
     if (welcomes && typeof welcomes === 'object') {
         logger.info('Migrating Welcome Settings...');
         for (const [guildId, config] of Object.entries(welcomes)) {
+            const existing = await supabase.getCustomEmbed(guildId, '_welcome_settings');
+            if (existing) {
+                logger.info(`Welcome settings for guild ${guildId} already exist in Supabase. Skipping.`);
+                continue;
+            }
             await supabase.saveCustomEmbed(guildId, '_welcome_settings', {
                 description: JSON.stringify(config)
             });
@@ -51,6 +56,11 @@ export async function migrateLocalDataToSupabase() {
     if (j2c && typeof j2c === 'object') {
         logger.info('Migrating J2C Settings...');
         for (const [guildId, config] of Object.entries(j2c)) {
+            const existing = await supabase.getCustomEmbed(guildId, '_j2c_settings');
+            if (existing) {
+                logger.info(`J2C settings for guild ${guildId} already exist in Supabase. Skipping.`);
+                continue;
+            }
             await supabase.saveCustomEmbed(guildId, '_j2c_settings', {
                 description: JSON.stringify(config)
             });
@@ -62,15 +72,20 @@ export async function migrateLocalDataToSupabase() {
     const j2cTemp = await readJsonFile('j2c-temp-channels.json');
     if (j2cTemp && Array.isArray(j2cTemp)) {
         logger.info('Migrating J2C Temp Channels...');
-        const list = j2cTemp.map((item: any) => {
-            if (typeof item === 'string') {
-                return { channelId: item, ownerId: '' };
-            }
-            return item;
-        });
-        await supabase.saveCustomEmbed('global', '_j2c_temp_channels', {
-            description: JSON.stringify(list)
-        });
+        const existing = await supabase.getCustomEmbed('global', '_j2c_temp_channels');
+        if (existing) {
+            logger.info('J2C temp channels already exist in Supabase. Skipping.');
+        } else {
+            const list = j2cTemp.map((item: any) => {
+                if (typeof item === 'string') {
+                    return { channelId: item, ownerId: '' };
+                }
+                return item;
+            });
+            await supabase.saveCustomEmbed('global', '_j2c_temp_channels', {
+                description: JSON.stringify(list)
+            });
+        }
         await archiveFile('j2c-temp-channels.json');
     }
 
@@ -79,6 +94,11 @@ export async function migrateLocalDataToSupabase() {
     if (warns && typeof warns === 'object') {
         logger.info('Migrating Warning Settings...');
         for (const [guildId, config] of Object.entries(warns)) {
+            const existing = await supabase.getCustomEmbed(guildId, '_warn_settings');
+            if (existing) {
+                logger.info(`Warning settings for guild ${guildId} already exist in Supabase. Skipping.`);
+                continue;
+            }
             await supabase.saveCustomEmbed(guildId, '_warn_settings', {
                 description: JSON.stringify(config)
             });
@@ -95,6 +115,11 @@ export async function migrateLocalDataToSupabase() {
             if (parts.length >= 2) {
                 const guildId = parts[0];
                 const userId = parts[1];
+                const existing = await supabase.getCustomEmbed(guildId, `_warnings_${userId}`);
+                if (existing) {
+                    logger.info(`Warning logs for user ${userId} in guild ${guildId} already exist in Supabase. Skipping.`);
+                    continue;
+                }
                 await supabase.saveCustomEmbed(guildId, `_warnings_${userId}`, {
                     description: JSON.stringify(records)
                 });
@@ -112,6 +137,11 @@ export async function migrateLocalDataToSupabase() {
             if (parts.length >= 2) {
                 const guildId = parts[0];
                 const userId = parts[1];
+                const existing = await supabase.getCustomEmbed(guildId, `_playlist_${userId}`);
+                if (existing) {
+                    logger.info(`Playlists for user ${userId} in guild ${guildId} already exist in Supabase. Skipping.`);
+                    continue;
+                }
                 await supabase.saveCustomEmbed(guildId, `_playlist_${userId}`, {
                     description: JSON.stringify(userPlaylists)
                 });
@@ -125,6 +155,11 @@ export async function migrateLocalDataToSupabase() {
     if (staffApps && typeof staffApps === 'object') {
         logger.info('Migrating Staff App Settings...');
         for (const [guildId, config] of Object.entries(staffApps)) {
+            const existing = await supabase.getCustomEmbed(guildId, '_staff_app_settings');
+            if (existing) {
+                logger.info(`Staff app settings for guild ${guildId} already exist in Supabase. Skipping.`);
+                continue;
+            }
             await supabase.saveCustomEmbed(guildId, '_staff_app_settings', {
                 description: JSON.stringify(config)
             });
@@ -136,9 +171,14 @@ export async function migrateLocalDataToSupabase() {
     const submissions = await readJsonFile('staff-submissions.json');
     if (submissions && typeof submissions === 'object') {
         logger.info('Migrating Staff App Submissions...');
-        await supabase.saveCustomEmbed('global', '_staff_submissions', {
-            description: JSON.stringify(submissions)
-        });
+        const existing = await supabase.getCustomEmbed('global', '_staff_submissions');
+        if (existing) {
+            logger.info('Staff app submissions already exist in Supabase. Skipping.');
+        } else {
+            await supabase.saveCustomEmbed('global', '_staff_submissions', {
+                description: JSON.stringify(submissions)
+            });
+        }
         await archiveFile('staff-submissions.json');
     }
 

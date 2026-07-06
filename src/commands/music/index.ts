@@ -319,7 +319,6 @@ export const playCommand: Command = {
             case 'loop': {
                 const next = player.repeatMode === 'off' ? 'track' : player.repeatMode === 'track' ? 'queue' : 'off';
                 await player.setRepeatMode(next);
-                await interaction.reply({ content: `🔁 Loop mode updated to: **${next}**`, ephemeral: true });
                 break;
             }
             case 'queue': {
@@ -330,7 +329,6 @@ export const playCommand: Command = {
             case 'volume': {
                 const nextVol = player.volume === 0 ? 80 : 0;
                 await player.setVolume(nextVol);
-                await interaction.reply({ content: nextVol === 0 ? '🔇 Muted volume.' : '🔊 Restored volume to 80%.', ephemeral: true });
                 break;
             }
             case 'history': {
@@ -364,6 +362,10 @@ export const playCommand: Command = {
         if (interaction.message.flags.has(MessageFlags.Ephemeral)) {
             const controls = musicControlsContainer(player);
             await interaction.update({ embeds: controls.embeds, components: controls.components });
+        } else {
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.deferUpdate().catch(() => undefined);
+            }
         }
     },
 
