@@ -8,6 +8,7 @@ import {
 import type { Command } from '../types/index.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
+import { whitelistSettings } from '../services/whitelistSettings.js';
 
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
 const EPH = MessageFlags.Ephemeral;
@@ -45,6 +46,20 @@ export const kickCommand: Command = {
             } else {
                 await interaction.reply({
                     components: [ComponentsV2.errorContainer('Invalid Target', err)],
+                    flags: V2 | EPH
+                });
+            }
+            return;
+        }
+
+        const isWhitelisted = await whitelistSettings.isImmune(guild.id, user.id, 'kick');
+        if (isWhitelisted) {
+            const err = '❌ This user is whitelisted and immune to kicks.';
+            if (isPrefix) {
+                await interaction.reply({ content: err });
+            } else {
+                await interaction.reply({
+                    components: [ComponentsV2.errorContainer('Action Blocked', err)],
                     flags: V2 | EPH
                 });
             }

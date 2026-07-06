@@ -13,6 +13,7 @@ import type { Command } from '../types/index.js';
 import { warnSettings, WarnConfig, WarningRecord } from '../services/warnSettings.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
+import { whitelistSettings } from '../services/whitelistSettings.js';
 
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
 const EPH = undefined as any;
@@ -107,6 +108,13 @@ export const warnCommand: Command = {
             await interaction.reply({ content: '❌ You cannot warn yourself.', flags: EPH });
             return;
         }
+        
+        const isWhitelisted = await whitelistSettings.isImmune(interaction.guildId!, targetUser.id, 'warn');
+        if (isWhitelisted) {
+            await interaction.reply({ content: '❌ This user is whitelisted and immune to warnings.', flags: EPH });
+            return;
+        }
+
         if (targetUser.bot) {
             await interaction.reply({ content: '❌ You cannot warn a bot user.', flags: EPH });
             return;

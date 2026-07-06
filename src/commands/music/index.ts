@@ -596,9 +596,20 @@ export const resumeCommand: Command = {
 export const queueCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('queue')
-        .setDescription('Show the music queue')
+        .setDescription('Manage the music queue')
         .setDMPermission(false)
-        .addIntegerOption((o) => o.setName('page').setDescription('Page number').setMinValue(1)),
+        .addSubcommand((sub) =>
+            sub.setName('list')
+                .setDescription('Show the music queue')
+                .addIntegerOption((o) => o.setName('page').setDescription('Page number').setMinValue(1))
+        )
+        .addSubcommand((sub) =>
+            sub.setName('edit')
+                .setDescription('Edit the queue (remove or re-position tracks)')
+                .addIntegerOption((o) => o.setName('remove_position').setDescription('The position of the track to remove').setMinValue(1))
+                .addIntegerOption((o) => o.setName('move_from').setDescription('The current position of the track to move').setMinValue(1))
+                .addIntegerOption((o) => o.setName('move_to').setDescription('The target position to move the track to').setMinValue(1))
+        ),
     async execute(interaction) {
         await interaction.deferReply({ flags: V2 });
         const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
@@ -606,9 +617,60 @@ export const queueCommand: Command = {
             await interaction.editReply(info('Queue empty', 'Nothing is queued. Add a song with `/play`.'));
             return;
         }
-        const page = (interaction.options.getInteger('page') ?? 1) - 1;
-        const embed = queueContainer(player, page);
-        await interaction.editReply({ components: [embed], flags: V2 });
+
+        const sub = interaction.options.getSubcommand(false) || 'list';
+
+        if (sub === 'list') {
+            const page = (interaction.options.getInteger('page') ?? 1) - 1;
+            const embed = queueContainer(player, page);
+            await interaction.editReply({ components: [embed], flags: V2 });
+            return;
+        }
+
+        if (sub === 'edit') {
+            const removePos = interaction.options.getInteger('remove_position');
+            const moveFrom = interaction.options.getInteger('move_from');
+            const moveTo = interaction.options.getInteger('move_to');
+
+            if (!removePos && (!moveFrom || !moveTo)) {
+                await interaction.editReply(info('Missing Options', 'Please specify either a track position to remove, or both "move_from" and "move_to" positions.'));
+                return;
+            }
+
+            if (removePos) {
+                const index = removePos - 1;
+                if (index < 0 || index >= player.queue.tracks.length) {
+                    await interaction.editReply(info('Invalid Position', `Please specify a position between 1 and ${player.queue.tracks.length}.`));
+                    return;
+                }
+                const track = player.queue.tracks[index];
+                await player.queue.splice(index, 1);
+                await interaction.editReply(ok('Track Removed', `Removed **${track.info.title}** from position \`${removePos}\`.`));
+                return;
+            }
+
+            if (moveFrom && moveTo) {
+                const fromIndex = moveFrom - 1;
+                const toIndex = moveTo - 1;
+                const queueLength = player.queue.tracks.length;
+
+                if (fromIndex < 0 || fromIndex >= queueLength || toIndex < 0 || toIndex >= queueLength) {
+                    await interaction.editReply(info('Invalid Positions', `Please specify positions between 1 and ${queueLength}.`));
+                    return;
+                }
+
+                const tracks = [...player.queue.tracks];
+                const [movedTrack] = tracks.splice(fromIndex, 1);
+                if (movedTrack) {
+                    tracks.splice(toIndex, 0, movedTrack);
+                    await player.queue.splice(0, player.queue.tracks.length, ...tracks);
+                    await interaction.editReply(ok('Track Re-positioned', `Moved **${movedTrack.info.title}** from position \`${moveFrom}\` to \`${moveTo}\`.`));
+                } else {
+                    await interaction.editReply(info('Action Failed', 'Could not move track.'));
+                }
+                return;
+            }
+        }
     },
 };
 

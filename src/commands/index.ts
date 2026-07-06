@@ -46,6 +46,7 @@ import { reactRolesCommand } from './reactroles.js';
 import { serverStatsCommand } from './serverstats.js';
 import { unbanCommand } from './unban.js';
 import { untimeoutCommand } from './untimeout.js';
+import { whitelistCommand } from './whitelist.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -99,6 +100,7 @@ const allCommands: Command[] = [
     serverStatsCommand,
     unbanCommand,
     untimeoutCommand,
+    whitelistCommand,
     ...musicCommands,
 ];
 

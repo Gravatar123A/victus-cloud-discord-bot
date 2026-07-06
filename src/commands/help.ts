@@ -156,6 +156,7 @@ export const helpCommand: Command = {
                     `› \`/timeout <user> <duration> [reason]\` • Place a user in timeout (mute).\n` +
                     `› \`/untimeout <user> [reason]\` • Remove a user's timeout.\n` +
                     `› \`/purge <count> [user]\` • Bulk-delete channel messages.\n` +
+                    `› \`/whitelist <add/remove/list/edit>\` • Manage user immunities.\n` +
                     `› \`/ticket close\` • Terminate support thread.\n` +
                     `› \`/ticket claim\` • Allocate ticket to active staff.\n` +
                     `› \`/suggest modapprove <id>\` • Instantly implement suggestions.\n` +
