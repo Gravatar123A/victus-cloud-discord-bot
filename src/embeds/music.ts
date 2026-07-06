@@ -154,14 +154,15 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
             new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://musicard.png'))
         );
         
+        const loopName = player.repeatMode === 'off' ? 'Off' : player.repeatMode === 'track' ? 'Track' : 'Queue';
+        const sourceName = info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown';
+
         container.addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
-                `-# 🎵 MUSIC SYSTEM • NOW PLAYING\n` +
-                `# [${escapeMd(info?.title)}](${info?.uri})\n\n` +
-                `› **Requester:** ${reqId ? `<@${reqId}>` : 'System'}\n` +
-                `› **Source:** ${sourceIcon(info?.sourceName)} ${info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown'}\n` +
-                `› **Loop Mode:** \`${player.repeatMode === 'off' ? 'Disabled' : player.repeatMode === 'track' ? 'Current Track' : 'Whole Queue'}\`\n` +
-                `› **Volume:** \`${player.volume}%\`\n\n` +
+                `👤 **Requester:** ${reqId ? `<@${reqId}>` : 'System'}  •  ` +
+                `🔊 **Volume:** \`${player.volume}%\`  •  ` +
+                `🔁 **Loop:** \`${loopName}\`  •  ` +
+                `${sourceIcon(info?.sourceName)} **Source:** \`${sourceName}\`\n\n` +
                 `${nextUpStr}`
             )
         );
