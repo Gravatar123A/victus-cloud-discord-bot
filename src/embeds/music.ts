@@ -7,8 +7,12 @@ import {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    EmbedBuilder,
     AttachmentBuilder,
+    ContainerBuilder,
+    TextDisplayBuilder,
+    SeparatorBuilder,
+    MediaGalleryBuilder,
+    MediaGalleryItemBuilder,
 } from 'discord.js';
 import type { Player, Track, UnresolvedTrack } from 'lavalink-client';
 import { Bloom } from 'musicard';
@@ -66,29 +70,33 @@ export function generateProgressBar(pos: number, duration: number, length = 18):
 }
 
 /** Idle control panel shown by /music when nothing is playing. */
-export function musicIdleContainer(): EmbedBuilder {
-    return new EmbedBuilder()
-        .setColor(0x6366f1)
-        .setDescription(
-            `-# 🎵 MUSIC SYSTEM • SESSION STANDBY\n` +
-            `# Ready to Play\n\n` +
-            `There is no active music session playing in this server right now.\n\n` +
-            `› Use \`/play <song or link>\` to start playing.\n` +
-            `› Supports: \`YouTube\`, \`Spotify\`, \`SoundCloud\`, \`Bandcamp\`, and direct stream URLs.`
+export function musicIdleContainer(): ContainerBuilder {
+    return new ContainerBuilder()
+        .setAccentColor(0x6366f1)
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+                `-# 🎵 MUSIC SYSTEM • SESSION STANDBY\n` +
+                `# Ready to Play\n\n` +
+                `There is no active music session playing in this server right now.\n\n` +
+                `› Use \`/play <song or link>\` to start playing.\n` +
+                `› Supports: \`YouTube\`, \`Spotify\`, \`SoundCloud\`, \`Bandcamp\`, and direct stream URLs.`
+            )
         );
 }
 
 /** The public "Now Playing" panel with live transport controls. */
-export async function nowPlayingContainer(player: Player, guild?: any): Promise<{ embeds: EmbedBuilder[]; components: any[]; files: AttachmentBuilder[] }> {
+export async function nowPlayingContainer(player: Player, guild?: any): Promise<{ embeds: any[]; components: any[]; files: AttachmentBuilder[] }> {
     const track = player.queue.current;
     if (!track) {
-        const embed = new EmbedBuilder()
-            .setColor(0x6366f1)
-            .setDescription(
-                `-# 🎵 NOW PLAYING • INACTIVE SESSION\n` +
-                `# Nothing is playing right now.`
+        const container = new ContainerBuilder()
+            .setAccentColor(0x6366f1)
+            .addTextDisplayComponents(
+                new TextDisplayBuilder().setContent(
+                    `-# 🎵 NOW PLAYING • INACTIVE SESSION\n` +
+                    `# Nothing is playing right now.`
+                )
             );
-        return { embeds: [embed], components: [], files: [] };
+        return { embeds: [], components: [container], files: [] };
     }
 
     const info = trackInfo(track);
@@ -111,21 +119,21 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
                 timeEnd: live ? 'LIVE' : formatDuration(duration)
             },
             progressBar: live ? 100 : (duration > 0 ? (pos / duration) * 100 : 0),
-            backgroundColor: '#07070a', // a dark blue/black background matching the bot theme
+            backgroundColor: '#07070a',
             styleConfig: {
                 trackStyle: {
                     textColor: '#ffffff',
                     textGlow: true,
                 },
                 artistStyle: {
-                    textColor: '#a5b4fc', // indigo-300 light lavender/indigo tint
+                    textColor: '#a5b4fc',
                     textGlow: false,
                 },
                 timeStyle: {
-                    textColor: '#cbd5e1', // slate-300
+                    textColor: '#cbd5e1',
                 },
                 progressBarStyle: {
-                    barColor: '#6366f1', // Victus Indigo brand color!
+                    barColor: '#6366f1',
                     barColorDuo: true
                 }
             }
@@ -135,8 +143,8 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
     }
 
     const files: AttachmentBuilder[] = [];
-    const embed = new EmbedBuilder()
-        .setColor(0x6366f1); // Victus Indigo brand color
+    const container = new ContainerBuilder()
+        .setAccentColor(0x6366f1);
 
     const nextTrack = player.queue.tracks[0];
     const nextUpStr = nextTrack 
@@ -145,31 +153,39 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
 
     if (cardBuffer.length > 0) {
         files.push(new AttachmentBuilder(cardBuffer, { name: 'musicard.png' }));
-        embed.setImage('attachment://musicard.png');
+        container.addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://musicard.png'))
+        );
         
-        embed.setDescription(
-            `-# 🎵 MUSIC SYSTEM • NOW PLAYING\n` +
-            `# [${escapeMd(info?.title)}](${info?.uri})\n\n` +
-            `› **Requester:** ${reqId ? `<@${reqId}>` : 'System'}\n` +
-            `› **Source:** ${sourceIcon(info?.sourceName)} ${info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown'}\n` +
-            `› **Loop Mode:** \`${player.repeatMode === 'off' ? 'Disabled' : player.repeatMode === 'track' ? 'Current Track' : 'Whole Queue'}\`\n` +
-            `› **Volume:** \`${player.volume}%\`\n\n` +
-            `${nextUpStr}`
+        container.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+                `-# 🎵 MUSIC SYSTEM • NOW PLAYING\n` +
+                `# [${escapeMd(info?.title)}](${info?.uri})\n\n` +
+                `› **Requester:** ${reqId ? `<@${reqId}>` : 'System'}\n` +
+                `› **Source:** ${sourceIcon(info?.sourceName)} ${info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown'}\n` +
+                `› **Loop Mode:** \`${player.repeatMode === 'off' ? 'Disabled' : player.repeatMode === 'track' ? 'Current Track' : 'Whole Queue'}\`\n` +
+                `› **Volume:** \`${player.volume}%\`\n\n` +
+                `${nextUpStr}`
+            )
         );
     } else {
         const art = info?.artworkUrl;
         if (art && typeof art === 'string' && art.startsWith('http')) {
-            embed.setThumbnail(art);
+            container.addMediaGalleryComponents(
+                new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(art))
+            );
         }
-        embed.setDescription(
-            `-# 🎵 MUSIC SYSTEM • NOW PLAYING\n` +
-            `# [${escapeMd(info?.title)}](${info?.uri})\n\n` +
-            `› **Artist:** \`${escapeMd(info?.author || 'Unknown Artist')}\`\n` +
-            `› **Requester:** ${reqId ? `<@${reqId}>` : 'System'}\n` +
-            `› **Source:** ${sourceIcon(info?.sourceName)} ${info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown'}\n` +
-            `› **Duration:** \`${formatDuration(pos)} / ${formatDuration(duration)}\`\n` +
-            `› **Progress:** ${generateProgressBar(pos, duration)}\n\n` +
-            `${nextUpStr}`
+        container.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+                `-# 🎵 MUSIC SYSTEM • NOW PLAYING\n` +
+                `# [${escapeMd(info?.title)}](${info?.uri})\n\n` +
+                `› **Artist:** \`${escapeMd(info?.author || 'Unknown Artist')}\`\n` +
+                `› **Requester:** ${reqId ? `<@${reqId}>` : 'System'}\n` +
+                `› **Source:** ${sourceIcon(info?.sourceName)} ${info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown'}\n` +
+                `› **Duration:** \`${formatDuration(pos)} / ${formatDuration(duration)}\`\n` +
+                `› **Progress:** ${generateProgressBar(pos, duration)}\n\n` +
+                `${nextUpStr}`
+            )
         );
     }
 
@@ -185,24 +201,28 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
         new ButtonBuilder().setCustomId('music:stop').setEmoji('❌').setStyle(ButtonStyle.Danger),
     );
 
+    container.addActionRowComponents(row);
+
     return { 
-        embeds: [embed], 
-        components: [row],
+        embeds: [], 
+        components: [container],
         files
     };
 }
 
-export function musicControlsContainer(player: Player): { embeds: EmbedBuilder[]; components: any[] } {
+export function musicControlsContainer(player: Player): { embeds: any[]; components: any[] } {
     const track = player.queue.current;
     if (!track) {
-        const embed = new EmbedBuilder()
-            .setColor(0x6366f1)
-            .setDescription(
-                `-# 🎵 MUSIC SYSTEM • CONTROLS\n` +
-                `# Inactive Session\n\n` +
-                `There is no music playing right now.`
+        const container = new ContainerBuilder()
+            .setAccentColor(0x6366f1)
+            .addTextDisplayComponents(
+                new TextDisplayBuilder().setContent(
+                    `-# 🎵 MUSIC SYSTEM • CONTROLS\n` +
+                    `# Inactive Session\n\n` +
+                    `There is no music playing right now.`
+                )
             );
-        return { embeds: [embed], components: [] };
+        return { embeds: [], components: [container] };
     }
 
     const info = track.info;
@@ -210,20 +230,22 @@ export function musicControlsContainer(player: Player): { embeds: EmbedBuilder[]
     const loopMode = player.repeatMode;
     const vol = player.volume;
 
-    const embed = new EmbedBuilder()
-        .setColor(0x6366f1)
-        .setDescription(
-            `-# 🎛️ MUSIC SYSTEM • CONTROL PANEL\n` +
-            `# Audio Dashboard\n\n` +
-            `### Active Track\n` +
-            `› **Title:** [${escapeMd(info.title)}](${info.uri})\n` +
-            `› **Artist:** \`${escapeMd(info.author || 'Unknown Artist')}\`\n\n` +
-            `### Audio Settings\n` +
-            `› **State:** ${isPaused ? '⏸️ Paused' : '▶️ Playing'}\n` +
-            `› **Volume:** \`${vol}%\` • **Loop:** \`${loopMode.toUpperCase()}\`\n` +
-            `› **Queue Length:** \`${player.queue.tracks.length} tracks\`\n\n` +
-            `### Interactive Transport Controls\n` +
-            `Use the button rows below to govern playback, adjust settings, and manage your libraries.`
+    const container = new ContainerBuilder()
+        .setAccentColor(0x6366f1)
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+                `-# 🎛️ MUSIC SYSTEM • CONTROL PANEL\n` +
+                `# Audio Dashboard\n\n` +
+                `### Active Track\n` +
+                `› **Title:** [${escapeMd(info.title)}](${info.uri})\n` +
+                `› **Artist:** \`${escapeMd(info.author || 'Unknown Artist')}\`\n\n` +
+                `### Audio Settings\n` +
+                `› **State:** ${isPaused ? '⏸️ Paused' : '▶️ Playing'}\n` +
+                `› **Volume:** \`${vol}%\` • **Loop:** \`${loopMode.toUpperCase()}\`\n` +
+                `› **Queue Length:** \`${player.queue.tracks.length} tracks\`\n\n` +
+                `### Interactive Transport Controls\n` +
+                `Use the button rows below to govern playback, adjust settings, and manage your libraries.`
+            )
         );
 
     const playbackRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -253,9 +275,14 @@ export function musicControlsContainer(player: Player): { embeds: EmbedBuilder[]
         new ButtonBuilder().setCustomId('music:history').setEmoji('🕒').setStyle(ButtonStyle.Secondary),
     );
 
+    container.addActionRowComponents(playbackRow);
+    container.addActionRowComponents(musicRow);
+    container.addActionRowComponents(controlsRow);
+    container.addActionRowComponents(libraryRow);
+
     return {
-        embeds: [embed],
-        components: [playbackRow, musicRow, controlsRow, libraryRow]
+        embeds: [],
+        components: [container]
     };
 }
 
@@ -264,51 +291,57 @@ export function addedContainer(
     tracks: AnyTrack[],
     playlistName: string | null,
     position: number,
-): EmbedBuilder {
-    const embed = new EmbedBuilder().setColor(0x6366f1); // Victus Indigo brand color
+): ContainerBuilder {
+    const container = new ContainerBuilder().setAccentColor(0x6366f1);
 
     if (playlistName && tracks.length > 1) {
         const totalMs = tracks.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
-        embed.setDescription(
-            `-# 🎵 MUSIC SYSTEM • QUEUE UPDATE\n` +
-            `# ✅ Playlist Added\n\n` +
-            `› **Playlist:** \`${escapeMd(playlistName)}\`\n` +
-            `› **Tracks:** \`${tracks.length}\`\n` +
-            `› **Total Duration:** \`${formatDuration(totalMs)}\`\n` +
-            `› **Queue Position:** \`#${position}\``
+        container.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+                `-# 🎵 MUSIC SYSTEM • QUEUE UPDATE\n` +
+                `# ✅ Playlist Added\n\n` +
+                `› **Playlist:** \`${escapeMd(playlistName)}\`\n` +
+                `› **Tracks:** \`${tracks.length}\`\n` +
+                `› **Total Duration:** \`${formatDuration(totalMs)}\`\n` +
+                `› **Queue Position:** \`#${position}\``
+            )
         );
-        return embed;
+        return container;
     }
 
     const t = tracks[0];
     const info = trackInfo(t);
     const reqId = requesterId(t);
     
-    embed.setDescription(
-        `-# 🎵 MUSIC SYSTEM • QUEUE UPDATE\n` +
-        `# ✅ Track Added\n\n` +
-        `**[${escapeMd(info?.title)}](${info?.uri})**\n` +
-        `› **Artist:** \`${escapeMd(info?.author || 'Unknown Artist')}\`\n` +
-        `› **Duration:** \`${formatDuration(info?.duration)}\`\n` +
-        `› **Queue Position:** \`#${position}\`${reqId ? `\n› **Requested By:** <@${reqId}>` : ''}`
+    container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+            `-# 🎵 MUSIC SYSTEM • QUEUE UPDATE\n` +
+            `# ✅ Track Added\n\n` +
+            `**[${escapeMd(info?.title)}](${info?.uri})**\n` +
+            `› **Artist:** \`${escapeMd(info?.author || 'Unknown Artist')}\`\n` +
+            `› **Duration:** \`${formatDuration(info?.duration)}\`\n` +
+            `› **Queue Position:** \`#${position}\`${reqId ? `\n› **Requested By:** <@${reqId}>` : ''}`
+        )
     );
 
     const art = info?.artworkUrl;
     if (art && typeof art === 'string' && art.startsWith('http')) {
-        embed.setThumbnail(art);
+        container.addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(art))
+        );
     }
 
-    return embed;
+    return container;
 }
 
 const QUEUE_PAGE_SIZE = 10;
 
 /** Full queue listing, paginated. */
-export function queueContainer(player: Player, page = 0): EmbedBuilder {
+export function queueContainer(player: Player, page = 0): ContainerBuilder {
     const current = player.queue.current;
     const upcoming = player.queue.tracks as AnyTrack[];
 
-    const embed = new EmbedBuilder().setColor(0x6366f1); // Victus Indigo brand color
+    const container = new ContainerBuilder().setAccentColor(0x6366f1);
 
     let description = `-# 🎵 MUSIC SYSTEM • TRACK QUEUE\n# Live Playlist Queue\n\n`;
     
@@ -320,14 +353,18 @@ export function queueContainer(player: Player, page = 0): EmbedBuilder {
             `› Artist: \`${escapeMd(info?.author || 'Unknown')}\` • Request: ${reqId ? `<@${reqId}>` : 'System'}\n\n`;
     }
 
+    let pages = 1;
+    let safePage = 0;
+    let totalMs = 0;
+
     if (!upcoming.length) {
         description += `### ⏭️ Upcoming Playlist\n_No upcoming tracks in queue. Add tracks using \`/play\`._`;
     } else {
-        const pages = Math.max(1, Math.ceil(upcoming.length / QUEUE_PAGE_SIZE));
-        const safePage = Math.max(0, Math.min(page, pages - 1));
+        pages = Math.max(1, Math.ceil(upcoming.length / QUEUE_PAGE_SIZE));
+        safePage = Math.max(0, Math.min(page, pages - 1));
         const start = safePage * QUEUE_PAGE_SIZE;
         const slice = upcoming.slice(start, start + QUEUE_PAGE_SIZE);
-        const totalMs = upcoming.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
+        totalMs = upcoming.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
 
         description += `### ⏭️ Upcoming Playlist (${upcoming.length} tracks)\n`;
         slice.forEach((t, i) => {
@@ -336,13 +373,16 @@ export function queueContainer(player: Player, page = 0): EmbedBuilder {
             description += `\`${start + i + 1}.\` **[${escapeMd(info?.title)}](${info?.uri})**\n` +
                 ` - \`${formatDuration(info?.duration)}\` • Requester: ${reqId ? `<@${reqId}>` : 'System'}\n`;
         });
-
-        embed.setFooter({ 
-            text: `Page ${safePage + 1}/${pages} • Total duration: ${formatDuration(totalMs)} • Volume: ${player.volume}%` 
-        });
     }
 
-    embed.setDescription(description);
-    return embed;
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(description));
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+    container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+            `-# Page ${safePage + 1}/${pages} • Total duration: ${formatDuration(totalMs)} • Volume: ${player.volume}%`
+        )
+    );
+
+    return container;
 }
 
