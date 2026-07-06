@@ -170,6 +170,7 @@ export const helpCommand: Command = {
                     `### Command Catalog\n` +
                     `› \`/music\` • Open the interactive Now Playing & controls panel.\n` +
                     `› \`/play <query/URL>\` • Starts a track from YouTube, SoundCloud, or direct URLs.\n` +
+                    `› \`/playrandom\` • Play a curated random track by category and language.\n` +
                     `› \`/nowplaying\` • Spawns the compact Bloom music player.\n` +
                     `› \`/skip\` • Skip current song.\n` +
                     `› \`/stop\` • Halt audio, clear queue, and disconnect.\n` +

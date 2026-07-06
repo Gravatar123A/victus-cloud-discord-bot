@@ -19,6 +19,9 @@ import {
     TextInputBuilder,
     TextInputStyle,
     StringSelectMenuBuilder,
+    ContainerBuilder,
+    TextDisplayBuilder,
+    SeparatorBuilder,
 } from 'discord.js';
 import type {
     ButtonInteraction,
@@ -825,6 +828,231 @@ export const musicCommand: Command = {
     },
 };
 
+// ── /playrandom ─────────────────────────────────────────────────────────────
+
+const PLAYRANDOM_TRACKS: Record<string, Record<string, string[]>> = {
+    english: {
+        phonk: [
+            'https://www.youtube.com/watch?v=H5v3kku4y6Q',
+            'https://www.youtube.com/watch?v=W3eNl6tZqEY',
+            'https://www.youtube.com/watch?v=hB9IAdP8v-Y',
+            'https://www.youtube.com/watch?v=NnFk10g9n60',
+        ],
+        sad: [
+            'https://www.youtube.com/watch?v=4fndeDfaWCg',
+            'https://www.youtube.com/watch?v=1F374Es-uaw',
+            'https://www.youtube.com/watch?v=0yW7w8F2TVA',
+        ],
+        love: [
+            'https://www.youtube.com/watch?v=rtOvBOTyX00',
+            'https://www.youtube.com/watch?v=lp-EO5I60KA',
+            'https://www.youtube.com/watch?v=2Vv-BfVoq4g',
+        ],
+        gym: [
+            'https://www.youtube.com/watch?v=jgpJVI3tD5k',
+            'https://www.youtube.com/watch?v=hHrnCx8-K4I',
+            'https://www.youtube.com/watch?v=R9At2f7f7QY',
+        ],
+        party: [
+            'https://www.youtube.com/watch?v=OPf0YbXqDm0',
+            'https://www.youtube.com/watch?v=kJQP7kiw5Fk',
+            'https://www.youtube.com/watch?v=2zNSgSzhBfM',
+        ],
+        lofi: [
+            'https://www.youtube.com/watch?v=5qap5aO4i9A',
+            'https://www.youtube.com/watch?v=kfXy7G1fMvw',
+        ],
+    },
+    hindi: {
+        phonk: [
+            'https://www.youtube.com/watch?v=H5v3kku4y6Q',
+            'https://www.youtube.com/watch?v=W3eNl6tZqEY',
+            'https://www.youtube.com/watch?v=hB9IAdP8v-Y',
+        ],
+        sad: [
+            'https://www.youtube.com/watch?v=U48h88Npxg0',
+            'https://www.youtube.com/watch?v=W-w3MK5m0Gg',
+            'https://www.youtube.com/watch?v=Ax0G_P2dSBw',
+        ],
+        love: [
+            'https://www.youtube.com/watch?v=hXh35CUXWy8',
+            'https://www.youtube.com/watch?v=QZ0D-b4Z3-E',
+            'https://www.youtube.com/watch?v=HqUeS_v96Yc',
+        ],
+        gym: [
+            'https://www.youtube.com/watch?v=jgpJVI3tD5k',
+            'https://www.youtube.com/watch?v=hHrnCx8-K4I',
+            'https://www.youtube.com/watch?v=R9At2f7f7QY',
+        ],
+        party: [
+            'https://www.youtube.com/watch?v=vV23Bq2wX2k',
+            'https://www.youtube.com/watch?v=y38Zl0nvy_w',
+            'https://www.youtube.com/watch?v=8mG_Jj3v624',
+        ],
+        lofi: [
+            'https://www.youtube.com/watch?v=hB9HjW8uNMs',
+            'https://www.youtube.com/watch?v=p4vM3r78C50',
+        ]
+    }
+};
+
+const playrandomSessions = new Map<string, { lang: 'english' | 'hindi' }>();
+
+function renderPlayrandomDashboard(userId: string, lang: 'english' | 'hindi'): ContainerBuilder {
+    const container = new ContainerBuilder();
+    
+    const body = `# 🎲 Random Music Generator\n` +
+        `Select your preferred language and music category from the dropdown select menus below.\n\n` +
+        `› **Selected Language:** **${lang.toUpperCase()}**`;
+
+    container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(body)
+    ).addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+
+    const langSelect = new StringSelectMenuBuilder()
+        .setCustomId(`playrandom:lang_select:${userId}`)
+        .setPlaceholder('Choose Language...')
+        .addOptions([
+            { label: 'English', value: 'english', description: 'Curate English tracks', default: lang === 'english' },
+            { label: 'Hindi / Bollywood', value: 'hindi', description: 'Curate Hindi / Bollywood tracks', default: lang === 'hindi' }
+        ]);
+
+    const catSelect = new StringSelectMenuBuilder()
+        .setCustomId(`playrandom:cat_select:${userId}`)
+        .setPlaceholder('Choose Category to Play...')
+        .addOptions([
+            { label: '🎧 Phonk', value: 'phonk', description: 'Aggressive phonk beats' },
+            { label: '😢 Sad / Emotional', value: 'sad', description: 'Deep, emotional melodies' },
+            { label: '❤️ Love / Romantic', value: 'love', description: 'Sweet romantic tracks' },
+            { label: '💪 Gym / Workout', value: 'gym', description: 'High energy beats for training' },
+            { label: '🎉 Party / Dance', value: 'party', description: 'Upbeat tracks to dance to' },
+            { label: '☕ Lofi Chill', value: 'lofi', description: 'Relaxing ambient beats' }
+        ]);
+
+    container.addActionRowComponents(
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(langSelect)
+    );
+    container.addActionRowComponents(
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(catSelect)
+    );
+
+    return container;
+}
+
+export const playrandomCommand: Command = {
+    data: new SlashCommandBuilder()
+        .setName('playrandom')
+        .setDescription('Play a curated random track by category and language')
+        .setDMPermission(false),
+        
+    async execute(interaction) {
+        await interaction.deferReply({ flags: V2 });
+        const sessionKey = `${interaction.user.id}-${interaction.guildId}`;
+        const session = playrandomSessions.get(sessionKey) || { lang: 'english' };
+        playrandomSessions.set(sessionKey, session);
+
+        const dashboard = renderPlayrandomDashboard(interaction.user.id, session.lang);
+        await interaction.editReply({ components: [dashboard], flags: V2 });
+    },
+
+    async handleSelectMenu(interaction) {
+        const customId = interaction.customId;
+        const guildId = interaction.guildId!;
+        const userId = interaction.user.id;
+
+        if (customId.startsWith('playrandom:lang_select:')) {
+            const targetUser = customId.split(':')[2];
+            if (interaction.user.id !== targetUser) {
+                await interaction.reply({ content: '❌ You cannot control this session.', flags: EPH });
+                return;
+            }
+
+            const sessionKey = `${userId}-${guildId}`;
+            const newLang = interaction.values[0] as 'english' | 'hindi';
+            playrandomSessions.set(sessionKey, { lang: newLang });
+
+            const dashboard = renderPlayrandomDashboard(userId, newLang);
+            await interaction.update({ components: [dashboard], embeds: [] });
+            return;
+        }
+
+        if (customId.startsWith('playrandom:cat_select:')) {
+            const targetUser = customId.split(':')[2];
+            if (interaction.user.id !== targetUser) {
+                await interaction.reply({ content: '❌ You cannot control this session.', flags: EPH });
+                return;
+            }
+
+            const member = interaction.member as GuildMember | null;
+            if (!member?.voice?.channelId) {
+                await interaction.reply({ content: '❌ You must be in a voice channel to play music.', flags: EPH });
+                return;
+            }
+
+            const sessionKey = `${userId}-${guildId}`;
+            const session = playrandomSessions.get(sessionKey) || { lang: 'english' };
+            const category = interaction.values[0];
+
+            const tracksList = PLAYRANDOM_TRACKS[session.lang]?.[category];
+            if (!tracksList || tracksList.length === 0) {
+                await interaction.reply({ content: '❌ No tracks found for this selection.', flags: EPH });
+                return;
+            }
+
+            const randomUrl = tracksList[Math.floor(Math.random() * tracksList.length)];
+            
+            await interaction.deferUpdate().catch(() => undefined);
+
+            const lavalink = interaction.client.lavalink;
+            let player = lavalink.getPlayer(guildId);
+            
+            if (player && player.voiceChannelId && player.voiceChannelId !== member.voice.channelId) {
+                const warnPayload = ComponentsV2.warningContainer('Already in use', "I'm already playing in another voice channel.");
+                await interaction.followUp({ components: [warnPayload], flags: V2 | EPH });
+                return;
+            }
+
+            if (!player) {
+                player = lavalink.createPlayer({
+                    guildId,
+                    voiceChannelId: member.voice.channelId,
+                    textChannelId: interaction.channelId,
+                    selfDeaf: true,
+                    selfMute: false,
+                    volume: config.lavalink.defaultVolume,
+                });
+            }
+            if (!player.connected) await player.connect();
+
+            const res = await player.search({ query: randomUrl }, interaction.user).catch(() => null);
+            if (!res || !res.tracks?.length || res.loadType === 'empty' || res.loadType === 'error') {
+                const errPayload = ComponentsV2.errorContainer('Playback Failed', 'Could not load the track. Please try again.');
+                await interaction.followUp({ components: [errPayload], flags: V2 | EPH });
+                return;
+            }
+
+            const track = res.tracks[0];
+            const positionBefore = player.queue.tracks.length + (player.queue.current ? 1 : 0);
+            await player.queue.add([track]);
+
+            if (!player.playing && !player.paused) {
+                await player.play();
+            }
+
+            const successMsg = `Playing **${track.info.title}**\n` +
+                `› **Category:** \`${category.toUpperCase()}\` • **Language:** \`${session.lang.toUpperCase()}\`\n` +
+                `› **Queue Position:** \`#${positionBefore + 1}\``;
+
+            const successContainer = ComponentsV2.successContainer('Random Song Queued 🎲', successMsg);
+
+            await interaction.editReply({
+                components: [successContainer],
+                embeds: []
+            });
+        }
+    }
+};
+
 export const musicCommands: Command[] = [
     musicCommand,
     playCommand,
@@ -838,4 +1066,5 @@ export const musicCommands: Command[] = [
     loopCommand,
     shuffleCommand,
     disconnectCommand,
+    playrandomCommand,
 ];
