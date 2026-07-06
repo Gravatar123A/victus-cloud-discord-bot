@@ -16,6 +16,7 @@ import {
 } from 'discord.js';
 import type { Player, Track, UnresolvedTrack } from 'lavalink-client';
 import { Bloom } from 'musicard';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
@@ -149,22 +150,57 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
         : `⏭️ **Next up:** _Queue end_`;
 
     if (cardBuffer.length > 0) {
-        files.push(new AttachmentBuilder(cardBuffer, { name: 'musicard.png' }));
+        let finalBuffer = cardBuffer;
+        try {
+            const loopName = player.repeatMode === 'off' ? 'Off' : player.repeatMode === 'track' ? 'Track' : 'Queue';
+            const sourceName = info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown';
+            
+            let reqName = 'System';
+            if (reqId && guild) {
+                const member = guild.members.cache.get(reqId);
+                reqName = member?.displayName || member?.user?.username || 'Unknown';
+            }
+
+            const img = await loadImage(cardBuffer);
+            const canvas = createCanvas(img.width, img.height + 70);
+            const ctx = canvas.getContext('2d');
+
+            // Fill canvas background
+            ctx.fillStyle = '#07070a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw original musicard
+            ctx.drawImage(img, 0, 0);
+
+            // Add separator line
+            ctx.strokeStyle = '#1e1e24';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(30, img.height);
+            ctx.lineTo(canvas.width - 30, img.height);
+            ctx.stroke();
+
+            // Draw text info
+            ctx.font = '22px sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const textStr = `Requester: ${reqName}   •   Volume: ${player.volume}%   •   Loop: ${loopName}   •   Source: ${sourceName}`;
+            ctx.fillText(textStr, canvas.width / 2, img.height + 35);
+
+            finalBuffer = canvas.toBuffer('image/png');
+        } catch (err) {
+            logger.error('Failed to extend musicard with metadata:', err);
+        }
+
+        files.push(new AttachmentBuilder(finalBuffer, { name: 'musicard.png' }));
         container.addMediaGalleryComponents(
             new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://musicard.png'))
         );
         
-        const loopName = player.repeatMode === 'off' ? 'Off' : player.repeatMode === 'track' ? 'Track' : 'Queue';
-        const sourceName = info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown';
-
         container.addTextDisplayComponents(
-            new TextDisplayBuilder().setContent(
-                `👤 **Requester:** ${reqId ? `<@${reqId}>` : 'System'}  •  ` +
-                `🔊 **Volume:** \`${player.volume}%\`  •  ` +
-                `🔁 **Loop:** \`${loopName}\`  •  ` +
-                `${sourceIcon(info?.sourceName)} **Source:** \`${sourceName}\`\n\n` +
-                `${nextUpStr}`
-            )
+            new TextDisplayBuilder().setContent(nextUpStr)
         );
     } else {
         const art = info?.artworkUrl;
