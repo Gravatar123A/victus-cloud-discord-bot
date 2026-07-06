@@ -194,7 +194,7 @@ export const anncCommand: Command = {
                 `› **Active Channels:** ${channels.length > 0 ? channels.map(id => `<#${id}>`).join(', ') : '_None_'}`
             );
 
-            await interaction.editReply({ components: [statusContainer] });
+            await interaction.editReply({ components: [statusContainer], flags: V2 });
             return;
         }
 
@@ -217,7 +217,7 @@ export const anncCommand: Command = {
                     'No Channels Set',
                     'You have not configured any announcement channels yet.\n\nUse \`/annc setup\` to add some first!'
                 );
-                await interaction.editReply({ components: [warnContainer] });
+                await interaction.editReply({ components: [warnContainer], flags: V2 });
                 return;
             }
 
@@ -238,7 +238,7 @@ export const anncCommand: Command = {
                     'Invalid Channels',
                     'None of your configured announcement channels could be found in this server.'
                 );
-                await interaction.editReply({ components: [warnContainer] });
+                await interaction.editReply({ components: [warnContainer], flags: V2 });
                 return;
             }
 
@@ -261,7 +261,7 @@ export const anncCommand: Command = {
                     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
                 );
 
-            await interaction.editReply({ components: [container] });
+            await interaction.editReply({ components: [container], flags: V2 });
         }
     },
 

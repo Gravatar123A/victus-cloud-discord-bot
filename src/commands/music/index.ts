@@ -64,7 +64,7 @@ async function requireVoice(
     const fail = async (title: string, body: string) => {
         const container = ComponentsV2.warningContainer(title, body);
         if (deferred && interaction.isChatInputCommand()) {
-            await interaction.editReply({ components: [container] });
+            await interaction.editReply({ components: [container], flags: V2 });
         } else {
             await interaction.reply({ components: [container], flags: V2 });
         }
@@ -100,7 +100,7 @@ async function requirePlayer(
     const reply = async (title: string, body: string) => {
         const container = ComponentsV2.warningContainer(title, body);
         if (deferred && interaction.isChatInputCommand()) {
-            await interaction.editReply({ components: [container] });
+            await interaction.editReply({ components: [container], flags: V2 });
         } else {
             await interaction.reply({ components: [container], flags: V2 });
         }
@@ -148,7 +148,7 @@ export const playCommand: Command = {
         let player = lavalink.getPlayer(interaction.guildId!);
         if (player && player.voiceChannelId && player.voiceChannelId !== ctx.voice.id) {
             const container = ComponentsV2.warningContainer('Already in use', "I'm already playing in another voice channel. Join it to add songs.");
-            await interaction.editReply({ components: [container] });
+            await interaction.editReply({ components: [container], flags: V2 });
             return;
         }
         if (!player) {
@@ -185,7 +185,7 @@ export const playCommand: Command = {
         } catch (error) {
             logger.error('🎵 Lavalink search failed:', error);
             const container = ComponentsV2.errorContainer('Search failed', 'Could not reach the music server. Please try again in a moment.');
-            await interaction.editReply({ components: [container] });
+            await interaction.editReply({ components: [container], flags: V2 });
             return;
         }
 
@@ -194,7 +194,7 @@ export const playCommand: Command = {
                 ? ' Make sure the Lavalink server has LavaSrc configured for Spotify.'
                 : ' Try a different search or a direct link.';
             const container = ComponentsV2.warningContainer('No results', `Nothing found for **${query.slice(0, 120)}**.${hint}`);
-            await interaction.editReply({ components: [container] });
+            await interaction.editReply({ components: [container], flags: V2 });
             if (!player.queue.current && !player.queue.tracks.length) await player.destroy().catch(() => undefined);
             return;
         }
@@ -214,7 +214,7 @@ export const playCommand: Command = {
         }
 
         const addedEmbed = addedContainer(toAdd, playlistName, positionBefore);
-        await interaction.editReply({ components: [addedEmbed] });
+        await interaction.editReply({ components: [addedEmbed], flags: V2 });
     },
 
     // Handle transport controls and ephemeral control panel button clicks
@@ -608,7 +608,7 @@ export const queueCommand: Command = {
         }
         const page = (interaction.options.getInteger('page') ?? 1) - 1;
         const embed = queueContainer(player, page);
-        await interaction.editReply({ components: [embed] });
+        await interaction.editReply({ components: [embed], flags: V2 });
     },
 };
 
@@ -624,7 +624,7 @@ export const nowplayingCommand: Command = {
             return;
         }
         const payload = await nowPlayingContainer(player, interaction.guild);
-        await interaction.editReply({ embeds: [], components: payload.components, files: payload.files });
+        await interaction.editReply({ embeds: [], components: payload.components, files: payload.files, flags: V2 });
         // Re-anchor the live panel to this fresh message.
         const sent = await interaction.fetchReply().catch(() => null);
         if (sent) player.set('npMessage', sent);
@@ -714,7 +714,7 @@ export const disconnectCommand: Command = {
         const member = interaction.member as GuildMember | null;
         if (member?.voice?.channelId !== player.voiceChannelId) {
             const container = ComponentsV2.warningContainer('Wrong voice channel', 'Join my voice channel to disconnect me.');
-            await interaction.editReply({ components: [container] });
+            await interaction.editReply({ components: [container], flags: V2 });
             return;
         }
         await player.destroy();
@@ -734,11 +734,11 @@ export const musicCommand: Command = {
         const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
         if (!player || !player.queue.current) {
             const embed = musicIdleContainer();
-            await interaction.editReply({ components: [embed] });
+            await interaction.editReply({ components: [embed], flags: V2 });
             return;
         }
         const payload = await nowPlayingContainer(player, interaction.guild);
-        await interaction.editReply({ embeds: [], components: payload.components, files: payload.files });
+        await interaction.editReply({ embeds: [], components: payload.components, files: payload.files, flags: V2 });
         // Re-anchor the live panel to this fresh message so controls keep updating it.
         const sent = await interaction.fetchReply().catch(() => null);
         if (sent) player.set('npMessage', sent);

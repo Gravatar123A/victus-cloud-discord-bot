@@ -1,6 +1,6 @@
 import { 
     Client, Message, User, GuildMember, Guild, TextBasedChannel, 
-    AttachmentBuilder
+    AttachmentBuilder, EmbedBuilder
 } from 'discord.js';
 
 export class PrefixInteraction {
@@ -136,11 +136,7 @@ export class PrefixInteraction {
     }
 
     private normalizeResponse(options: any) {
-        if (!options) return { content: ' ' };
-        if (typeof options === 'string') {
-            return { content: options };
-        }
-        return { ...options };
+        return translateV2Components(options);
     }
 
     async deferReply(options?: { flags?: number }) {
@@ -198,4 +194,80 @@ export class PrefixInteraction {
             await this.reply(warning).catch(() => {});
         }
     }
+}
+
+export function translateV2Components(options: any): any {
+    if (!options) return { content: ' ' };
+    if (typeof options === 'string') {
+        return { content: options };
+    }
+    
+    const payload = { ...options };
+    
+    if (payload.components && Array.isArray(payload.components)) {
+        const finalComponents: any[] = [];
+        const finalEmbeds: any[] = payload.embeds || [];
+        
+        for (const comp of payload.components) {
+            const isV2Container = comp && (
+                comp.type === 17 || 
+                (typeof comp.toJSON === 'function' && comp.toJSON().type === 17)
+            );
+            
+            if (isV2Container) {
+                const data = typeof comp.toJSON === 'function' ? comp.toJSON() : comp;
+                
+                const embed = new EmbedBuilder()
+                    .setColor(data.accent_color || 0x2b2d31);
+                
+                let description = '';
+                const innerComponents = data.components || [];
+                
+                for (const inner of innerComponents) {
+                    if (inner.type === 10) { // TextDisplay
+                        description += (inner.content || '') + '\n';
+                    } else if (inner.type === 12) { // MediaGallery
+                        if (inner.items && inner.items.length > 0) {
+                            const firstItem = inner.items[0];
+                            if (firstItem?.media?.url) {
+                                embed.setImage(firstItem.media.url);
+                            }
+                        }
+                    } else if (inner.type === 14) { // Separator
+                        description += '\n';
+                    } else if (inner.type === 9) { // Section
+                        if (inner.components) {
+                            for (const secComp of inner.components) {
+                                if (secComp.type === 10) {
+                                    description += (secComp.content || '') + '\n';
+                                }
+                            }
+                        }
+                        if (inner.accessory?.media?.url) {
+                            embed.setThumbnail(inner.accessory.media.url);
+                        }
+                    } else if (inner.type === 1) { // ActionRow (nested in V2 container)
+                        finalComponents.push(inner);
+                    }
+                }
+                
+                if (description.trim()) {
+                    embed.setDescription(description.trim().slice(0, 4096));
+                }
+                
+                finalEmbeds.push(embed);
+            } else {
+                finalComponents.push(comp);
+            }
+        }
+        
+        payload.components = finalComponents;
+        payload.embeds = finalEmbeds;
+        
+        if (payload.flags !== undefined) {
+            payload.flags = payload.flags & ~32768; // Remove IS_COMPONENTS_V2 flag
+        }
+    }
+    
+    return payload;
 }

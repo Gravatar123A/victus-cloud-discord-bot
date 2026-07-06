@@ -10,7 +10,7 @@ import { formatAiMessage } from '../utils/aiMessages.js';
 import { handleTicketChannelMessage, mirrorAiReplyToTicket } from '../services/ticketBridge.js';
 import { isChannelSummoned } from '../services/summonedChannels.js';
 import { awardMessageXp } from '../services/activityXp.js';
-import { PrefixInteraction } from '../utils/prefixInteraction.js';
+import { PrefixInteraction, translateV2Components } from '../utils/prefixInteraction.js';
 import { checkCooldown } from '../middleware/rateLimit.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { calculateLevel } from '../utils/vccrs.js';
@@ -277,7 +277,7 @@ export const messageCreateEvent: Event = {
                                     'Slow Down!',
                                     `Please wait **${remaining}** second${remaining > 1 ? 's' : ''} before using this command again.`
                                 );
-                                await message.reply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                                await message.reply(translateV2Components({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 })).catch(() => {});
                                 return;
                             }
                         }
@@ -289,7 +289,7 @@ export const messageCreateEvent: Event = {
                                     'Account Link Required',
                                     'This command requires you to link your Discord account to Victus Cloud. Use `/link` to start.'
                                 );
-                                await message.reply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                                await message.reply(translateV2Components({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 })).catch(() => {});
                                 return;
                             }
                         }
@@ -301,7 +301,7 @@ export const messageCreateEvent: Event = {
                                     'Permission Denied',
                                     'This command is restricted to bot administrators.'
                                 );
-                                await message.reply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                                await message.reply(translateV2Components({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 })).catch(() => {});
                                 return;
                             }
                         }
@@ -328,7 +328,7 @@ export const messageCreateEvent: Event = {
                                         'Slow Down!',
                                         `Please wait **${remaining}** second${remaining > 1 ? 's' : ''} before using this command again.`
                                     );
-                                    await message.reply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                                    await message.reply(translateV2Components({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 })).catch(() => {});
                                     return;
                                 }
                             }
@@ -342,7 +342,7 @@ export const messageCreateEvent: Event = {
                                         'Permission Denied',
                                         'You do not have the required roles to run this custom command.'
                                     );
-                                    await message.reply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                                    await message.reply(translateV2Components({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 })).catch(() => {});
                                     return;
                                 }
                             }

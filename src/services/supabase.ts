@@ -605,7 +605,13 @@ class SupabaseService {
     /**
      * Check if user is admin
      */
-    async isUserAdmin(userId: string): Promise<boolean> {
+    async isUserAdmin(userIdOrDiscordId: string): Promise<boolean> {
+        let userId = userIdOrDiscordId;
+        if (!userIdOrDiscordId.includes('-')) {
+            const linked = await this.getLinkedAccount(userIdOrDiscordId).catch(() => null);
+            if (!linked) return false;
+            userId = linked.user_id;
+        }
         const profile = await this.getUserProfile(userId);
         return profile?.is_admin ?? false;
     }
