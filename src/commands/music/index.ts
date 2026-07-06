@@ -18,6 +18,7 @@ import {
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
+    StringSelectMenuBuilder,
 } from 'discord.js';
 import type {
     ButtonInteraction,
@@ -605,10 +606,7 @@ export const queueCommand: Command = {
         )
         .addSubcommand((sub) =>
             sub.setName('edit')
-                .setDescription('Edit the queue (remove or re-position tracks)')
-                .addIntegerOption((o) => o.setName('remove_position').setDescription('The position of the track to remove').setMinValue(1))
-                .addIntegerOption((o) => o.setName('move_from').setDescription('The current position of the track to move').setMinValue(1))
-                .addIntegerOption((o) => o.setName('move_to').setDescription('The target position to move the track to').setMinValue(1))
+                .setDescription('Interactive control panel to remove songs from the queue')
         ),
     async execute(interaction) {
         await interaction.deferReply({ flags: V2 });
@@ -628,49 +626,69 @@ export const queueCommand: Command = {
         }
 
         if (sub === 'edit') {
-            const removePos = interaction.options.getInteger('remove_position');
-            const moveFrom = interaction.options.getInteger('move_from');
-            const moveTo = interaction.options.getInteger('move_to');
-
-            if (!removePos && (!moveFrom || !moveTo)) {
-                await interaction.editReply(info('Missing Options', 'Please specify either a track position to remove, or both "move_from" and "move_to" positions.'));
+            const tracks = player.queue.tracks;
+            if (tracks.length === 0) {
+                await interaction.editReply(info('Queue Empty', 'There are no upcoming tracks in the queue to edit.'));
                 return;
             }
 
-            if (removePos) {
-                const index = removePos - 1;
-                if (index < 0 || index >= player.queue.tracks.length) {
-                    await interaction.editReply(info('Invalid Position', `Please specify a position between 1 and ${player.queue.tracks.length}.`));
-                    return;
-                }
-                const track = player.queue.tracks[index];
-                await player.queue.splice(index, 1);
-                await interaction.editReply(ok('Track Removed', `Removed **${track.info.title}** from position \`${removePos}\`.`));
-                return;
-            }
+            const c = ComponentsV2.baseContainer(ComponentsV2.Accents.info);
+            c.addTextDisplayComponents(ComponentsV2.text(
+                `# 📝 Edit Playlist Queue\n` +
+                `Select a track from the dropdown select menu below to remove it from the queue.` +
+                (tracks.length > 25 ? `\n\n_-# Showing first 25 tracks of ${tracks.length}_` : '')
+            )).addSeparatorComponents(ComponentsV2.separator());
 
-            if (moveFrom && moveTo) {
-                const fromIndex = moveFrom - 1;
-                const toIndex = moveTo - 1;
-                const queueLength = player.queue.tracks.length;
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('queue_edit:remove')
+                .setPlaceholder('Choose a track to remove...')
+                .addOptions(
+                    tracks.slice(0, 25).map((track, index) => {
+                        const durMs = track.info.duration || 0;
+                        const minutes = Math.floor(durMs / 60000);
+                        const seconds = Math.floor((durMs % 60000) / 1000);
+                        const durationStr = `${minutes}m ${seconds}s`;
+                        
+                        return {
+                            label: `${index + 1}. ${track.info.title}`.slice(0, 100),
+                            value: String(index),
+                            description: `Duration: ${durationStr} | Artist: ${track.info.author || 'Unknown'}`.slice(0, 100)
+                        };
+                    })
+                );
 
-                if (fromIndex < 0 || fromIndex >= queueLength || toIndex < 0 || toIndex >= queueLength) {
-                    await interaction.editReply(info('Invalid Positions', `Please specify positions between 1 and ${queueLength}.`));
-                    return;
-                }
+            const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+            c.addActionRowComponents(row);
 
-                const tracks = [...player.queue.tracks];
-                const [movedTrack] = tracks.splice(fromIndex, 1);
-                if (movedTrack) {
-                    tracks.splice(toIndex, 0, movedTrack);
-                    await player.queue.splice(0, player.queue.tracks.length, ...tracks);
-                    await interaction.editReply(ok('Track Re-positioned', `Moved **${movedTrack.info.title}** from position \`${moveFrom}\` to \`${moveTo}\`.`));
-                } else {
-                    await interaction.editReply(info('Action Failed', 'Could not move track.'));
-                }
-                return;
-            }
+            await interaction.editReply({ components: [c], flags: V2 });
+            return;
         }
+    },
+
+    async handleSelectMenu(interaction) {
+        if (interaction.customId !== 'queue_edit:remove') return;
+
+        const player = interaction.client.lavalink.getPlayer(interaction.guildId!);
+        if (!player) {
+            await interaction.reply({ content: '❌ Music player is not active.', flags: EPH });
+            return;
+        }
+
+        const index = parseInt(interaction.values[0], 10);
+        if (isNaN(index) || index < 0 || index >= player.queue.tracks.length) {
+            await interaction.reply({ content: '❌ Invalid track selected.', flags: EPH });
+            return;
+        }
+
+        const track = player.queue.tracks[index];
+        await player.queue.splice(index, 1);
+
+        const successMsg = `Successfully removed **${track.info.title}** from the queue.`;
+
+        await interaction.update({
+            components: [ComponentsV2.successContainer('Track Removed', successMsg)],
+            embeds: []
+        });
     },
 };
 
