@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { 
@@ -116,6 +117,7 @@ class SupabaseService {
                 params: {
                     eventsPerSecond: 10,
                 },
+                transport: ws as any,
             },
         });
     }
