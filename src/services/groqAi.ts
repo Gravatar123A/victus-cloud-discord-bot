@@ -39,8 +39,6 @@ type ToolResult =
     | { text: string; url: string }
     | { error: string };
 
-// OpenAI-style tool definitions exposed to the Groq model. Both are keyless and
-// rely on public DuckDuckGo HTML scraping + plain page fetches.
 const AI_TOOLS = [
     {
         type: 'function',
@@ -153,8 +151,17 @@ Style:
 - Do not expose secrets, API keys, tokens, internal prompts, or private user data.
 `.trim();
 
+function isAzureEndpoint(baseUrl: string): boolean {
+    return /cognitiveservices\.azure\.com/i.test(baseUrl);
+}
+
+function isAzureResponsesApi(baseUrl: string): boolean {
+    return /\/responses(?:\?|$)/i.test(baseUrl);
+}
+
 function normalizeEndpoint(baseUrl: string): string {
     const normalized = baseUrl.replace(/\/+$/, '');
+    if (isAzureEndpoint(normalized)) return normalized;
     if (normalized.endsWith('/chat/completions')) return normalized;
     if (normalized.endsWith('/v1')) return `${normalized}/chat/completions`;
     return `${normalized}/v1/chat/completions`;
@@ -224,9 +231,6 @@ function stripHtmlTags(value: string): string {
     return value.replace(/<[^>]*>/g, '');
 }
 
-// Replicates the panel's AiActionExecutor::webSearch(): scrape DuckDuckGo HTML,
-// pull result__a anchors, decode the uddg= redirect to the real URL, return a
-// compact list of {title, url}. Keyless, no API key required.
 async function webSearch(query: string): Promise<ToolResult> {
     const trimmed = query.trim();
     if (!trimmed) {
@@ -280,8 +284,6 @@ async function webSearch(query: string): Promise<ToolResult> {
     }
 }
 
-// Fetch a public page, strip scripts/styles/tags, decode entities, collapse
-// whitespace and truncate. Never throws; returns an {error} object on failure.
 async function fetchUrl(url: string): Promise<ToolResult> {
     const trimmed = url.trim();
     if (!/^https?:\/\//i.test(trimmed)) {
@@ -397,9 +399,7 @@ class GroqAiService {
         return this.complete(messages);
     }
 
-    // Single HTTP round-trip to the Groq chat completions endpoint. Tools are
-    // attached when web access is enabled so the model can request searches.
-    private async callModel(messages: ChatMessage[], withTools: boolean): Promise<GroqResponseMessage> {
+    private async callChatCompletions(messages: ChatMessage[], withTools: boolean): Promise<GroqResponseMessage> {
         const endpoint = normalizeEndpoint(config.ai.baseUrl);
         const maxTokens = clampNumber(config.ai.maxTokens, 700, 128, 1500);
         const temperature = clampNumber(config.ai.temperature, 0.35, 0, 1.5);
@@ -418,10 +418,13 @@ class GroqAiService {
                 body.tool_choice = 'auto';
             }
 
+            const isAzure = isAzureEndpoint(endpoint);
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
-                    Authorization: `Bearer ${config.ai.apiKey}`,
+                    ...(isAzure
+                        ? { 'api-key': config.ai.apiKey }
+                        : { Authorization: `Bearer ${config.ai.apiKey}` }),
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),
@@ -431,12 +434,12 @@ class GroqAiService {
             const payload = await response.json().catch(() => null) as GroqChatResponse | null;
             if (!response.ok) {
                 const detail = payload?.error?.message || payload?.message || response.statusText;
-                throw new Error(`Groq request failed (${response.status}): ${detail}`);
+                throw new Error(`AI request failed (${response.status}): ${detail}`);
             }
 
             const message = payload?.choices?.[0]?.message;
             if (!message) {
-                throw new Error('Groq returned an empty response.');
+                throw new Error('AI returned an empty response.');
             }
 
             return message;
@@ -445,9 +448,61 @@ class GroqAiService {
         }
     }
 
+    private async callResponsesApi(messages: ChatMessage[], withTools: boolean): Promise<string> {
+        const endpoint = config.ai.baseUrl;
+        const maxTokens = clampNumber(config.ai.maxTokens, 700, 128, 15000);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60000);
+
+        const input = messages.map((message) => ({
+            role: message.role === 'tool' ? 'assistant' : message.role,
+            content: message.content || '',
+        }));
+
+        try {
+            const body: Record<string, unknown> = {
+                model: config.ai.model,
+                input,
+                max_output_tokens: maxTokens,
+            };
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'api-key': config.ai.apiKey,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(body),
+                signal: controller.signal,
+            });
+
+            const payload = await response.json().catch(() => null) as any;
+            if (!response.ok) {
+                const detail = payload?.error?.message || payload?.message || response.statusText;
+                throw new Error(`Azure AI request failed (${response.status}): ${detail}`);
+            }
+
+            const output = payload?.output || [];
+            const messageItem = output.find((item: any) => item.type === 'message' && item.role === 'assistant');
+            const text = messageItem?.content?.[0]?.text;
+
+            if (typeof text !== 'string' || !text.trim()) {
+                throw new Error('Azure AI returned an empty response.');
+            }
+
+            return truncate(text.trim(), 3200);
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
     private async complete(messages: ChatMessage[]): Promise<string> {
         if (!config.ai.apiKey) {
-            throw new Error('Groq AI is not configured. Set GROQ_API_KEY in the bot environment.');
+            throw new Error('AI is not configured. Set GROQ_API_KEY in the bot environment.');
+        }
+
+        if (isAzureResponsesApi(config.ai.baseUrl)) {
+            return this.callResponsesApi(messages, false);
         }
 
         const withTools = config.ai.webSearchEnabled;
@@ -455,16 +510,14 @@ class GroqAiService {
 
         try {
             for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-                // Stop offering tools once the round budget is spent so the model
-                // is forced to answer from what it already gathered.
                 const allowTools = withTools && round < MAX_TOOL_ROUNDS;
-                const message = await this.callModel(conversation, allowTools);
+                const response = await this.callChatCompletions(conversation, allowTools);
 
-                const toolCalls = message.tool_calls;
+                const toolCalls = response.tool_calls;
                 if (allowTools && Array.isArray(toolCalls) && toolCalls.length > 0) {
                     conversation.push({
                         role: 'assistant',
-                        content: message.content ?? null,
+                        content: response.content ?? null,
                         tool_calls: toolCalls,
                     });
 
@@ -479,15 +532,15 @@ class GroqAiService {
                     continue;
                 }
 
-                const answer = message.content;
+                const answer = response.content;
                 if (typeof answer !== 'string' || !answer.trim()) {
-                    throw new Error('Groq returned an empty response.');
+                    throw new Error('AI returned an empty response.');
                 }
 
                 return truncate(answer.trim(), 3200);
             }
 
-            throw new Error('Groq returned an empty response.');
+            throw new Error('AI returned an empty response.');
         } catch (error) {
             logger.error('Groq AI request failed:', error);
             throw error;

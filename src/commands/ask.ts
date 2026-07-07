@@ -38,7 +38,7 @@ export const askCommand: Command = {
 
         if (!groqAi.isEnabled()) {
             await interaction.editReply({
-                content: 'AI chat is not configured yet. Set `GROQ_API_KEY` in the bot environment, then restart the bot.',
+                content: 'AI chat is not configured yet. Set `GROQ_API_KEY` (or Azure credentials) in the bot environment, then restart the bot.',
             });
             return;
         }
@@ -85,7 +85,7 @@ export const askCommand: Command = {
         } catch (error) {
             logger.error('Ask command failed:', error);
             await interaction.editReply({
-                content: 'AI chat failed right now. Check the Groq API key/model settings or try again in a moment.',
+                content: 'AI chat failed right now. Check the API key/model settings or try again in a moment.',
             });
         }
     },
