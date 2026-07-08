@@ -422,8 +422,6 @@ export function userInfoContainer(
         .addTextDisplayComponents(footerNote());
 }
 
-export { text, separator, mediaGallery, baseContainer, panelTitle, commandButtons, footerNote };
-
 export const ComponentsV2 = {
     text,
     separator,
