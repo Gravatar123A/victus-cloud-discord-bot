@@ -1651,6 +1651,36 @@ class SupabaseService {
         return true;
     }
 
+    /**
+     * Queue a new Discord DM notification (used by billing webhook and other services)
+     */
+    async queueDiscordDm(params: {
+        discord_id: string;
+        notification_type?: string;
+        subject: string;
+        message: string;
+        metadata?: Record<string, any>;
+    }): Promise<any | null> {
+        const { data, error } = await this.client
+            .from('discord_dm_queue')
+            .insert({
+                discord_id: params.discord_id,
+                notification_type: params.notification_type || null,
+                subject: params.subject,
+                message: params.message,
+                metadata: params.metadata || null,
+                status: 'pending',
+            })
+            .select()
+            .single();
+
+        if (error) {
+            logger.error('Failed to queue Discord DM:', error);
+            return null;
+        }
+        return data;
+    }
+
     // ============================================
     // Custom Embeds
     // ============================================

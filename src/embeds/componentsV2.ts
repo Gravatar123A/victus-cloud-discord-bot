@@ -58,7 +58,7 @@ function brandLine(label = 'VICTUS CLOUD CONNECTION') {
     return `-# ${Icons.spark} ${label} • secure account intelligence • Discord operations`;
 }
 
-function panelTitle(title: string, eyebrow = 'COMMAND LAYER') {
+export function panelTitle(title: string, eyebrow = 'COMMAND LAYER') {
     return `${brandLine(eyebrow)}\n# ${title}`;
 }
 
@@ -71,11 +71,11 @@ function premiumContainer(accent: number, title: string, description: string, ey
     return container;
 }
 
-function footerNote(note = 'Victus Cloud • private, audited, and account-aware') {
+export function footerNote(note = 'Victus Cloud • private, audited, and account-aware') {
     return text(`-# ${note}`);
 }
 
-function commandButtons(): ActionRowBuilder<ButtonBuilder> {
+export function commandButtons(): ActionRowBuilder<ButtonBuilder> {
     return new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setLabel('Open Dashboard')
@@ -421,6 +421,8 @@ export function userInfoContainer(
         .addActionRowComponents(commandButtons())
         .addTextDisplayComponents(footerNote());
 }
+
+export { text, separator, mediaGallery, baseContainer, panelTitle, commandButtons, footerNote };
 
 export const ComponentsV2 = {
     text,

@@ -4,13 +4,19 @@ import type { Event } from '../types/index.js';
 import { welcomeSettings } from '../services/welcomeSettings.js';
 import { buildWelcomePayload } from '../commands/welcome.js';
 import { auditLogSettings } from '../services/auditLogSettings.js';
+import { sendNotificationDM } from '../utils/auditing.js';
+import { NotificationTemplates } from '../embeds/notificationTemplates.js';
 import { logger } from '../utils/logger.js';
 
 export const guildMemberAddEvent: Event = {
     name: Events.GuildMemberAdd,
     async execute(member: GuildMember) {
         try {
-            // Welcome system
+            // Send welcome DM to new member
+            const dmContainer = NotificationTemplates.welcomeDM(member.user.username);
+            await sendNotificationDM(member.client, member.id, dmContainer, 'promotions');
+
+            // Welcome channel message
             const config = await welcomeSettings.get(member.guild.id);
             if (config.enabled && config.channelId) {
                 const channel = member.guild.channels.cache.get(config.channelId);

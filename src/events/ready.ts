@@ -4,6 +4,8 @@ import { config } from '../config.js';
 import { assignLinkedRole, syncLinkedRoles } from '../utils/roles.js';
 import { supabase } from '../services/supabase.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
+import { NotificationTemplates } from '../embeds/notificationTemplates.js';
+import type { NotificationType } from '../embeds/notificationTemplates.js';
 import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
 import type { Event } from '../types/index.js';
 import { registerApplicationCommands } from '../utils/registerCommands.js';
@@ -15,7 +17,64 @@ import { updateServerStats } from '../commands/serverstats.js';
 
 let dmQueueProcessing = false;
 
-async function processAdminDmQueue(client: Client<true>) {
+function buildNotificationContainer(job: any): any {
+    const type: NotificationType | null = job.notification_type || null;
+    const meta = job.metadata || {};
+
+    switch (type) {
+        case 'welcome':
+            return NotificationTemplates.welcomeDM(meta.discord_username || 'User');
+        case 'account_linked':
+            return NotificationTemplates.accountLinkedDM(meta.discord_username || 'User');
+        case 'invoice_due':
+            return NotificationTemplates.invoiceDueDM(
+                meta.invoice_id || '',
+                meta.amount || '0.00',
+                meta.currency || '$',
+                meta.due_date || 'Unknown',
+                config.branding.billing
+            );
+        case 'invoice_paid':
+            return NotificationTemplates.invoicePaidDM(
+                meta.invoice_id || '',
+                meta.amount || '0.00',
+                meta.currency || '$'
+            );
+        case 'server_created':
+            return NotificationTemplates.serverCreatedDM(
+                meta.server_name || 'Server',
+                meta.server_type || 'Game Server',
+                config.branding.panel
+            );
+        case 'server_installed':
+            return NotificationTemplates.serverInstalledDM(
+                meta.server_name || 'Server',
+                config.branding.panel
+            );
+        case 'order_confirmed':
+            return NotificationTemplates.orderConfirmedDM(
+                meta.order_id || '',
+                meta.product_name || 'Product',
+                meta.amount || '0.00',
+                meta.currency || '$'
+            );
+        case 'ticket_created':
+            return NotificationTemplates.ticketCreatedDM(
+                meta.ticket_id || '',
+                meta.subject || 'Support Request'
+            );
+        case 'login_detected':
+            return NotificationTemplates.loginDetectedDM(
+                meta.ip || 'Unknown',
+                meta.device || 'Unknown',
+                meta.time || 'Unknown'
+            );
+        default:
+            return ComponentsV2.adminDmContainer(job.subject, job.message, job.admin_email);
+    }
+}
+
+async function processNotificationQueue(client: Client<true>) {
     if (dmQueueProcessing) return;
     dmQueueProcessing = true;
 
@@ -29,17 +88,19 @@ async function processAdminDmQueue(client: Client<true>) {
                 const target = await client.users.fetch(job.discord_id).catch(() => null);
                 if (!target) throw new Error(`Could not fetch Discord user ${job.discord_id}`);
 
+                const container = buildNotificationContainer(job);
+
                 await target.send({
-                    components: [ComponentsV2.adminDmContainer(job.subject, job.message, job.admin_email)],
-                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                    components: [container],
+                    flags: NotificationTemplates.IS_COMPONENTS_V2,
                 });
 
                 await supabase.markDiscordDmSent(job.id);
-                logger.info(`Admin Discord DM sent to ${target.tag} (${job.discord_id})`);
+                logger.info(`Notification DM sent to ${target.tag} (${job.discord_id}) type=${job.notification_type || 'admin'}`);
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Unknown Discord DM delivery failure';
                 await supabase.markDiscordDmFailed(job.id, message);
-                logger.warn(`Admin Discord DM failed for ${job.discord_id}: ${message}`);
+                logger.warn(`Notification DM failed for ${job.discord_id}: ${message}`);
             }
         }
     } catch (error) {
@@ -82,17 +143,11 @@ export const readyEvent: Event = {
         logger.info('Setting up Supabase Realtime subscription...');
         supabase.subscribeToLinks(async (payload) => {
             logger.info('Realtime account link event received:', JSON.stringify(payload, null, 2));
-            const { discord_id } = payload.new;
+            const { discord_id, discord_username } = payload.new;
 
             const roleSuccess = await assignLinkedRole(client, discord_id);
 
-            const dmContainer = ComponentsV2.successContainer(
-                'Account Successfully Linked',
-                'Your Discord account has been linked to Victus Cloud.\n\n' +
-                'You now have access to account-aware server, billing, and support commands.\n' +
-                '› Use `/servers` to view your servers.\n' +
-                '› Use `/help` to explore the command center.'
-            );
+            const dmContainer = NotificationTemplates.accountLinkedDM(discord_username || 'User');
             await sendNotificationDM(client, discord_id, dmContainer, 'security');
 
             const supportGuildId = config.bot.supportGuildId;
@@ -102,6 +157,7 @@ export const readyEvent: Event = {
                     supportGuildId,
                     'Account Linked (Realtime)',
                     `User ID: \`${discord_id}\`\n` +
+                    `Discord: **${discord_username || 'Unknown'}**\n` +
                     `Status: ${roleSuccess ? 'Role assigned' : 'User not in server or role missing'}\n` +
                     `Action: Linked via website`,
                     ComponentsV2.Accents.success
@@ -127,9 +183,9 @@ export const readyEvent: Event = {
         await runServerStats();
         setInterval(runServerStats, 5 * 60 * 1000);
 
-        await processAdminDmQueue(client);
+        await processNotificationQueue(client);
         setInterval(() => {
-            processAdminDmQueue(client).catch((error) => logger.error('DM queue interval failed:', error));
+            processNotificationQueue(client).catch((error) => logger.error('DM queue interval failed:', error));
         }, 15000);
 
         client.user.setPresence({
