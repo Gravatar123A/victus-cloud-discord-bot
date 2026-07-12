@@ -10,6 +10,7 @@ A next-generation Discord bot that functions as a full extension of the Victus C
 - 🎫 **Ticketing System** - Create and manage support tickets
 - 📢 **Announcements** - Admin broadcast system
 - 🤖 **AI Support** - Context-aware support suggestions
+- 🪙 **Community Coins** - Keep the bot in your Discord so Victus can verify member joins and reward COINS (`/community-coins` to publish)
 
 ## Setup
 
@@ -92,6 +93,7 @@ Do not set `MAIN_FILE` to `index.js` unless this root launcher exists in the ser
 | `/invoices` | View your invoices |
 | `/ask` | Ask the Victus Cloud AI assistant |
 | `/ticket` | Create support ticket |
+| `/community-coins` | Set up a Community Coins listing (shows this server's ID + publish steps) |
 | `/help` | Show help |
 
 ### Groq AI Chat

@@ -193,6 +193,7 @@ export const helpCommand: Command = {
                     `› \`/welcome setup\` • Configure welcome system and join auto-roles.\n` +
                     `› \`/link <token>\` • Connect Discord with your website account.\n` +
                     `› \`/unlink\` • Disconnect linked profile.\n` +
+                    `› \`/community-coins\` • Publish this server for Community Coins — members who join earn COINS.\n` +
                     `› \`/help\` • Toggle this support dashboard.`;
                 break;
 
