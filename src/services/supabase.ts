@@ -659,8 +659,44 @@ class SupabaseService {
      * Live Paymenter balances split by currency: coins (VICTUS_COINS_CURRENCY)
      * and credits (VICTUS_COINS_PAYMENT_CURRENCY). This is the source of truth
      * for a user's Coins balance.
+     *
+     * Routes through the admin-paymenter edge function (credits.balance) so the
+     * bot no longer needs the direct Paymenter API creds configured. Falls back
+     * to the direct API only if those creds are present; otherwise returns
+     * { found:false } and callers degrade to profiles.total_cp.
      */
     async getPaymenterBalances(email: string): Promise<{ coins: number; credits: number; found: boolean }> {
+        if (!email) return { coins: 0, credits: 0, found: false };
+
+        try {
+            const { data, error } = await this.client.functions.invoke('admin-paymenter', {
+                body: { endpoint: 'credits.balance', email },
+            });
+            if (error) {
+                logger.warn(`getPaymenterBalances edge function failed: ${await describeFunctionError(error)}`);
+            } else if (data && (data as any).found) {
+                return {
+                    coins: Number((data as any).coins) || 0,
+                    credits: Number((data as any).credits) || 0,
+                    found: true,
+                };
+            }
+        } catch (e) {
+            logger.warn(`getPaymenterBalances edge invoke error: ${(e as Error).message}`);
+        }
+
+        // Fall back to the direct Paymenter API only when it is configured.
+        if (config.paymenter.url && config.paymenter.apiKey) {
+            return this.getPaymenterBalancesDirect(email);
+        }
+        return { coins: 0, credits: 0, found: false };
+    }
+
+    /**
+     * Direct-to-Paymenter balance lookup (fallback path for getPaymenterBalances
+     * when the edge function is unavailable). Requires PAYMENTER_URL + API key.
+     */
+    private async getPaymenterBalancesDirect(email: string): Promise<{ coins: number; credits: number; found: boolean }> {
         const coinsCur = (process.env.VICTUS_COINS_CURRENCY || 'COINS').toUpperCase();
         const creditCur = (process.env.VICTUS_COINS_PAYMENT_CURRENCY || 'USD').toUpperCase();
         const out = (totals: Record<string, number>, found: boolean) => ({ coins: totals[coinsCur] || 0, credits: totals[creditCur] || 0, found });
@@ -872,76 +908,18 @@ class SupabaseService {
         return response.json();
     }
 
+    /**
+     * Billing credit balance (the payment/USD figure) for a Victus email.
+     * Sources from the admin-paymenter edge function via getPaymenterBalances so
+     * /account + the AI no longer depend on direct Paymenter creds being set.
+     */
     private async getPaymenterCreditsByEmail(email: string): Promise<CreditBalance> {
-        const encodedEmail = encodeURIComponent(email);
-        const userLookups = [
-            `/api/v1/admin/users?filter[email]=${encodedEmail}&include=credits&per_page=5`,
-            `/api/admin/users?filter[email]=${encodedEmail}&include=credits&per_page=5`,
-            `/api/v1/admin/users?search=${encodedEmail}&include=credits&per_page=5`,
-            `/api/admin/users?search=${encodedEmail}&include=credits&per_page=5`,
-        ];
-
-        let matchedUser: any = null;
-        let userPayload: any = null;
-        for (const path of userLookups) {
-            const payload = await this.paymenterDirect(path);
-            const users = asArray(payload?.data ?? payload);
-            matchedUser = users.find((user) => String(getResourceRecord(user).email || '').toLowerCase() === email.toLowerCase());
-            if (matchedUser) {
-                userPayload = payload;
-                break;
-            }
+        const creditCur = (process.env.VICTUS_COINS_PAYMENT_CURRENCY || 'USD').toUpperCase();
+        const balances = await this.getPaymenterBalances(email);
+        if (!balances.found) {
+            return { amount: 0, currency: creditCur, found: false, source: 'none' };
         }
-
-        if (!matchedUser) return { amount: 0, currency: 'USD', found: false, source: 'none' };
-
-        const directAmount = pickAmount(matchedUser);
-        if (directAmount !== null) {
-            return { amount: directAmount, currency: pickCurrency(matchedUser), found: true, source: 'paymenter' };
-        }
-
-        const includedCredits = asArray(userPayload?.included).filter((item) => {
-            const type = String(item.type || '').toLowerCase();
-            return type === 'credit' || type === 'credits';
-        });
-        const credits = includedCredits
-            .map((credit) => ({ amount: pickAmount(credit), currency: pickCurrency(credit) }))
-            .filter((credit): credit is { amount: number; currency: string } => credit.amount !== null);
-
-        const userId = getResourceRecord(matchedUser).id ?? matchedUser.id;
-        if (credits.length === 0 && userId) {
-            const creditLookups = [
-                `/api/v1/admin/credits?filter[user_id]=${encodeURIComponent(String(userId))}&per_page=100`,
-                `/api/admin/credits?filter[user_id]=${encodeURIComponent(String(userId))}&per_page=100`,
-                `/api/v1/admin/users/${encodeURIComponent(String(userId))}?include=credits`,
-                `/api/admin/users/${encodeURIComponent(String(userId))}?include=credits`,
-            ];
-
-            for (const path of creditLookups) {
-                const payload = await this.paymenterDirect(path);
-                const creditRows = path.includes('/users/')
-                    ? asArray(payload?.included).filter((item) => {
-                        const type = String(item.type || '').toLowerCase();
-                        return type === 'credit' || type === 'credits';
-                    })
-                    : asArray(payload?.data ?? payload);
-
-                credits.push(...creditRows
-                    .map((credit) => ({ amount: pickAmount(credit), currency: pickCurrency(credit) }))
-                    .filter((credit): credit is { amount: number; currency: string } => credit.amount !== null));
-
-                if (credits.length > 0) break;
-            }
-        }
-
-        if (credits.length === 0) return { amount: 0, currency: 'USD', found: true, source: 'paymenter' };
-
-        const totals = credits.reduce<Record<string, number>>((acc, credit) => {
-            acc[credit.currency] = (acc[credit.currency] || 0) + credit.amount;
-            return acc;
-        }, {});
-        const [currency = 'USD', amount = 0] = Object.entries(totals).sort((a, b) => b[1] - a[1])[0] || [];
-        return { amount, currency, found: true, source: 'paymenter' };
+        return { amount: balances.credits, currency: creditCur, found: true, source: 'paymenter' };
     }
 
     /**

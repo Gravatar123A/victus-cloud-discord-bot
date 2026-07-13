@@ -267,9 +267,22 @@ async function handleSensitiveAccountQuestion(text: string, context: ActionConte
         privateLines.push(`Your linked Victus account email is \`${linked.profile?.email || 'not available'}\`.`);
     }
 
-    if (/\b(balance|coins?|credits?|wallet)\b/.test(text)) {
+    // "coins"/"wallet" -> the Paymenter COINS figure (the in-app wallet).
+    if (/\b(coins?|wallet)\b/.test(text)) {
+        const email = linked.profile?.email;
+        if (email) {
+            const balances = await supabase.getPaymenterBalances(email);
+            const coinsCur = (process.env.VICTUS_COINS_CURRENCY || 'COINS').toUpperCase();
+            privateLines.push(`Your Victus wallet holds **${formatCredits(balances.coins, coinsCur)}**.`);
+        } else {
+            privateLines.push('Link a Victus account email first to see your COINS wallet.');
+        }
+    }
+
+    // "balance"/"credits" -> the billing credit (USD) figure.
+    if (/\b(balance|credits?)\b/.test(text) && !/\b(coins?|wallet)\b/.test(text)) {
         const balance = await supabase.getCreditBalance(linked.profile);
-        privateLines.push(`Your current wallet balance is **${formatCredits(balance.amount, balance.currency)}**.`);
+        privateLines.push(`Your current billing credit balance is **${formatCredits(balance.amount, balance.currency)}**.`);
     }
 
     if (/\b(invoice|invoices|bill|billing|payment|payments|owe|transactions?)\b/.test(text)) {

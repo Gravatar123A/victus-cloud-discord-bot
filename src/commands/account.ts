@@ -37,10 +37,13 @@ export const accountCommand: Command = {
 
         try {
             const profile = await safe('profile', null, supabase.getUserProfile(linked.userId));
-            const [creditBalance, servers, history] = await Promise.all([
+            const [creditBalance, servers, history, balances] = await Promise.all([
                 safe('credits', { amount: 0, currency: 'USD', found: false, source: 'none' }, supabase.getCreditBalance(profile)),
                 profile?.email ? safe('servers', [], supabase.getUserServers(profile.email)) : Promise.resolve([]),
                 safe('history', [], supabase.getUserHistory(linked.userId)),
+                profile?.email
+                    ? safe('coins', { coins: 0, credits: 0, found: false }, supabase.getPaymenterBalances(profile.email))
+                    : Promise.resolve({ coins: 0, credits: 0, found: false }),
             ]);
 
             const container = ComponentsV2.userInfoContainer(
@@ -50,7 +53,9 @@ export const accountCommand: Command = {
                 profile,
                 servers,
                 history,
-                creditBalance
+                creditBalance,
+                [],
+                balances.found ? balances.coins : undefined
             );
 
             const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(

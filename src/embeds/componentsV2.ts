@@ -353,7 +353,8 @@ export function userInfoContainer(
     servers: any[] = [],
     history: any[] = [],
     creditBalance?: { amount: number; currency: string; found: boolean; source: string },
-    services: any[] = []
+    services: any[] = [],
+    coins?: number
 ): ContainerBuilder {
     const accent = isLinked ? Accents.success : Accents.warning;
     const container = baseContainer(accent).addMediaGalleryComponents(mediaGallery(HERO_IMAGE));
@@ -372,6 +373,9 @@ export function userInfoContainer(
 
         content += `### Account Ledger\n`;
         content += `${Icons.mail} **Email:** ${profile.email || '`Hidden`'}\n`;
+        if (typeof coins === 'number') {
+            content += `${Icons.credits} **Coins:** **${formatCredits(coins, 'COINS')}**\n`;
+        }
         content += `${Icons.credits} **Credits:** **${creditText}**\n`;
         content += `${Icons.calendar} **Joined:** ${formatDate(profile.created_at)}\n\n`;
 
