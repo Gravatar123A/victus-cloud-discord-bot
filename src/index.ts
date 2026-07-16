@@ -44,6 +44,9 @@ async function main() {
             GatewayIntentBits.DirectMessages,
             GatewayIntentBits.MessageContent,
             GatewayIntentBits.GuildVoiceStates,
+            // Required to receive inviteCreate/inviteDelete and to call
+            // guild.invites.fetch() for invite->inviter attribution.
+            GatewayIntentBits.GuildInvites,
         ],
         partials: [
             Partials.Channel,

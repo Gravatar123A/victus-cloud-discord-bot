@@ -14,8 +14,112 @@ import { startUptimeHeartbeat } from '../services/uptimeHeartbeat.js';
 import { initializeFonts } from 'musicard';
 import { startGiveawayScheduler } from '../commands/giveaway.js';
 import { updateServerStats } from '../commands/serverstats.js';
+import { setGuildInvites, type CachedInvite } from '../services/inviteCache.js';
 
 let dmQueueProcessing = false;
+let inviteCreditsProcessing = false;
+
+/**
+ * Seed the in-memory invite-use cache for every guild the bot is in. Requires
+ * the bot to have Manage Server in each guild; failures are logged and skipped
+ * so a single missing permission never blocks startup.
+ */
+async function seedInviteCache(client: Client<true>): Promise<void> {
+    let seeded = 0;
+    for (const guild of client.guilds.cache.values()) {
+        try {
+            const invites = await guild.invites.fetch();
+            const snapshot = new Map<string, CachedInvite>();
+            for (const invite of invites.values()) {
+                snapshot.set(invite.code, {
+                    uses: invite.uses ?? 0,
+                    inviterId: invite.inviterId ?? invite.inviter?.id ?? null,
+                });
+            }
+            setGuildInvites(guild.id, snapshot);
+            seeded += snapshot.size;
+        } catch (err) {
+            logger.warn(`Invite cache: could not fetch invites for guild ${guild.id} (needs Manage Server): ${(err as Error).message}`);
+        }
+    }
+    logger.info(`Invite cache seeded: ${seeded} invites across ${client.guilds.cache.size} guild(s)`);
+}
+
+/**
+ * Pay out due invite credits (escrow settlement). For each PENDING credit whose
+ * qualify_at has passed: verify the invitee is still a member and the inviter's
+ * Victus account is linked, then grant the COINS via the CANONICAL Paymenter
+ * rail (supabase.grantInviteCoins -> adjustPaymenterCredits currency=COINS) and
+ * mark the row 'confirmed'. If the invitee already left, void it; if the inviter
+ * is unlinked or the grant fails, the row stays 'pending' for the next pass.
+ */
+async function processInviteCredits(client: Client<true>): Promise<void> {
+    if (!config.economy.invite.enabled) return;
+    if (inviteCreditsProcessing) return;
+    inviteCreditsProcessing = true;
+
+    try {
+        const due = await supabase.getDueInviteCredits(50);
+        for (const credit of due) {
+            try {
+                const guild = client.guilds.cache.get(credit.guild_id);
+                if (!guild) continue; // bot not in that guild right now; retry later
+
+                // Invitee must still be a member.
+                const member = await guild.members.fetch(credit.invitee_discord_id).catch(() => null);
+                if (!member) {
+                    await supabase.updateInviteCredit(credit.id, {
+                        status: 'voided',
+                        left_at: credit.left_at || new Date().toISOString(),
+                    });
+                    logger.info(`Invite credit VOIDED at payout: invitee ${credit.invitee_discord_id} no longer a member`);
+                    continue;
+                }
+
+                // Inviter must have a linked Victus account. Re-resolve if we
+                // did not have it when the credit was created.
+                let inviterUserId = credit.inviter_user_id;
+                if (!inviterUserId && credit.inviter_discord_id) {
+                    const linked = await supabase.getLinkedAccount(credit.inviter_discord_id).catch(() => null);
+                    inviterUserId = linked?.user_id ?? null;
+                }
+                if (!inviterUserId) {
+                    logger.debug(`Invite credit ${credit.id}: inviter not linked yet; leaving pending`);
+                    continue;
+                }
+
+                // Grant via the canonical Paymenter COINS rail.
+                const ok = await supabase.grantInviteCoins(inviterUserId, credit.coins);
+                if (!ok) {
+                    logger.warn(`Invite credit ${credit.id}: COINS grant failed; leaving pending for retry`);
+                    continue;
+                }
+
+                await supabase.updateInviteCredit(credit.id, {
+                    status: 'confirmed',
+                    inviter_user_id: inviterUserId,
+                    paid_at: new Date().toISOString(),
+                });
+                logger.info(`Invite credit CONFIRMED: +${credit.coins} COINS to inviter ${credit.inviter_discord_id} for ${credit.invitee_discord_id}`);
+
+                // Best-effort DM to the inviter.
+                if (credit.inviter_discord_id) {
+                    const container = ComponentsV2.successContainer(
+                        `+${credit.coins} COINS Earned`,
+                        `Thanks for growing ${config.branding.name}! You earned **${credit.coins} COINS** because <@${credit.invitee_discord_id}> joined with your invite and stuck around.`
+                    );
+                    await sendNotificationDM(client, credit.inviter_discord_id, container, 'promotions').catch(() => {});
+                }
+            } catch (err) {
+                logger.error(`processInviteCredits: error settling credit ${credit.id}:`, err);
+            }
+        }
+    } catch (error) {
+        logger.error('processInviteCredits failed:', error);
+    } finally {
+        inviteCreditsProcessing = false;
+    }
+}
 
 function buildNotificationContainer(job: any): any {
     const type: NotificationType | null = job.notification_type || null;
@@ -173,6 +277,19 @@ export const readyEvent: Event = {
 
         // Start background giveaway ends_at checks scheduler
         startGiveawayScheduler(client);
+
+        // Invite -> COINS escrow: seed the invite cache and start the payout
+        // scheduler. Entirely inert unless DISCORD_INVITE_COINS_ENABLED=true.
+        if (config.economy.invite.enabled) {
+            await seedInviteCache(client);
+            await processInviteCredits(client);
+            setInterval(() => {
+                processInviteCredits(client).catch((error) => logger.error('Invite credits interval failed:', error));
+            }, 60_000);
+            logger.info('Invite COINS escrow scheduler started (60s interval)');
+        } else {
+            logger.info('Invite COINS escrow disabled (set DISCORD_INVITE_COINS_ENABLED=true to enable)');
+        }
 
         // Server Stats Auto-Updater
         const runServerStats = async () => {

@@ -14,6 +14,8 @@ import { messageDeleteEvent } from './messageDelete.js';
 import { guildMemberRemoveEvent } from './guildMemberRemove.js';
 import { guildBanAddEvent } from './guildBanAdd.js';
 import { guildBanRemoveEvent } from './guildBanRemove.js';
+import { inviteCreateEvent } from './inviteCreate.js';
+import { inviteDeleteEvent } from './inviteDelete.js';
 
 const events: Event[] = [
     readyEvent,
@@ -27,6 +29,8 @@ const events: Event[] = [
     guildMemberRemoveEvent,
     guildBanAddEvent,
     guildBanRemoveEvent,
+    inviteCreateEvent,
+    inviteDeleteEvent,
 ];
 
 /**

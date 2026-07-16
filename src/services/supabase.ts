@@ -2,9 +2,10 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import type { 
+import type {
     BotSettings, LinkedAccount, LinkToken, UserProfile,
-    CustomEmbed, EmbedSettings, Suggestion, SuggestionVote, Giveaway, CustomCommand
+    CustomEmbed, EmbedSettings, Suggestion, SuggestionVote, Giveaway, CustomCommand,
+    InviteCredit
 } from '../types/index.js';
 import { localSettings } from './localSettings.js';
 
@@ -769,6 +770,125 @@ class SupabaseService {
         }
 
         return data;
+    }
+
+    // ============================================
+    // Discord Invite Coins (escrow ledger)
+    // ============================================
+
+    /**
+     * Grant invite-reward COINS to an inviter via the CANONICAL Paymenter rail
+     * (adjustPaymenterCredits, currency=COINS, mode 'add') — NOT profiles.total_cp
+     * / econGrantCp. Resolves the inviter's Paymenter account by their linked
+     * Victus profile email. Returns false (so the caller can leave the credit
+     * 'pending' and retry later) if the inviter has no profile/email or the
+     * Paymenter adjustment fails.
+     */
+    async grantInviteCoins(inviterUserId: string, amount: number): Promise<boolean> {
+        if (!inviterUserId || !Number.isFinite(amount) || amount <= 0) return false;
+        const profile = await this.getUserProfile(inviterUserId);
+        if (!profile?.email) {
+            logger.warn(`grantInviteCoins: no profile/email for user ${inviterUserId}; leaving credit pending`);
+            return false;
+        }
+        try {
+            await this.adjustPaymenterCredits({
+                email: String(profile.email).toLowerCase(),
+                currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
+                mode: 'add',
+                amount: Math.round(amount),
+            });
+            logger.info(`grantInviteCoins: +${Math.round(amount)} COINS to ${profile.email} (user ${inviterUserId})`);
+            return true;
+        } catch (e) {
+            logger.error(`grantInviteCoins failed for ${inviterUserId}: ${(e as Error).message}`);
+            return false;
+        }
+    }
+
+    /**
+     * Insert a pending (or unattributed) invite credit. UNIQUE(invitee_discord_id)
+     * + ignoreDuplicates makes this idempotent: a re-invite / rejoin is a no-op
+     * and returns null. Returns the created row on a fresh insert.
+     */
+    async createInviteCredit(row: {
+        guild_id: string;
+        inviter_discord_id: string | null;
+        invitee_discord_id: string;
+        invite_code: string | null;
+        inviter_user_id: string | null;
+        coins: number;
+        status: InviteCredit['status'];
+        qualify_at: string;
+    }): Promise<InviteCredit | null> {
+        const { data, error } = await this.client
+            .from('discord_invite_credits')
+            .upsert(row, { onConflict: 'invitee_discord_id', ignoreDuplicates: true })
+            .select()
+            .maybeSingle();
+        if (error) {
+            logger.error('createInviteCredit failed:', error);
+            return null;
+        }
+        return (data as InviteCredit | null) ?? null;
+    }
+
+    /** Look up a single invite credit by the invited person's Discord ID. */
+    async getInviteCreditByInvitee(inviteeDiscordId: string): Promise<InviteCredit | null> {
+        const { data, error } = await this.client
+            .from('discord_invite_credits')
+            .select('*')
+            .eq('invitee_discord_id', inviteeDiscordId)
+            .maybeSingle();
+        if (error) {
+            logger.error('getInviteCreditByInvitee failed:', error);
+            return null;
+        }
+        return (data as InviteCredit | null) ?? null;
+    }
+
+    /** Patch an invite credit (auto-stamps updated_at). */
+    async updateInviteCredit(id: string, patch: Partial<InviteCredit>): Promise<boolean> {
+        const { error } = await this.client
+            .from('discord_invite_credits')
+            .update({ ...patch, updated_at: new Date().toISOString() })
+            .eq('id', id);
+        if (error) {
+            logger.error('updateInviteCredit failed:', error);
+            return false;
+        }
+        return true;
+    }
+
+    /** Pending credits whose qualify_at has passed — the scheduler's work queue. */
+    async getDueInviteCredits(limit = 50): Promise<InviteCredit[]> {
+        const { data, error } = await this.client
+            .from('discord_invite_credits')
+            .select('*')
+            .eq('status', 'pending')
+            .lte('qualify_at', new Date().toISOString())
+            .order('qualify_at', { ascending: true })
+            .limit(limit);
+        if (error) {
+            logger.error('getDueInviteCredits failed:', error);
+            return [];
+        }
+        return (data as InviteCredit[]) || [];
+    }
+
+    /** Count an inviter's pending+confirmed credits since `sinceIso` (rate cap). */
+    async countRecentInviterCredits(inviterDiscordId: string, sinceIso: string): Promise<number> {
+        const { count, error } = await this.client
+            .from('discord_invite_credits')
+            .select('id', { count: 'exact', head: true })
+            .eq('inviter_discord_id', inviterDiscordId)
+            .in('status', ['pending', 'confirmed'])
+            .gte('joined_at', sinceIso);
+        if (error) {
+            logger.error('countRecentInviterCredits failed:', error);
+            return 0;
+        }
+        return count ?? 0;
     }
 
     /**

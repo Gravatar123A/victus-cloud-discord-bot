@@ -90,6 +90,22 @@ export const config = {
         messageXpCooldownSec: parseInt(process.env.ECON_MESSAGE_XP_COOLDOWN_SEC || '60', 10),
         // XP awarded per full minute spent active in a voice channel.
         xpPerVoiceMinute: parseInt(process.env.ECON_XP_PER_VOICE_MINUTE || '8', 10),
+
+        // Automatic "+N COINS per Discord invite" reward (escrow model).
+        // Disabled by default: the whole feature is inert until
+        // DISCORD_INVITE_COINS_ENABLED=true is set on the bot host, so a deploy
+        // ships nothing user-facing until the operator opts in.
+        invite: {
+            enabled: process.env.DISCORD_INVITE_COINS_ENABLED === 'true',
+            // COINS paid to the inviter once the invitee qualifies.
+            amount: parseInt(process.env.INVITE_COINS_AMOUNT || '20', 10),
+            // Days the invitee must stay before the inviter is paid.
+            qualifyDays: parseInt(process.env.INVITE_QUALIFY_DAYS || '3', 10),
+            // Minimum invitee account age (days) to block throwaway alts.
+            minAccountAgeDays: parseInt(process.env.INVITE_MIN_ACCOUNT_AGE_DAYS || '7', 10),
+            // Max credits a single inviter can earn in a trailing 24h window.
+            dailyCap: parseInt(process.env.INVITE_DAILY_CAP || '10', 10),
+        },
     },
 
     // Victus Cloud Branding

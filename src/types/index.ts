@@ -366,6 +366,23 @@ export interface TicketMessage {
     created_at: string;
 }
 
+export interface InviteCredit {
+    id: string;
+    guild_id: string;
+    inviter_discord_id: string | null;
+    invitee_discord_id: string;
+    invite_code: string | null;
+    inviter_user_id: string | null;
+    coins: number;
+    status: 'pending' | 'confirmed' | 'voided' | 'clawed_back' | 'unattributed';
+    joined_at: string;
+    qualify_at: string;
+    paid_at: string | null;
+    left_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
 export interface UserPreferences {
     id: string;
     user_id: string;
