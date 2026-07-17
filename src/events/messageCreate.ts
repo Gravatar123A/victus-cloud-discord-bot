@@ -15,6 +15,7 @@ import { checkCooldown } from '../middleware/rateLimit.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { calculateLevel } from '../utils/vccrs.js';
 import { buildFinalEmbedPayload } from '../commands/embed.js';
+import { bridgeDiscordMessageToWeb } from '../services/chatBridge.js';
 
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
@@ -144,6 +145,10 @@ function formatDurationMs(ms: number): string {
 export const messageCreateEvent: Event = {
     name: 'messageCreate',
     async execute(message: Message) {
+        // Mirror the public #general channel to the website public chat.
+        // Fire-and-forget; the bridge self-guards against bot/webhook echo.
+        void bridgeDiscordMessageToWeb(message);
+
         if (message.author.bot) return;
 
         // --- AFK System ---
