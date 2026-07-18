@@ -473,7 +473,11 @@ class GroqAiService {
 
     private async callResponsesApi(messages: ChatMessage[], withTools: boolean): Promise<string> {
         const endpoint = config.ai.baseUrl;
-        const maxTokens = clampNumber(config.ai.maxTokens, 4000, 128, 15000);
+        // gpt-5.6-sol is a REASONING model: reasoning tokens are billed against
+        // max_output_tokens. Give the visible answer real headroom (default 8000,
+        // never below 2000) and keep reasoning cheap via effort:'low' so it can't
+        // eat the whole budget and leave zero tokens for the actual reply.
+        let maxTokens = clampNumber(config.ai.maxTokens, 8000, 2000, 32000);
         // Responses API input items: chat turns as {role, content}; tool calls and
         // their results are appended as function_call / function_call_output items.
         const input: Record<string, unknown>[] = messages.map((message) => ({
@@ -482,17 +486,22 @@ class GroqAiService {
         }));
 
         let toolsAllowed = withTools;
+        let useReasoning = true;
 
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+            const attachTools = toolsAllowed && round < MAX_TOOL_ROUNDS;
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 60000);
+            const timeout = setTimeout(() => controller.abort(), 45000);
             try {
                 const body: Record<string, unknown> = {
                     model: config.ai.model,
                     input,
                     max_output_tokens: maxTokens,
                 };
-                if (toolsAllowed && round < MAX_TOOL_ROUNDS) {
+                if (useReasoning) {
+                    body.reasoning = { effort: 'low' };
+                }
+                if (attachTools) {
                     body.tools = RESPONSES_TOOLS;
                     body.tool_choice = 'auto';
                 }
@@ -506,9 +515,12 @@ class GroqAiService {
 
                 const payload = await response.json().catch(() => null) as any;
                 if (!response.ok) {
-                    // If the deployment rejects tools, fall back to a plain call once.
-                    if (toolsAllowed && response.status === 400) {
+                    // A 400 usually means the deployment rejected an optional param
+                    // (tools or the reasoning field). Degrade gracefully once rather
+                    // than surfacing the fallback to the user.
+                    if (response.status === 400 && (attachTools || useReasoning)) {
                         toolsAllowed = false;
+                        useReasoning = false;
                         continue;
                     }
                     const detail = payload?.error?.message || payload?.message || response.statusText;
@@ -518,12 +530,23 @@ class GroqAiService {
                 const output: any[] = payload?.output || [];
                 const calls = output.filter((item: any) => item.type === 'function_call');
 
-                if (toolsAllowed && calls.length > 0 && round < MAX_TOOL_ROUNDS) {
+                if (attachTools && calls.length > 0) {
+                    let allErrored = true;
                     for (const call of calls) {
                         const rawArgs = typeof call.arguments === 'string' ? call.arguments : JSON.stringify(call.arguments || {});
                         input.push({ type: 'function_call', call_id: call.call_id, name: call.name, arguments: rawArgs });
                         const result = await runTool(call.name, rawArgs);
+                        if (!(result && typeof result === 'object' && 'error' in result)) {
+                            allErrored = false;
+                        }
                         input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });
+                    }
+                    // If every tool call failed (e.g. web_search is blocked from this
+                    // datacenter IP), stop looping on tools and make the model answer
+                    // from its built-in knowledge base next round instead of burning
+                    // every round re-issuing searches that will never succeed.
+                    if (allErrored) {
+                        toolsAllowed = false;
                     }
                     continue;
                 }
@@ -541,9 +564,24 @@ class GroqAiService {
                     return truncate(text.trim(), 3200);
                 }
 
-                if (!toolsAllowed || round >= MAX_TOOL_ROUNDS) {
-                    throw new Error('Azure AI returned an empty response.');
+                // No usable text. Two recoverable causes, both self-healing:
+                //  1) reasoning consumed the whole budget (status:incomplete,
+                //     incomplete_details.reason === 'max_output_tokens') -> grow it.
+                //  2) a tools-on turn returned only hidden reasoning and no message
+                //     -> drop tools; a tools-off call reliably returns a message.
+                const truncatedByTokens = payload?.status === 'incomplete'
+                    && payload?.incomplete_details?.reason === 'max_output_tokens';
+                if (truncatedByTokens && maxTokens < 32000) {
+                    maxTokens = Math.min(32000, maxTokens * 2);
+                    continue;
                 }
+                if (toolsAllowed) {
+                    toolsAllowed = false;
+                    if (maxTokens < 16000) maxTokens = 16000;
+                    continue;
+                }
+
+                throw new Error(`Azure AI returned an empty response (status=${payload?.status ?? 'unknown'}).`);
             } finally {
                 clearTimeout(timeout);
             }
