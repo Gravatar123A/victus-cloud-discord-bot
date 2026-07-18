@@ -30,10 +30,14 @@ export async function bridgeDiscordMessageToWeb(message: Message): Promise<void>
         if (!content) return; // skip attachment-only / empty messages for now
 
         const username = message.member?.displayName || message.author.username || 'Discord user';
+        const avatarUrl =
+            message.member?.displayAvatarURL?.({ size: 128 }) ||
+            message.author.displayAvatarURL({ size: 128 });
 
         await client.from('global_chat_messages').insert({
             user_id: null,
             username,
+            avatar_url: avatarUrl,
             message: content.slice(0, 2000),
             discord_message_id: message.id,
         });
