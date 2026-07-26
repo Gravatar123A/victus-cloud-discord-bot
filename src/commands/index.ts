@@ -48,6 +48,7 @@ import { unbanCommand } from './unban.js';
 import { untimeoutCommand } from './untimeout.js';
 import { whitelistCommand } from './whitelist.js';
 import { communityCoinsCommand } from './community-coins.js';
+import { levelCommand } from './level.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -103,6 +104,7 @@ const allCommands: Command[] = [
     untimeoutCommand,
     whitelistCommand,
     communityCoinsCommand,
+    levelCommand,
     ...musicCommands,
 ];
 

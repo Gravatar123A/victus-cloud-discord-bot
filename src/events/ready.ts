@@ -1,7 +1,7 @@
 import { ActivityType, Client } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
-import { assignLinkedRole, syncLinkedRoles } from '../utils/roles.js';
+import { assignLinkedRole, syncAllRankRoles, syncLinkedRoles, syncRankRole } from '../utils/roles.js';
 import { supabase } from '../services/supabase.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { NotificationTemplates } from '../embeds/notificationTemplates.js';
@@ -15,6 +15,8 @@ import { initializeFonts } from 'musicard';
 import { startGiveawayScheduler } from '../commands/giveaway.js';
 import { updateServerStats } from '../commands/serverstats.js';
 import { setGuildInvites, type CachedInvite } from '../services/inviteCache.js';
+import { startLevelUpWorker } from '../services/levelUp.js';
+import { restoreVoiceXpSessions } from './voiceStateUpdate.js';
 
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
@@ -243,6 +245,9 @@ export const readyEvent: Event = {
         }
 
         await syncLinkedRoles(client);
+        await syncAllRankRoles(client);
+        restoreVoiceXpSessions(client);
+        startLevelUpWorker(client);
 
         logger.info('Setting up Supabase Realtime subscription...');
         supabase.subscribeToLinks(async (payload) => {
@@ -250,6 +255,12 @@ export const readyEvent: Event = {
             const { discord_id, discord_username } = payload.new;
 
             const roleSuccess = await assignLinkedRole(client, discord_id);
+            const linked = await supabase.getLinkedAccount(discord_id).catch(() => null);
+            const profile = linked ? await supabase.getUserProfile(linked.user_id).catch(() => null) : null;
+            if (profile) {
+                const { calculateLevel } = await import('../utils/vccrs.js');
+                await syncRankRole(client, discord_id, calculateLevel(Number(profile.total_xp ?? 0))).catch(() => false);
+            }
 
             const dmContainer = NotificationTemplates.accountLinkedDM(discord_username || 'User');
             await sendNotificationDM(client, discord_id, dmContainer, 'security');

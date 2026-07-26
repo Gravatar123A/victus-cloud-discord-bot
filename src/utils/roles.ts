@@ -2,6 +2,49 @@ import { Client, GuildMember, Role } from 'discord.js';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 import { supabase } from '../services/supabase.js';
+import { calculateLevel, getTierForLevel } from './vccrs.js';
+
+export const RANK_ROLE_IDS: Record<string, string> = {
+    Initiate: '1528247575231074485',
+    Vanguard: '1528247645481467964',
+    Stormborn: '1528247776217927731',
+    Celestial: '1528247862247559268',
+    Titan: '1528248002823585843',
+    Aethel: '1528248074307244133',
+};
+
+const ALL_RANK_ROLE_IDS = Object.values(RANK_ROLE_IDS);
+
+/** Keep exactly the rank role represented by the member's shared Victus XP. */
+export async function syncRankRole(client: Client, discordId: string, level: number): Promise<boolean> {
+    const guildId = config.bot.supportGuildId;
+    if (!guildId) {
+        logger.warn('Cannot sync rank role: DISCORD_SUPPORT_GUILD_ID is not configured');
+        return false;
+    }
+    const guild = await client.guilds.fetch(guildId).catch(() => null);
+    const member = guild ? await guild.members.fetch(discordId).catch(() => null) : null;
+    if (!member) return false;
+
+    const tier = getTierForLevel(level);
+    const desired = RANK_ROLE_IDS[tier.name];
+    const removable = ALL_RANK_ROLE_IDS.filter((id) => id !== desired && member.roles.cache.has(id));
+    if (removable.length) await member.roles.remove(removable, 'Victus rank synchronization');
+    if (!member.roles.cache.has(desired)) await member.roles.add(desired, `Victus rank: ${tier.name}`);
+    return true;
+}
+
+export async function syncAllRankRoles(client: Client): Promise<void> {
+    const accounts = await supabase.getAllLinkedAccounts();
+    let synced = 0;
+    for (const account of accounts) {
+        const profile = await supabase.getUserProfile(account.user_id).catch(() => null);
+        if (!profile) continue;
+        const level = calculateLevel(Number(profile.total_xp ?? 0));
+        if (await syncRankRole(client, account.discord_id, level).catch(() => false)) synced++;
+    }
+    logger.info(`✅ Rank role sync complete: ${synced}/${accounts.length} linked users`);
+}
 
 /**
  * Get bot configuration for a guild (DB with env fallback)

@@ -94,6 +94,7 @@ Do not set `MAIN_FILE` to `index.js` unless this root launcher exists in the ser
 | `/ask` | Ask the Victus Cloud AI assistant |
 | `/ticket` | Create support ticket |
 | `/community-coins` | Set up a Community Coins listing (shows this server's ID + publish steps) |
+| `/level` | View your synchronized community XP, level, rank and progress |
 | `/help` | Show help |
 
 ### Groq AI Chat

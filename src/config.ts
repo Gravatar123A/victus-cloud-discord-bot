@@ -86,6 +86,7 @@ export const config = {
         supportGuildId: process.env.DISCORD_SUPPORT_GUILD_ID || '', // Main support server ID
         aiChannelId: process.env.DISCORD_AI_CHANNEL_ID || '', // Optional fallback AI support channel
         autoRegisterCommands: process.env.DISCORD_AUTO_REGISTER_COMMANDS !== 'false',
+        levelUpChannelId: process.env.DISCORD_LEVEL_UP_CHANNEL_ID || '1416377943776559204',
         // Uptime Kuma push monitor — the bot pings this on an interval so the
         // "Discord Bot Heartbeat" monitor stays green. Override via env.
         uptimePushUrl: process.env.UPTIME_KUMA_PUSH_URL || 'https://status.victuscloud.com/api/push/KPHJ8IOmDd',
@@ -95,11 +96,13 @@ export const config = {
     // profiles.total_xp via the increment_xp RPC + cp_transactions ledger).
     economy: {
         // XP awarded per eligible guild message (bots/DMs/commands ignored).
-        xpPerMessage: parseInt(process.env.ECON_XP_PER_MESSAGE || '15', 10),
+        xpPerMessage: parseInt(process.env.ECON_XP_PER_MESSAGE || '10', 10),
         // Per-user cooldown (seconds) between message XP awards, to curb spam.
-        messageXpCooldownSec: parseInt(process.env.ECON_MESSAGE_XP_COOLDOWN_SEC || '60', 10),
+        messageXpCooldownSec: parseInt(process.env.ECON_MESSAGE_XP_COOLDOWN_SEC || '0', 10),
         // XP awarded per full minute spent active in a voice channel.
-        xpPerVoiceMinute: parseInt(process.env.ECON_XP_PER_VOICE_MINUTE || '8', 10),
+        xpPerVoiceMinute: parseInt(process.env.ECON_XP_PER_VOICE_MINUTE || '15', 10),
+        xpPerLevel: parseInt(process.env.ECON_XP_PER_LEVEL || '200', 10),
+        coinsPerLevel: parseInt(process.env.ECON_COINS_PER_LEVEL || '30', 10),
 
         // Automatic "+N COINS per Discord invite" reward (escrow model).
         // Disabled by default: the whole feature is inert until

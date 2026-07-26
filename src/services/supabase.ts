@@ -373,10 +373,10 @@ class SupabaseService {
     /**
      * Get all linked accounts (for startup role sync)
      */
-    async getAllLinkedAccounts(): Promise<{ discord_id: string }[]> {
+    async getAllLinkedAccounts(): Promise<{ discord_id: string; user_id: string }[]> {
         const { data, error } = await this.client
             .from('discord_linked_accounts')
-            .select('discord_id');
+            .select('discord_id, user_id');
 
         if (error) {
             logger.error('Failed to get all linked accounts:', error);
@@ -522,7 +522,11 @@ class SupabaseService {
      */
     async grantXp(userId: string, amount: number, actionType: string, metadata: Record<string, unknown> = {}): Promise<boolean> {
         if (!userId || !Number.isFinite(amount) || amount <= 0) return false;
-        const { error: rpcError } = await this.client.rpc('increment_xp', { uid: userId, amount });
+        const { error: rpcError } = await this.client.rpc('award_xp', {
+            p_user_id: userId,
+            p_amount: Math.floor(amount),
+            p_source: actionType,
+        });
         if (rpcError) {
             logger.error('grantXp increment_xp failed:', rpcError);
             return false;
@@ -535,6 +539,29 @@ class SupabaseService {
             logger.warn(`grantXp ledger insert failed: ${ledgerError.message}`);
         }
         return true;
+    }
+
+    async claimLevelUpEvent(): Promise<any | null> {
+        const { data, error } = await this.client.rpc('claim_level_up_event');
+        if (error) throw new Error(`claim_level_up_event failed: ${error.message}`);
+        return Array.isArray(data) ? (data[0] ?? null) : data;
+    }
+
+    async applyLevelXpReward(eventId: string, amount: number): Promise<any> {
+        const { data, error } = await this.client.rpc('apply_level_xp_reward', {
+            p_event_id: eventId,
+            p_amount: Math.floor(amount),
+        });
+        if (error) throw new Error(`apply_level_xp_reward failed: ${error.message}`);
+        return data;
+    }
+
+    async updateLevelUpEvent(eventId: string, fields: Record<string, unknown>): Promise<void> {
+        const { error } = await this.client
+            .from('level_up_events')
+            .update({ ...fields, updated_at: new Date().toISOString() })
+            .eq('id', eventId);
+        if (error) throw new Error(`level_up_events update failed: ${error.message}`);
     }
 
     /** Total CP ledger entries for a user (for pagination). */

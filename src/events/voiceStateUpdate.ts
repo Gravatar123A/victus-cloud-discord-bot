@@ -8,8 +8,7 @@ import { j2cSettings } from '../services/j2cSettings.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 
 // In-memory voice XP tracking. One ticking timer per (guild, user) session that
-// awards XP each minute while the member is "actively" in voice: not self-muted,
-// not self-deafened, not server-muted/deafened, and not alone in the channel.
+// awards XP each full minute while the non-bot member remains connected to voice.
 // Timers are cleared on leave/disconnect/move so nothing leaks.
 
 interface VoiceSession {
@@ -25,19 +24,7 @@ function sessionKey(guildId: string, userId: string): string {
 // A member counts as "active" if they aren't muted/deafened (self or server)
 // and there is at least one other non-bot human in the channel.
 function isActive(state: VoiceState): boolean {
-    if (!state.channel) return false;
-    if (state.selfMute || state.selfDeaf || state.mute || state.deaf) return false;
-    return hasOtherHumans(state.channel, state.id);
-}
-
-function hasOtherHumans(channel: VoiceBasedChannel, selfUserId: string): boolean {
-    let others = 0;
-    for (const member of channel.members.values()) {
-        if (member.user.bot) continue;
-        if (member.id === selfUserId) continue;
-        others++;
-    }
-    return others > 0;
+    return Boolean(state.channel && !state.member?.user.bot);
 }
 
 function stopSession(guildId: string, userId: string): void {
@@ -61,7 +48,7 @@ function startSession(guildId: string, userId: string): void {
             stopSession(guildId, userId);
             return;
         }
-        if (!isActive(voice)) return; // paused (muted/deafened/alone) — keep ticking, just don't award
+        if (!isActive(voice)) return;
         void awardVoiceXp(userId, 1).catch(() => undefined);
     }, 60_000);
 
@@ -75,6 +62,17 @@ function startSession(guildId: string, userId: string): void {
 let clientRef: import('discord.js').Client | null = null;
 function currentGuild(guildId: string) {
     return clientRef?.guilds.cache.get(guildId) ?? null;
+}
+
+/** Recover voice XP timers for members already connected when the bot restarts. */
+export function restoreVoiceXpSessions(client: import('discord.js').Client): void {
+    clientRef = client;
+    for (const guild of client.guilds.cache.values()) {
+        for (const state of guild.voiceStates.cache.values()) {
+            if (state.member?.user.bot || !state.channel) continue;
+            startSession(guild.id, state.id);
+        }
+    }
 }
 
 export const voiceStateUpdateEvent: Event = {
