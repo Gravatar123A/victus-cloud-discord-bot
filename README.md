@@ -112,6 +112,22 @@ VICTUS_AI_SYSTEM_PROMPT=
 
 After changing AI env vars, restart the bot so it can reload configuration.
 
+### Server entitlement roles
+
+The bot synchronizes Victus server entitlements with Discord on startup, account linking,
+guild joins, and every five minutes. The defaults can be overridden with:
+
+```bash
+DISCORD_SUPPORT_GUILD_ID=your_victus_discord_server_id
+DISCORD_FREE_USER_ROLE_ID=1531675572877525082
+DISCORD_PAID_CLIENT_ROLE_ID=1340607431193137296
+DISCORD_ENTITLEMENT_SYNC_MINUTES=5
+```
+
+The bot role must be above both managed roles and have **Manage Roles** permission. An active
+paid service always takes precedence over a free server; expired or suspended entitlements
+remove their corresponding role automatically.
+
 `GROQ_API_KEY` is the only required AI variable. The base URL and model already default to `https://api.groq.com/openai` and `llama-3.1-8b-instant`.
 
 The bot also auto-syncs slash commands on startup unless `DISCORD_AUTO_REGISTER_COMMANDS=false`, so `/ask` should appear after restart. If `DISCORD_GUILD_ID` is set, commands update instantly for that guild; global commands can take up to 1 hour.

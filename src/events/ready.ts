@@ -17,6 +17,7 @@ import { updateServerStats } from '../commands/serverstats.js';
 import { setGuildInvites, type CachedInvite } from '../services/inviteCache.js';
 import { startLevelUpWorker } from '../services/levelUp.js';
 import { restoreVoiceXpSessions } from './voiceStateUpdate.js';
+import { syncEntitlementRoles } from '../services/entitlementRoles.js';
 
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
@@ -249,6 +250,13 @@ export const readyEvent: Event = {
         restoreVoiceXpSessions(client);
         startLevelUpWorker(client);
 
+        await syncEntitlementRoles(client).catch((error) => {
+            logger.error('Initial entitlement role sync failed:', error);
+        });
+        setInterval(() => {
+            syncEntitlementRoles(client).catch((error) => logger.error('Entitlement role sync interval failed:', error));
+        }, config.bot.entitlementSyncMinutes * 60 * 1000);
+
         logger.info('Setting up Supabase Realtime subscription...');
         supabase.subscribeToLinks(async (payload) => {
             logger.info('Realtime account link event received:', JSON.stringify(payload, null, 2));
@@ -261,6 +269,10 @@ export const readyEvent: Event = {
                 const { calculateLevel } = await import('../utils/vccrs.js');
                 await syncRankRole(client, discord_id, calculateLevel(Number(profile.total_xp ?? 0))).catch(() => false);
             }
+
+            await syncEntitlementRoles(client, discord_id).catch((error) => {
+                logger.error(`Entitlement role sync failed after linking ${discord_id}:`, error);
+            });
 
             const dmContainer = NotificationTemplates.accountLinkedDM(discord_username || 'User');
             await sendNotificationDM(client, discord_id, dmContainer, 'security');

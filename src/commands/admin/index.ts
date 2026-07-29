@@ -22,6 +22,7 @@ import { requireAdmin } from '../../middleware/requireLinked.js';
 import { createPagination } from '../../utils/pagination.js';
 import { logger } from '../../utils/logger.js';
 import { VICTUS_COLORS } from '../../types/index.js';
+import { removeEntitlementRoles, syncEntitlementRoles } from '../../services/entitlementRoles.js';
 
 export const adminCommand: Command = {
     data: new SlashCommandBuilder()
@@ -144,6 +145,11 @@ export const adminCommand: Command = {
             sub
                 .setName('stats')
                 .setDescription('View platform statistics')
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('sync')
+                .setDescription('Synchronize free-user and paid-client roles')
         ),
 
     adminOnly: true,
@@ -178,6 +184,9 @@ export const adminCommand: Command = {
                     break;
                 case 'stats':
                     await handleStats(interaction);
+                    break;
+                case 'sync':
+                    await handleRoleSync(interaction);
                     break;
             }
         } catch (error) {
@@ -235,6 +244,13 @@ async function handleSearch(interaction: any) {
                     iconURL: config.branding.logo,
                 });
         },
+    });
+}
+
+async function handleRoleSync(interaction: any) {
+    const changed = await syncEntitlementRoles(interaction.client);
+    await interaction.editReply({
+        embeds: [successEmbed('Entitlement Roles Synchronized', `${changed} member role assignment(s) were updated.`)],
     });
 }
 
@@ -353,6 +369,11 @@ async function handleForceUnlink(interaction: any) {
     const success = await supabase.unlinkAccount(discordUser.id);
 
     if (success) {
+        const member = interaction.guild
+            ? await interaction.guild.members.fetch(discordUser.id).catch(() => null)
+            : null;
+        if (member) await removeEntitlementRoles(member);
+
         await interaction.editReply({
             embeds: [
                 successEmbed(

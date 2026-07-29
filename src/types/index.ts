@@ -226,6 +226,10 @@ export interface PterodactylServer {
     name: string;
     description: string;
     status: string | null;
+    server_type?: 'free' | 'paid';
+    renewal_deadline?: string | null;
+    is_paused_due_to_renewal?: boolean;
+    free_suspended_at?: string | null;
     is_suspended: boolean;
     limits: {
         memory: number;
@@ -276,6 +280,8 @@ export interface PaymenterService {
     user_id: number;
     product_id: number;
     product_name: string;
+    plan_id?: number | null;
+    plan_type?: string | null;
     status: 'active' | 'suspended' | 'cancelled' | 'pending';
     price: number;
     billing_cycle: string;

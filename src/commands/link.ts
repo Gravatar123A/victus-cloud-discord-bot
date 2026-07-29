@@ -8,6 +8,7 @@ import { assignLinkedRole } from '../utils/roles.js';
 import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
 import { logger } from '../utils/logger.js';
 import { postLinkPanel } from './link-panel.js';
+import { syncEntitlementRoles } from '../services/entitlementRoles.js';
 
 export const linkCommand: Command = {
     data: new SlashCommandBuilder()
@@ -114,6 +115,9 @@ export const linkCommand: Command = {
 
                 // 1. Assign Role
                 const roleSuccess = await assignLinkedRole(interaction.client, discordId);
+                await syncEntitlementRoles(interaction.client, discordId).catch((error) => {
+                    logger.error(`Entitlement role sync failed after linking ${discordId}:`, error);
+                });
 
                 // 2. Send DM Notification
                 const dmContainer = ComponentsV2.successContainer(

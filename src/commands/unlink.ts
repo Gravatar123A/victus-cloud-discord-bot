@@ -12,6 +12,7 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { removeLinkedRole } from '../utils/roles.js';
 import { logger } from '../utils/logger.js';
 import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
+import { removeEntitlementRoles } from '../services/entitlementRoles.js';
 
 export const unlinkCommand: Command = {
     data: new SlashCommandBuilder()
@@ -95,6 +96,9 @@ export const unlinkCommand: Command = {
             if (success) {
                 // Remove linked role
                 await removeLinkedRole(interaction.client, interaction.user.id);
+                if (interaction.member && 'roles' in interaction.member) {
+                    await removeEntitlementRoles(interaction.member as any);
+                }
 
                 const container = ComponentsV2.successContainer(
                     'Account Unlinked',

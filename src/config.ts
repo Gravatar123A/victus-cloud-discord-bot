@@ -84,6 +84,9 @@ export const config = {
         logLevel: process.env.LOG_LEVEL || 'info',
         linkedRoleId: process.env.DISCORD_LINKED_ROLE_ID || '', // Role to give when account is linked
         supportGuildId: process.env.DISCORD_SUPPORT_GUILD_ID || '', // Main support server ID
+        freeUserRoleId: process.env.DISCORD_FREE_USER_ROLE_ID || '1531675572877525082',
+        paidClientRoleId: process.env.DISCORD_PAID_CLIENT_ROLE_ID || '1340607431193137296',
+        entitlementSyncMinutes: Math.max(1, parseInt(process.env.DISCORD_ENTITLEMENT_SYNC_MINUTES || '5', 10)),
         aiChannelId: process.env.DISCORD_AI_CHANNEL_ID || '', // Optional fallback AI support channel
         autoRegisterCommands: process.env.DISCORD_AUTO_REGISTER_COMMANDS !== 'false',
         levelUpChannelId: process.env.DISCORD_LEVEL_UP_CHANNEL_ID || '1416377943776559204',

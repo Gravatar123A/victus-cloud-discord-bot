@@ -10,6 +10,7 @@ import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
 import { supabase } from '../services/supabase.js';
 import { getGuildInvites, setGuildInvites, type CachedInvite } from '../services/inviteCache.js';
+import { syncEntitlementRoles } from '../services/entitlementRoles.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -134,11 +135,11 @@ export const guildMemberAddEvent: Event = {
             await sendNotificationDM(member.client, member.id, dmContainer, 'promotions');
 
             // Welcome channel message
-            const config = await welcomeSettings.get(member.guild.id);
-            if (config.enabled && config.channelId) {
-                const channel = member.guild.channels.cache.get(config.channelId);
+            const welcomeConfig = await welcomeSettings.get(member.guild.id);
+            if (welcomeConfig.enabled && welcomeConfig.channelId) {
+                const channel = member.guild.channels.cache.get(welcomeConfig.channelId);
                 if (channel && channel.type === ChannelType.GuildText) {
-                    const payload = await buildWelcomePayload(config, member);
+                    const payload = await buildWelcomePayload(welcomeConfig, member);
                     await channel.send(payload).catch((err) => {
                         logger.error(`Failed to send welcome message for ${member.user.tag}:`, err);
                     });
@@ -146,13 +147,19 @@ export const guildMemberAddEvent: Event = {
             }
 
             // Assign Auto-Roles
-            if (config.autoRoleIds && config.autoRoleIds.length > 0) {
-                const rolesToAssign = config.autoRoleIds.filter(id => member.guild.roles.cache.has(id));
+            if (welcomeConfig.autoRoleIds && welcomeConfig.autoRoleIds.length > 0) {
+                const rolesToAssign = welcomeConfig.autoRoleIds.filter(id => member.guild.roles.cache.has(id));
                 if (rolesToAssign.length > 0) {
                     await member.roles.add(rolesToAssign).catch((err) => {
                         logger.error(`Failed to assign auto-roles to ${member.user.tag}:`, err);
                     });
                 }
+            }
+
+            if (member.guild.id === (config.bot.supportGuildId || config.discord.guildId)) {
+                await syncEntitlementRoles(member.client, member.id).catch((err) => {
+                    logger.error(`Failed to sync server entitlement roles for ${member.user.tag}:`, err);
+                });
             }
 
             // Audit logging join event

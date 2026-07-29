@@ -467,6 +467,25 @@ class SupabaseService {
         return data;
     }
 
+    async getUserProfiles(userIds: string[]): Promise<UserProfile[]> {
+        const ids = [...new Set(userIds.filter(Boolean))];
+        if (ids.length === 0) return [];
+
+        const profiles: UserProfile[] = [];
+        for (let offset = 0; offset < ids.length; offset += 200) {
+            const { data, error } = await this.client
+                .from('profiles')
+                .select('*')
+                .in('id', ids.slice(offset, offset + 200));
+            if (error) {
+                logger.error('Failed to get user profiles for entitlement role sync:', error);
+                throw error;
+            }
+            profiles.push(...((data || []) as UserProfile[]));
+        }
+        return profiles;
+    }
+
     // ── VCCRS / CP economy ────────────────────────────────────────────────
 
     /** Top profiles by CP (for the leaderboard). */
@@ -1114,6 +1133,11 @@ class SupabaseService {
      */
     async getInvoices(): Promise<any[]> {
         const result = await this.paymenterApi('invoices');
+        return result?.data || [];
+    }
+
+    async getPaymenterServices(): Promise<any[]> {
+        const result = await this.paymenterApi('services');
         return result?.data || [];
     }
 
