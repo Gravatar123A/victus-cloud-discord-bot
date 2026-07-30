@@ -20,6 +20,10 @@ const V2 = ComponentsV2.IS_COMPONENTS_V2;
  * forward Discord's raw voice packets so voice connections can be established.
  */
 export function createLavalinkManager(client: Client): LavalinkManager {
+    if (!config.lavalink.password) {
+        logger.error('🎵 LAVALINK_PASSWORD is not set. Music commands will remain unavailable.');
+    }
+
     const manager = new LavalinkManager({
         nodes: [
             {
@@ -67,8 +71,19 @@ function attachNodeListeners(manager: LavalinkManager): void {
         .on('reconnecting', (node) => logger.warn(`🎵 Lavalink node "${node.id}" reconnecting...`))
         .on('disconnect', (node, reason) =>
             logger.warn(`🎵 Lavalink node "${node.id}" disconnected: ${JSON.stringify(reason)}`))
-        .on('error', (node, error) =>
-            logger.error(`🎵 Lavalink node "${node.id}" error:`, error?.message || error));
+        .on('error', (node, error) => {
+            const message = error?.message || String(error);
+            const authenticationHint = /\b(401|403|unauthori[sz]ed|forbidden)\b/i.test(message)
+                ? ' Check that LAVALINK_PASSWORD matches server.password on the node.'
+                : '';
+            logger.error(`🎵 Lavalink node "${node.id}" error: ${message}.${authenticationHint}`);
+        });
+}
+
+/** Whether at least one authenticated Lavalink websocket is ready for work. */
+export function isMusicAvailable(client: Client): boolean {
+    if (!config.lavalink.password) return false;
+    return client.lavalink.nodeManager.leastUsedNodes().length > 0;
 }
 
 async function getTextChannel(client: Client, player: Player): Promise<TextBasedChannel | null> {

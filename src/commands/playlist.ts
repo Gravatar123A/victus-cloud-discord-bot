@@ -17,6 +17,7 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { escapeMd, formatDuration } from '../embeds/music.js';
+import { isMusicAvailable } from '../services/music.js';
 
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
 const EPH = undefined as any;
@@ -121,6 +122,11 @@ export const playlistCommand: Command = {
                 const playlist = await playlistService.get(guildId, userId, name);
                 if (!playlist) {
                     await interaction.editReply({ content: `❌ Playlist **${escapeMd(name)}** not found.` });
+                    return;
+                }
+
+                if (!isMusicAvailable(interaction.client)) {
+                    await interaction.editReply({ content: '❌ The music server is not connected right now. Please try again shortly.' });
                     return;
                 }
 
@@ -249,6 +255,11 @@ export const playlistCommand: Command = {
                 const voice = member.voice.channel;
                 if (!voice) {
                     await interaction.editReply({ content: '❌ You must join a voice channel first to play music.' });
+                    return;
+                }
+
+                if (!isMusicAvailable(interaction.client)) {
+                    await interaction.editReply({ content: '❌ The music server is not connected right now. Please try again shortly.' });
                     return;
                 }
 

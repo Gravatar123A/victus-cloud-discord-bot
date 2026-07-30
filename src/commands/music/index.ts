@@ -46,7 +46,7 @@ import {
     musicControlsContainer,
     escapeMd,
 } from '../../embeds/music.js';
-import { refreshNowPlaying } from '../../services/music.js';
+import { isMusicAvailable, refreshNowPlaying } from '../../services/music.js';
 import { supabase } from '../../services/supabase.js';
 import { playlistService } from '../../services/playlistSettings.js';
 
@@ -130,6 +130,23 @@ function info(title: string, body: string) {
     return { components: [container] } as const;
 }
 
+async function requireMusicServer(
+    interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
+): Promise<boolean> {
+    if (isMusicAvailable(interaction.client)) return true;
+
+    const container = ComponentsV2.errorContainer(
+        'Music server unavailable',
+        'The audio node is not connected right now. Staff have been notified; please try again shortly.',
+    );
+    if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ components: [container], embeds: [] });
+    } else {
+        await interaction.reply({ components: [container], flags: V2 | EPH });
+    }
+    return false;
+}
+
 // ── /play ────────────────────────────────────────────────────────────────────
 
 export const playCommand: Command = {
@@ -145,6 +162,7 @@ export const playCommand: Command = {
         await interaction.deferReply({ flags: V2 });
         const ctx = await requireVoice(interaction);
         if (!ctx) return;
+        if (!(await requireMusicServer(interaction))) return;
 
         const query = interaction.options.getString('query', true).trim();
         const lavalink = interaction.client.lavalink;
@@ -1003,6 +1021,8 @@ export const playrandomCommand: Command = {
             
             await interaction.deferUpdate().catch(() => undefined);
 
+            if (!(await requireMusicServer(interaction))) return;
+
             const lavalink = interaction.client.lavalink;
             let player = lavalink.getPlayer(guildId);
             
@@ -1028,6 +1048,7 @@ export const playrandomCommand: Command = {
             if (!res || !res.tracks?.length || res.loadType === 'empty' || res.loadType === 'error') {
                 const errPayload = ComponentsV2.errorContainer('Playback Failed', 'Could not load the track. Please try again.');
                 await interaction.followUp({ components: [errPayload], flags: V2 | EPH });
+                if (!player.queue.current && !player.queue.tracks.length) await player.destroy().catch(() => undefined);
                 return;
             }
 

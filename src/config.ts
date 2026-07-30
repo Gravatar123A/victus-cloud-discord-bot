@@ -33,7 +33,9 @@ export const config = {
         id: process.env.LAVALINK_ID || 'victus-de1',
         host: process.env.LAVALINK_HOST || '135.125.222.36',
         port: parseInt(process.env.LAVALINK_PORT || '25578', 10),
-        password: process.env.LAVALINK_PASSWORD || 'youshallnotpass',
+        // Required in production. Do not commit a fallback password: the DE-1
+        // node credential is managed independently and may be rotated.
+        password: process.env.LAVALINK_PASSWORD || '',
         secure: process.env.LAVALINK_SECURE === 'true',
         // ytsearch (YouTube) is the default; users can paste SoundCloud/Bandcamp/
         // direct URLs too. Override with LAVALINK_SEARCH (e.g. scsearch).

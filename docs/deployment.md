@@ -97,3 +97,15 @@ Error: Cannot find module './index.js'
 ```
 
 That means the panel is trying to boot a root `index.js` that was not present, or the server files are out of date. Pull the latest repository files and restart.
+
+## Lavalink music configuration
+
+Music requires `LAVALINK_PASSWORD` in the bot server's environment. Its value
+must exactly match `server.password` on the DE-1 Lavalink service. The password
+is intentionally not stored in this repository because it may be rotated.
+
+The default endpoint is plain HTTP/WebSocket at `135.125.222.36:25578`. Set
+`LAVALINK_SECURE=true` only when pointing the bot at a TLS-enabled proxy. A
+startup log containing HTTP `401` or `403` means the endpoint is reachable but
+the bot and node passwords do not match; update the bot environment and restart
+it. Successful startup logs `Lavalink node "victus-de1" connected`.
