@@ -35,10 +35,13 @@ async function processOne(client: Client<true>): Promise<boolean> {
             if (reward?.new_xp != null) event.total_xp = Number(reward.new_xp);
         }
 
-        const profile = await supabase.getUserProfile(event.user_id);
-        if (!profile) throw new Error('Victus profile no longer exists');
+        const loadedProfile = await supabase.getUserProfile(event.user_id);
+        if (!loadedProfile) throw new Error('Victus profile no longer exists');
+        const profile = loadedProfile;
 
         if (!event.coins_rewarded_at) {
+            logger.warn(`Skipping Paymenter level reward ${event.id} while balances are audited`);
+        } else {
             if (!profile.email) throw new Error('No profile email is available for the Paymenter reward');
             if (event.coins_target == null) {
                 const balances = await supabase.getPaymenterBalances(profile.email.toLowerCase());

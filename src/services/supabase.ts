@@ -802,6 +802,10 @@ class SupabaseService {
         mode: 'set' | 'add' | 'remove';
         amount: number;
     }): Promise<any> {
+        if (input.mode === 'add' || input.mode === 'set') {
+            throw new Error('Paymenter balance increases are temporarily disabled while balances are audited');
+        }
+
         const { data, error } = await this.client.functions.invoke('admin-paymenter', {
             body: {
                 endpoint: 'credits.adjust',
