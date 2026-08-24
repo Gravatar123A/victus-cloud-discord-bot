@@ -834,25 +834,58 @@ class SupabaseService {
      * 'pending' and retry later) if the inviter has no profile/email or the
      * Paymenter adjustment fails.
      */
-    async grantInviteCoins(inviterUserId: string, amount: number): Promise<boolean> {
+    async grantInviteCoins(inviterUserId: string, amount: number, reference?: string): Promise<boolean> {
         if (!inviterUserId || !Number.isFinite(amount) || amount <= 0) return false;
         const profile = await this.getUserProfile(inviterUserId);
         if (!profile?.email) {
             logger.warn(`grantInviteCoins: no profile/email for user ${inviterUserId}; leaving credit pending`);
             return false;
         }
+        const email = String(profile.email).toLowerCase();
+        const amt = Math.round(amount);
+        const ref = reference || `invite:${inviterUserId}:${Date.now()}`;
+        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
+        const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
         try {
-            await this.adjustPaymenterCredits({
-                email: String(profile.email).toLowerCase(),
-                currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
-                mode: 'add',
-                amount: Math.round(amount),
+            const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${internalToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({
+                    email,
+                    amount: amt,
+                    source: 'discord_invite',
+                    reference: String(ref).slice(0, 191),
+                    description: `Discord invite reward`,
+                }),
             });
-            logger.info(`grantInviteCoins: +${Math.round(amount)} COINS to ${profile.email} (user ${inviterUserId})`);
+            const text = await res.text();
+            let data: any = {};
+            try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+            if (!res.ok) {
+                const msg = data?.error || data?.message || text || `HTTP ${res.status}`;
+                throw new Error(msg);
+            }
+            logger.info(`grantInviteCoins: +${amt} COINS to ${email} (user ${inviterUserId}) via victus grant`);
             return true;
         } catch (e) {
-            logger.error(`grantInviteCoins failed for ${inviterUserId}: ${(e as Error).message}`);
-            return false;
+            logger.warn(`grantInviteCoins via victus grant failed for ${inviterUserId}: ${(e as Error).message} — falling back to legacy adjust`);
+            try {
+                await this.adjustPaymenterCredits({
+                    email,
+                    currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
+                    mode: 'add',
+                    amount: amt,
+                });
+                logger.info(`grantInviteCoins fallback: +${amt} COINS to ${email} (user ${inviterUserId})`);
+                return true;
+            } catch (e2) {
+                logger.error(`grantInviteCoins failed for ${inviterUserId}: ${(e2 as Error).message}`);
+                return false;
+            }
         }
     }
 

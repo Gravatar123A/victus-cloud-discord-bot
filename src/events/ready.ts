@@ -91,8 +91,8 @@ async function processInviteCredits(client: Client<true>): Promise<void> {
                     continue;
                 }
 
-                // Grant via the canonical Paymenter COINS rail.
-                const ok = await supabase.grantInviteCoins(inviterUserId, credit.coins);
+                // Grant via the trusted Victus COINS rail (POST /api/victus/coins/grant).
+                const ok = await supabase.grantInviteCoins(inviterUserId, credit.coins, credit.id);
                 if (!ok) {
                     logger.warn(`Invite credit ${credit.id}: COINS grant failed; leaving pending for retry`);
                     continue;
