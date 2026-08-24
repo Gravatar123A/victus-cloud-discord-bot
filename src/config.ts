@@ -64,12 +64,12 @@ export const config = {
     // AI_API_KEY (or GROQ_API_KEY) in the bot's .env on the host.
     ai: {
         apiKey: process.env.OPENROUTER_API_KEY || process.env.AI_API_KEY || process.env.GROQ_API_KEY || '',
-        baseUrl:
-            process.env.OPENROUTER_BASE_URL ||
-            process.env.AI_BASE_URL ||
-            process.env.GROQ_BASE_URL ||
-            'https://openrouter.ai/api/v1',
-        model: process.env.OPENROUTER_MODEL || process.env.AI_MODEL || process.env.GROQ_MODEL || 'nvidia/nemotron-3.5-lightning:free',
+        baseUrl: process.env.OPENROUTER_API_KEY
+            ? (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1')
+            : (process.env.AI_BASE_URL || process.env.GROQ_BASE_URL || 'https://openrouter.ai/api/v1'),
+        model: process.env.OPENROUTER_API_KEY
+            ? (process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-lightning:free')
+            : (process.env.AI_MODEL || process.env.GROQ_MODEL || 'nvidia/nemotron-3.5-lightning:free'),
         temperature: Number(process.env.AI_TEMPERATURE || process.env.GROQ_TEMPERATURE || '0.4'),
         // Higher default: Laguna + gpt-5.6 can spend output on reasoning, small cap yields empty reply. Clamped downstream.
         maxTokens: Number(process.env.OPENROUTER_MAX_TOKENS || process.env.AI_MAX_TOKENS || process.env.GROQ_MAX_TOKENS || '4000'),
@@ -115,14 +115,13 @@ export const config = {
         // ships nothing user-facing until the operator opts in.
         invite: {
             enabled: process.env.DISCORD_INVITE_COINS_ENABLED === 'true',
-            // COINS paid to the inviter once the invitee qualifies.
             amount: parseInt(process.env.INVITE_COINS_AMOUNT || '20', 10),
-            // Days the invitee must stay before the inviter is paid.
             qualifyDays: parseInt(process.env.INVITE_QUALIFY_DAYS || '3', 10),
-            // Minimum invitee account age (days) to block throwaway alts.
-            minAccountAgeDays: parseInt(process.env.INVITE_MIN_ACCOUNT_AGE_DAYS || '7', 10),
-            // Max credits a single inviter can earn in a trailing 24h window.
+            minAccountAgeDays: parseInt(process.env.INVITE_MIN_ACCOUNT_AGE_DAYS || '30', 10),
             dailyCap: parseInt(process.env.INVITE_DAILY_CAP || '10', 10),
+            requireAvatar: process.env.INVITE_REQUIRE_AVATAR !== 'false',
+            requireBio: process.env.INVITE_REQUIRE_BIO !== 'false',
+            strictUsername: process.env.INVITE_STRICT_USERNAME !== 'false',
         },
     },
 
