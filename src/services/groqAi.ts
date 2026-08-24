@@ -179,7 +179,16 @@ function isAzureEndpoint(baseUrl: string): boolean {
 }
 
 function isOpenRouter(baseUrl: string, model: string): boolean {
-    return /openrouter\.ai/i.test(baseUrl) || /poolside|laguna/i.test(model);
+    return /openrouter\.ai/i.test(baseUrl) || /poolside|laguna|nemotron/i.test(model);
+}
+function isComplexQuery(t: string): boolean {
+    const s = (t||"").toLowerCase();
+    if (!s.trim()) return false;
+    if (s.length > 180) return true;
+    if (s.split(/\s+/).length > 28) return true;
+    if (/(code|build|create|fix|debug|error|stacktrace|exception|analyze|implement|design|develop|script|plugin|config|server\.properties|paper|velocity|bukkit|spigot|purpur|java|how to|tutorial|step\.by\.step|task|project|explain|complex|advanced)/i.test(s)) return true;
+    if (s.includes("```") || (s.includes("{") && s.includes("}"))) return true;
+    return false;
 }
 function isAzureResponsesApi(baseUrl: string): boolean {
     return /\/responses(?:\?|$)/i.test(baseUrl);
@@ -475,10 +484,15 @@ class GroqAiService {
     private async callChatCompletions(messages: ChatMessage[], withTools: boolean): Promise<GroqResponseMessage> {
         const isOR = isOpenRouter(config.ai.baseUrl, config.ai.model);
         if (!isOR) return this.callChatCompletionsOnce(messages, withTools, config.ai.model, 25000);
+        const lastUser = [...messages].reverse().find(m => (m as any).role === "user") as any;
+        const text = lastUser?.content || (messages[messages.length-1] as any)?.content || "";
+        const complex = isComplexQuery(String(text));
+        const primary = complex ? 'poolside/laguna-xs-2.1:free' : 'nvidia/nemotron-3.5-lightning:free';
+        const primaryMs = complex ? 12000 : 15000;
         try {
-            return await this.callChatCompletionsOnce(messages, withTools, config.ai.model, 12000);
+            return await this.callChatCompletionsOnce(messages, withTools, primary, primaryMs);
         } catch (e) {
-            console.warn(`laguna primary failed, falling back to nemotron: ${e instanceof Error ? e.message : String(e)}`);
+            console.warn(`${primary} failed, falling back to nemotron-ultra: ${e instanceof Error ? e.message : String(e)}`);
             return await this.callChatCompletionsOnce(messages, withTools, 'nvidia/nemotron-3-ultra-550b-a55b:free', 40000);
         }
     }

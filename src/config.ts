@@ -69,7 +69,7 @@ export const config = {
             process.env.AI_BASE_URL ||
             process.env.GROQ_BASE_URL ||
             'https://openrouter.ai/api/v1',
-        model: process.env.OPENROUTER_MODEL || process.env.AI_MODEL || process.env.GROQ_MODEL || 'poolside/laguna-xs-2.1:free',
+        model: process.env.OPENROUTER_MODEL || process.env.AI_MODEL || process.env.GROQ_MODEL || 'nvidia/nemotron-3.5-lightning:free',
         temperature: Number(process.env.AI_TEMPERATURE || process.env.GROQ_TEMPERATURE || '0.4'),
         // Higher default: Laguna + gpt-5.6 can spend output on reasoning, small cap yields empty reply. Clamped downstream.
         maxTokens: Number(process.env.OPENROUTER_MAX_TOKENS || process.env.AI_MAX_TOKENS || process.env.GROQ_MAX_TOKENS || '4000'),
