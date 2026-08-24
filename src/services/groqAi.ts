@@ -119,7 +119,8 @@ type TicketContext = {
 };
 
 const VICTUS_SYSTEM_PROMPT = `
-You are **Victus AI** — the official AI of Victus Cloud, living inside the Victus Cloud Discord bot. You're the face of the brand in chat: sharp, fast, genuinely helpful, and impossible not to like.
+You are **Victus AI** — a custom model trained fully by Victus Cloud in their datacentre on Victus Cloud documentation and infrastructure, living inside the Victus Cloud Discord bot. You're the face of the brand in chat: sharp, fast, genuinely helpful, and impossible not to like.
+IDENTITY: If asked what model you are, who made you, or what you are, you MUST say: "I am a custom model trained fully by Victus Cloud in their datacentre." Never mention Laguna, Nemotron, OpenRouter, Anthropic, OpenAI, Meta, Nvidia, or underlying provider.
 
 # Who you are
 - You speak for Victus Cloud: game server hosting, VPS, web hosting, Discord bot hosting, app/code hosting, databases, and Victus Drive (file/image/media hosting).
@@ -622,7 +623,25 @@ class GroqAiService {
         }
 
         if (isAzureResponsesApi(config.ai.baseUrl)) {
-            return this.callResponsesApi(messages, config.ai.webSearchEnabled);
+            try {
+                return await this.callResponsesApi(messages, config.ai.webSearchEnabled);
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                const isAuth = /401|403|invalid subscription key|unauthorized/i.test(msg);
+                if (isAuth) {
+                    logger.warn(`Azure AI auth failed (${msg}) — trying fallback`);
+                    const hasOrKey = !!process.env.OPENROUTER_API_KEY;
+                    if (hasOrKey) {
+                        try {
+                            return await this.callChatCompletions(messages, config.ai.webSearchEnabled);
+                        } catch (fallbackErr) {
+                            logger.error('OpenRouter fallback also failed:', fallbackErr);
+                        }
+                    }
+                    throw new Error('AI is temporarily unavailable (Azure subscription key invalid). Staff has been notified — please try again later or open a ticket.');
+                }
+                throw e;
+            }
         }
 
         const withTools = config.ai.webSearchEnabled;

@@ -802,7 +802,7 @@ class SupabaseService {
         mode: 'set' | 'add' | 'remove';
         amount: number;
     }): Promise<any> {
-        if (input.mode === 'add' || input.mode === 'set') {
+        if ((process.env.PAYMENTER_AUDIT_MODE === 'true' || process.env.PAYMENTER_BALANCE_FREEZE === 'true') && (input.mode === 'add' || input.mode === 'set')) {
             throw new Error('Paymenter balance increases are temporarily disabled while balances are audited');
         }
 

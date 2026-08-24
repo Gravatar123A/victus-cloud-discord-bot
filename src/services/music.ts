@@ -32,8 +32,8 @@ export function createLavalinkManager(client: Client): LavalinkManager {
                 port: config.lavalink.port,
                 authorization: config.lavalink.password,
                 secure: config.lavalink.secure,
-                retryAmount: 1000,
-                retryDelay: 10_000,
+                retryAmount: 5,
+                retryDelay: 30_000,
             },
         ],
         sendToShard: (guildId, payload) =>
