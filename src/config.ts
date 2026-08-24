@@ -63,18 +63,18 @@ export const config = {
     // GROQ_* names still work. The API KEY is a secret and is NEVER committed — set
     // AI_API_KEY (or GROQ_API_KEY) in the bot's .env on the host.
     ai: {
-        apiKey: process.env.AI_API_KEY || process.env.GROQ_API_KEY || '',
+        apiKey: process.env.OPENROUTER_API_KEY || process.env.AI_API_KEY || process.env.GROQ_API_KEY || '',
         baseUrl:
+            process.env.OPENROUTER_BASE_URL ||
             process.env.AI_BASE_URL ||
             process.env.GROQ_BASE_URL ||
-            'https://ryf-foundry-test.cognitiveservices.azure.com/openai/responses?api-version=2025-04-01-preview',
-        model: process.env.AI_MODEL || process.env.GROQ_MODEL || 'gpt-5.6-sol',
-        temperature: Number(process.env.AI_TEMPERATURE || process.env.GROQ_TEMPERATURE || '0.35'),
-        // Higher default than before: gpt-5.6-sol can spend output budget on
-        // reasoning, so a small cap can yield an empty reply. Clamped downstream.
-        maxTokens: Number(process.env.AI_MAX_TOKENS || process.env.GROQ_MAX_TOKENS || '4000'),
+            'https://openrouter.ai/api/v1',
+        model: process.env.OPENROUTER_MODEL || process.env.AI_MODEL || process.env.GROQ_MODEL || 'poolside/laguna-xs-2.1:free',
+        temperature: Number(process.env.AI_TEMPERATURE || process.env.GROQ_TEMPERATURE || '0.4'),
+        // Higher default: Laguna + gpt-5.6 can spend output on reasoning, small cap yields empty reply. Clamped downstream.
+        maxTokens: Number(process.env.OPENROUTER_MAX_TOKENS || process.env.AI_MAX_TOKENS || process.env.GROQ_MAX_TOKENS || '4000'),
         systemPrompt: process.env.VICTUS_AI_SYSTEM_PROMPT || '',
-        enabled: !!(process.env.AI_API_KEY || process.env.GROQ_API_KEY),
+        enabled: !!(process.env.OPENROUTER_API_KEY || process.env.AI_API_KEY || process.env.GROQ_API_KEY),
         // Keyless web access (DuckDuckGo HTML scrape) exposed to the AI as tools.
         // Defaults to true unless AI_WEB_SEARCH is explicitly set to "false".
         webSearchEnabled: process.env.AI_WEB_SEARCH !== 'false',

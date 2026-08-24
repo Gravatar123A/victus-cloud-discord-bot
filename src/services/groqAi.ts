@@ -178,6 +178,9 @@ function isAzureEndpoint(baseUrl: string): boolean {
     return /cognitiveservices\.azure\.com/i.test(baseUrl);
 }
 
+function isOpenRouter(baseUrl: string, model: string): boolean {
+    return /openrouter\.ai/i.test(baseUrl) || /poolside|laguna/i.test(model);
+}
 function isAzureResponsesApi(baseUrl: string): boolean {
     return /\/responses(?:\?|$)/i.test(baseUrl);
 }
@@ -442,6 +445,11 @@ class GroqAiService {
             }
 
             const isAzure = isAzureEndpoint(endpoint);
+            const isOR = isOpenRouter(config.ai.baseUrl, config.ai.model);
+            if (isOR) {
+                (body as any).reasoning = { effort: 'high', exclude: false };
+                (body as any).top_p = 0.95;
+            }
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
@@ -449,6 +457,7 @@ class GroqAiService {
                         ? { 'api-key': config.ai.apiKey }
                         : { Authorization: `Bearer ${config.ai.apiKey}` }),
                     'Content-Type': 'application/json',
+                    ...(isOR ? { 'HTTP-Referer': 'https://victuscloud.com', 'X-Title': 'Victus Cloud' } : {}),
                 },
                 body: JSON.stringify(body),
                 signal: controller.signal,
@@ -592,7 +601,7 @@ class GroqAiService {
 
     private async complete(messages: ChatMessage[]): Promise<string> {
         if (!config.ai.apiKey) {
-            throw new Error('AI is not configured. Set GROQ_API_KEY in the bot environment.');
+            throw new Error('AI is not configured. Set OPENROUTER_API_KEY (or AI_API_KEY) in the bot environment.');
         }
 
         if (isAzureResponsesApi(config.ai.baseUrl)) {
