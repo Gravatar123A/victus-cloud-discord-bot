@@ -425,16 +425,15 @@ class GroqAiService {
         return this.complete(messages);
     }
 
-    private async callChatCompletions(messages: ChatMessage[], withTools: boolean): Promise<GroqResponseMessage> {
+    private async callChatCompletionsOnce(messages: ChatMessage[], withTools: boolean, model: string, ms: number): Promise<GroqResponseMessage> {
         const endpoint = normalizeEndpoint(config.ai.baseUrl);
-        const maxTokens = clampNumber(config.ai.maxTokens, 700, 128, 1500);
+        const maxTokens = clampNumber(config.ai.maxTokens, 700, 128, 4000);
         const temperature = clampNumber(config.ai.temperature, 0.35, 0, 1.5);
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 25000);
-
+        const timeout = setTimeout(() => controller.abort(), ms);
         try {
             const body: Record<string, unknown> = {
-                model: config.ai.model,
+                model,
                 messages,
                 temperature,
                 max_tokens: maxTokens,
@@ -443,9 +442,8 @@ class GroqAiService {
                 body.tools = AI_TOOLS;
                 body.tool_choice = 'auto';
             }
-
             const isAzure = isAzureEndpoint(endpoint);
-            const isOR = isOpenRouter(config.ai.baseUrl, config.ai.model);
+            const isOR = isOpenRouter(config.ai.baseUrl, model);
             if (isOR) {
                 (body as any).reasoning = { effort: 'high', exclude: false };
                 (body as any).top_p = 0.95;
@@ -462,21 +460,26 @@ class GroqAiService {
                 body: JSON.stringify(body),
                 signal: controller.signal,
             });
-
             const payload = await response.json().catch(() => null) as GroqChatResponse | null;
             if (!response.ok) {
                 const detail = payload?.error?.message || payload?.message || response.statusText;
                 throw new Error(`AI request failed (${response.status}): ${detail}`);
             }
-
             const message = payload?.choices?.[0]?.message;
-            if (!message) {
-                throw new Error('AI returned an empty response.');
-            }
-
+            if (!message) throw new Error('AI returned an empty response.');
             return message;
         } finally {
             clearTimeout(timeout);
+        }
+    }
+    private async callChatCompletions(messages: ChatMessage[], withTools: boolean): Promise<GroqResponseMessage> {
+        const isOR = isOpenRouter(config.ai.baseUrl, config.ai.model);
+        if (!isOR) return this.callChatCompletionsOnce(messages, withTools, config.ai.model, 25000);
+        try {
+            return await this.callChatCompletionsOnce(messages, withTools, config.ai.model, 12000);
+        } catch (e) {
+            console.warn(`laguna primary failed, falling back to nemotron: ${e instanceof Error ? e.message : String(e)}`);
+            return await this.callChatCompletionsOnce(messages, withTools, 'nvidia/nemotron-3-ultra-550b-a55b:free', 40000);
         }
     }
 
