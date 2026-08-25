@@ -91,11 +91,15 @@ function hasServerListIntent(text: string): boolean {
 }
 
 function hasServiceIntent(text: string): boolean {
+    if (/\b(victus\s*cloud|victus)\b/i.test(text) && /\b(offers?|provides?|have|do you offer|what.*services)\b/i.test(text) && !/\b(my|mine)\b/.test(text)) {
+        if (/\b(what|which|list).*(services|offers|provides)/i.test(text) || /\bservices.*(victus|offers|provides)/i.test(text)) return false;
+    }
+    if (/^\s*(what|which|list).*\bservices\b.*\b(victus|offers|provides|do you)\b/i.test(text)) return false;
     const topic = /\b(services?|orders?|subscriptions?|hosting plans?|active hosting|my plan)\b/;
     if (!topic.test(text)) return false;
     const personal = /\b(my|mine|i|me)\b/.test(text);
     const verb = /\b(list|show|view|see|what|which|how many|have|own|got|active|check|get|do i|any)\b/.test(text);
-    return personal || verb;
+    return personal && verb;
 }
 
 function parsePowerIntent(text: string): { signal: PowerSignal; serverSearch: string } | null {
