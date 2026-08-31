@@ -41,6 +41,14 @@ export const guildMemberRemoveEvent: Event = {
             logger.error('Error voiding invite credit on leave:', error);
         });
 
+        // Discord link COINS revocation: if this member had the 100 COINS link reward,
+        // deduct it immediately and notify. Idempotent via coins_revoked flag.
+        await supabase.revokeDiscordLinkCoins(member.id).then((revoked) => {
+            if (revoked) logger.info(`Discord link COINS revoked for ${member.id} (left guild ${member.guild.id})`);
+        }).catch((error) => {
+            logger.error('Error revoking discord link coins on leave:', error);
+        });
+
         try {
             const guildId = member.guild.id;
             const config = await auditLogSettings.get(guildId);

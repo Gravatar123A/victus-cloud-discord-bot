@@ -123,6 +123,12 @@ export const config = {
             requireBio: process.env.INVITE_REQUIRE_BIO !== 'false',
             strictUsername: process.env.INVITE_STRICT_USERNAME !== 'false',
         },
+
+        // Discord link reward (join + /link) — granted once per linked account.
+        discordLink: {
+            enabled: process.env.DISCORD_LINK_COINS_ENABLED !== 'false', // enabled by default
+            amount: parseInt(process.env.DISCORD_LINK_COINS_AMOUNT || '100', 10),
+        },
     },
 
     // Victus Cloud Branding

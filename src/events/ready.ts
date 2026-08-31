@@ -274,6 +274,22 @@ export const readyEvent: Event = {
                 logger.error(`Entitlement role sync failed after linking ${discord_id}:`, error);
             });
 
+            // Discord link 100 COINS reward — grant immediately on link (idempotent).
+            if (linked) {
+                const granted = await supabase.grantDiscordLinkCoins(linked).catch((e) => {
+                    logger.error(`grantDiscordLinkCoins failed for ${discord_id}:`, e);
+                    return false;
+                });
+                if (granted) {
+                    const coinsContainer = ComponentsV2.successContainer(
+                        `+${config.economy.discordLink.amount} COINS Earned!`,
+                        `Thanks for linking your Discord account! You earned **${config.economy.discordLink.amount} COINS**.\n\n` +
+                        `⚠️ Do not leave our Discord server — if you leave, the ${config.economy.discordLink.amount} COINS will be deducted from your balance.`
+                    );
+                    await sendNotificationDM(client, discord_id, coinsContainer, 'promotions').catch(() => {});
+                }
+            }
+
             const dmContainer = NotificationTemplates.accountLinkedDM(discord_username || 'User');
             await sendNotificationDM(client, discord_id, dmContainer, 'security');
 

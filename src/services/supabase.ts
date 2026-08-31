@@ -889,6 +889,146 @@ class SupabaseService {
         }
     }
 
+    // ============================================
+    // Discord Link 100 COINS reward (join + /link, revoke on leave)
+    // ============================================
+
+    /**
+     * Grant 100 COINS for linking Discord via /link. Idempotent: only grants once
+     * per discord_linked_accounts row (coins_granted flag). Uses the canonical
+     * victus/coins/grant rail so the credit is Paymenter-authoritative and appears
+     * in the panel's Coin History as source=discord_link.
+     */
+    async grantDiscordLinkCoins(linked: { user_id: string; discord_id: string }): Promise<boolean> {
+        if (!config.economy.discordLink.enabled) return false;
+        const amount = Math.round(config.economy.discordLink.amount);
+        if (!linked.user_id || !linked.discord_id || amount <= 0) return false;
+
+        // Idempotency: skip if already granted (tracked in discord_linked_accounts).
+        // Use select('*') so the query doesn't fail if the migration hasn't been applied yet;
+        // we then check the fields via optional chaining.
+        const { data: row, error: rowErr } = await this.client
+            .from('discord_linked_accounts')
+            .select('*')
+            .eq('user_id', linked.user_id)
+            .eq('discord_id', linked.discord_id)
+            .maybeSingle() as any;
+        if (rowErr) {
+            logger.warn(`grantDiscordLinkCoins: failed to read reward flag for ${linked.discord_id}: ${rowErr.message}`);
+        } else if ((row as any)?.coins_granted) {
+            logger.debug(`grantDiscordLinkCoins: already granted for ${linked.discord_id}, skipping`);
+            return true;
+        }
+        if ((row as any)?.coins_revoked) {
+            logger.info(`grantDiscordLinkCoins: ${linked.discord_id} previously revoked (left server), not re-granting until re-link`);
+            return false;
+        }
+
+        const profile = await this.getUserProfile(linked.user_id);
+        if (!profile?.email) {
+            logger.warn(`grantDiscordLinkCoins: no profile/email for user ${linked.user_id}`);
+            return false;
+        }
+        const email = String(profile.email).toLowerCase();
+        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
+        const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
+        const reference = `discord_link:${linked.discord_id}`;
+
+        try {
+            const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${internalToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({
+                    email,
+                    amount,
+                    source: 'discord_link',
+                    reference: reference.slice(0, 191),
+                    description: 'Linked Discord account via /link',
+                }),
+            });
+            const text = await res.text();
+            let data: any = {};
+            try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+            if (!res.ok) {
+                // If panel says already granted (deduped by reference), treat as success and mark flag.
+                const msg = String(data?.error || data?.message || text || '').toLowerCase();
+                if (msg.includes('already') || msg.includes('duplicate') || res.status === 409) {
+                    await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount }).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id);
+                    logger.info(`grantDiscordLinkCoins: deduped grant for ${linked.discord_id} (panel says already granted)`);
+                    return true;
+                }
+                throw new Error(data?.error || data?.message || text || `HTTP ${res.status}`);
+            }
+            // Mark as granted (best-effort; ignore if columns missing before migration)
+            await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount, coins_revoked: false, coins_revoked_at: null } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, (e) => logger.debug(`grantDiscordLinkCoins: mark granted failed (migration pending): ${(e as Error).message}`));
+            logger.info(`grantDiscordLinkCoins: +${amount} COINS to ${email} (discord ${linked.discord_id})`);
+            return true;
+        } catch (e) {
+            logger.warn(`grantDiscordLinkCoins via victus grant failed for ${linked.discord_id}: ${(e as Error).message}, falling back to legacy adjust`);
+            try {
+                await this.adjustPaymenterCredits({ email, currency: process.env.VICTUS_COINS_CURRENCY || 'COINS', mode: 'add', amount });
+                await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, () => {});
+                logger.info(`grantDiscordLinkCoins fallback: +${amount} COINS to ${email}`);
+                return true;
+            } catch (e2) {
+                logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${(e2 as Error).message}`);
+                return false;
+            }
+        }
+    }
+
+    /**
+     * Revoke 100 COINS when a linked user leaves the Discord guild.
+     * Only revokes once; uses spend via Paymenter (mode=remove). The panel records
+     * a negative credit_transactions row (source=discord_link_revoke).
+     */
+    async revokeDiscordLinkCoins(discordId: string): Promise<boolean> {
+        if (!config.economy.discordLink.enabled) return false;
+        const amount = Math.round(config.economy.discordLink.amount);
+        const { data: row, error } = await this.client
+            .from('discord_linked_accounts')
+            .select('*')
+            .eq('discord_id', discordId)
+            .maybeSingle() as any;
+        if (error || !row) {
+            logger.debug(`revokeDiscordLinkCoins: no linked row for ${discordId}, skipping`);
+            return false;
+        }
+        if (!(row as any).coins_granted || (row as any).coins_revoked) {
+            logger.debug(`revokeDiscordLinkCoins: ${discordId} not granted or already revoked, skipping`);
+            return false;
+        }
+        const profile = await this.getUserProfile(row.user_id);
+        if (!profile?.email) {
+            logger.warn(`revokeDiscordLinkCoins: no profile/email for ${row.user_id}`);
+            return false;
+        }
+        const email = String(profile.email).toLowerCase();
+        try {
+            await this.adjustPaymenterCredits({ email, currency: process.env.VICTUS_COINS_CURRENCY || 'COINS', mode: 'remove', amount });
+            await this.client.from('discord_linked_accounts').update({ coins_revoked: true, coins_revoked_at: new Date().toISOString() } as any).eq('discord_id', discordId).then(() => {}, (e) => logger.debug(`revoke mark failed: ${(e as Error).message}`));
+            // Also record a local panel history entry via the internal token if available (best-effort).
+            const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
+            const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || '';
+            if (internalToken && paymenterUrl) {
+                await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${internalToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ email, amount, source: 'discord_link_revoke', reference: `discord_link_revoke:${discordId}:${Date.now()}`, description: 'Left Discord server — 100 COINS deducted' }),
+                }).catch(() => {});
+            }
+            logger.info(`revokeDiscordLinkCoins: -${amount} COINS from ${email} (discord ${discordId} left)`);
+            return true;
+        } catch (e) {
+            logger.error(`revokeDiscordLinkCoins failed for ${discordId}: ${(e as Error).message}`);
+            return false;
+        }
+    }
+
     /**
      * Insert a pending (or unattributed) invite credit. UNIQUE(invitee_discord_id)
      * + ignoreDuplicates makes this idempotent: a re-invite / rejoin is a no-op
