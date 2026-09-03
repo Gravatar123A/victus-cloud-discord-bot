@@ -634,7 +634,8 @@ class GroqAiService {
                     const hasOrKey = !!process.env.OPENROUTER_API_KEY;
                     if (hasOrKey) {
                         try {
-                            return await this.callChatCompletions(messages, config.ai.webSearchEnabled);
+                            const fallback = await this.callChatCompletions(messages, config.ai.webSearchEnabled);
+                            return typeof fallback === 'string' ? fallback : (fallback.content ?? '');
                         } catch (fallbackErr) {
                             logger.error('OpenRouter fallback also failed:', fallbackErr);
                         }

@@ -40,24 +40,21 @@ async function processOne(client: Client<true>): Promise<boolean> {
         const profile = loadedProfile;
 
         if (!event.coins_rewarded_at) {
-            logger.warn(`Skipping Paymenter level reward ${event.id} while balances are audited`);
-        } else {
             if (!profile.email) throw new Error('No profile email is available for the Paymenter reward');
-            if (event.coins_target == null) {
-                const balances = await supabase.getPaymenterBalances(profile.email.toLowerCase());
-                if (!balances.found) throw new Error('Paymenter COINS balance could not be loaded');
-                event.coins_target = balances.coins + config.economy.coinsPerLevel;
-                await supabase.updateLevelUpEvent(event.id, { coins_target: event.coins_target });
-            }
             await supabase.updateLevelUpEvent(event.id, { coins_processing_at: new Date().toISOString() });
-            await supabase.adjustPaymenterCredits({
-                email: profile.email.toLowerCase(),
-                currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
-                mode: 'set',
-                amount: Number(event.coins_target),
+            
+            const granted = await supabase.grantLevelCoins(event.user_id, event.level, event.id, config.economy.coinsPerLevel);
+            if (!granted) {
+                throw new Error('Paymenter level COINS reward grant failed');
+            }
+
+            const now = new Date().toISOString();
+            await supabase.updateLevelUpEvent(event.id, {
+                coins_rewarded_at: now,
+                coins_processing_at: null,
+                coins_target: Number(profile.total_cp ?? 0) + config.economy.coinsPerLevel,
             });
-            await supabase.updateLevelUpEvent(event.id, { coins_rewarded_at: new Date().toISOString(), coins_processing_at: null });
-            event.coins_rewarded_at = new Date().toISOString();
+            event.coins_rewarded_at = now;
         }
 
         const linked = await supabase.getLinkedAccountByUserId(event.user_id);

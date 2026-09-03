@@ -889,6 +889,65 @@ class SupabaseService {
         }
     }
 
+    /**
+     * Grant level-up reward COINS to a user via the CANONICAL Paymenter rail
+     * (POST /api/victus/coins/grant with source=level_up).
+     */
+    async grantLevelCoins(userId: string, level: number, eventId: string, amount: number): Promise<boolean> {
+        if (!userId || !Number.isFinite(amount) || amount <= 0) return false;
+        const profile = await this.getUserProfile(userId);
+        if (!profile?.email) {
+            logger.warn(`grantLevelCoins: no profile/email for user ${userId}`);
+            return false;
+        }
+        const email = String(profile.email).toLowerCase();
+        const amt = Math.round(amount);
+        const ref = `level_up:${eventId || level}:${userId}`;
+        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
+        const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
+        try {
+            const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${internalToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({
+                    email,
+                    amount: amt,
+                    source: 'level_up',
+                    reference: String(ref).slice(0, 191),
+                    description: `Level ${level} reward`,
+                }),
+            });
+            const text = await res.text();
+            let data: any = {};
+            try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+            if (!res.ok) {
+                const msg = data?.error || data?.message || text || `HTTP ${res.status}`;
+                throw new Error(msg);
+            }
+            logger.info(`grantLevelCoins: +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
+            return true;
+        } catch (e) {
+            logger.warn(`grantLevelCoins via victus grant failed for ${userId}: ${(e as Error).message} — falling back to adjustPaymenterCredits`);
+            try {
+                await this.adjustPaymenterCredits({
+                    email,
+                    currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
+                    mode: 'add',
+                    amount: amt,
+                });
+                logger.info(`grantLevelCoins fallback: +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
+                return true;
+            } catch (e2) {
+                logger.error(`grantLevelCoins failed for ${userId}: ${(e2 as Error).message}`);
+                return false;
+            }
+        }
+    }
+
     // ============================================
     // Discord Link 100 COINS reward (join + /link, revoke on leave)
     // ============================================
