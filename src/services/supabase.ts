@@ -23,6 +23,11 @@ const DEFAULT_DM_PREFERENCES = {
     dm_promotions: true,
 };
 
+function isCertError(error: unknown): boolean {
+    const msg = String((error as any)?.message || error || '');
+    return msg.includes('unable to verify the first certificate') || msg.includes('certificate') || msg.includes('CERT_') || msg.includes('self signed');
+}
+
 function normalizeBaseUrl(url: string): string {
     return url.replace(/\/$/, '');
 }
@@ -246,16 +251,29 @@ class SupabaseService {
      * Get linked account by Discord ID
      */
     async getLinkedAccount(discordId: string): Promise<LinkedAccount | null> {
-        const { data, error } = await this.client
-            .from('discord_linked_accounts')
-            .select('*')
-            .eq('discord_id', discordId)
-            .single();
+        try {
+            const { data, error } = await this.client
+                .from('discord_linked_accounts')
+                .select('*')
+                .eq('discord_id', discordId)
+                .single();
 
-        if (error && error.code !== 'PGRST116') {
-            logger.error('Failed to get linked account:', error);
+            if (error && error.code !== 'PGRST116') {
+                if (isCertError(error)) {
+                    logger.warn('Supabase TLS cert error on getLinkedAccount - check ca-certificates. Returning null to avoid Command Error.');
+                } else {
+                    logger.error('Failed to get linked account:', error);
+                }
+            }
+            return data;
+        } catch (err: any) {
+            if (isCertError(err)) {
+                logger.warn('Supabase getLinkedAccount cert failure - returning null (secure fallback).');
+                return null;
+            }
+            logger.error('Failed to get linked account (exception):', err);
+            return null;
         }
-        return data;
     }
 
     /**

@@ -24,6 +24,9 @@ WORKDIR /app
 # Set environment
 ENV NODE_ENV=production
 
+# Fix TLS cert verification (alpine ca-certificates) and ensure time is correct
+RUN apk add --no-cache ca-certificates tzdata && update-ca-certificates
+
 # Copy package files
 COPY package*.json ./
 

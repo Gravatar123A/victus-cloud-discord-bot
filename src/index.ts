@@ -11,6 +11,19 @@ import type { Command, ButtonHandler, SelectMenuHandler, ModalHandler } from './
 (ContainerBuilder.prototype as any).setAccentColor = function () {
     return this;
 };
+// --- Secure TLS hardening: ensure CA certs are available, log cert errors with context ---
+process.on('uncaughtException', (err: any) => {
+    logger.error('🔥 Uncaught Exception:', err?.message || err);
+    if (err?.stack) logger.error(err.stack);
+    if (String(err?.message || '').includes('unable to verify the first certificate')) {
+        logger.error('🔒 TLS cert chain incomplete - ensure ca-certificates is installed in container. See Dockerfile fix.');
+    }
+});
+process.on('unhandledRejection', (reason: any) => {
+    const msg = reason?.message || String(reason);
+    logger.error('🔥 Unhandled Rejection:', msg);
+    if (reason?.stack) logger.error(reason.stack);
+});
 
 // Extend Discord.js Client type to include our custom properties
 declare module 'discord.js' {

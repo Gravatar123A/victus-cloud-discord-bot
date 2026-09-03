@@ -66,12 +66,24 @@ export const interactionCreateEvent: Event = {
                 logger.info(`Command: /${interaction.commandName} by ${interaction.user.tag} (${interaction.user.id})`);
                 await command.execute(interaction);
             } catch (error: any) {
+                const errMsg = error?.message || String(error);
+                const errStack = error?.stack || '';
                 logger.error(`❌ Error executing command ${interaction.commandName}:`, error);
+                logger.error(`Stack: ${errStack}`);
                 if (error.errors) logger.error('Validation details:', JSON.stringify(error.errors, null, 2));
+                if (error?.code) logger.error(`Discord error code: ${error.code} | HTTP: ${error?.httpStatus || error?.status || 'n/a'}`);
+
+                const isCertError = errMsg.includes('unable to verify the first certificate') || errMsg.includes('certificate');
+                const isSupabaseError = errMsg.includes('supabase') || errMsg.includes('PGRST') || errMsg.includes('FunctionsHttpError');
+                const hint = isCertError
+                    ? '🔒 TLS certificate verification failed - check container CA certificates.'
+                    : isSupabaseError
+                        ? '🗄️ Account data temporarily unavailable - Supabase is unreachable.'
+                        : `Details: \`${errMsg.slice(0, 300)}\``;
 
                 const container = ComponentsV2.errorContainer(
                     'Command Error',
-                    'An error occurred while executing this command. We are using the standard interface for now.'
+                    `An error occurred while executing \`/${interaction.commandName}\`. ${hint}\n\nWe are using the standard interface for now. If this persists, contact support with the command name and time.`
                 );
 
                 const replyOptions = {
