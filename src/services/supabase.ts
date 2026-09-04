@@ -908,6 +908,68 @@ class SupabaseService {
     }
 
     /**
+     * Grant resource share reward COINS to a user via Paymenter API or legacy adjust fallback.
+     */
+    async grantResourceShareCoins(userId: string, amount: number = 40, reference?: string): Promise<boolean> {
+        if (!userId || !Number.isFinite(amount) || amount <= 0) return false;
+        const profile = await this.getUserProfile(userId);
+        if (!profile?.email) {
+            logger.warn(`grantResourceShareCoins: no profile/email for user ${userId}`);
+            return false;
+        }
+        const email = String(profile.email).toLowerCase();
+        const amt = Math.round(amount);
+        const ref = reference || `resource_share:${userId}:${Date.now()}`;
+        const sourcesToTry = ['discord_invite', 'level_up', 'resource_share'];
+        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
+        const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
+
+        for (const source of sourcesToTry) {
+            try {
+                const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${internalToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email,
+                        amount: amt,
+                        source,
+                        reference: String(ref).slice(0, 191),
+                        description: `Resource Share approval reward (${amt} COINS)`,
+                    }),
+                });
+                const text = await res.text();
+                let data: any = {};
+                try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+
+                if (res.ok) {
+                    logger.info(`grantResourceShareCoins: +${amt} COINS to ${email} (user ${userId}) via source=${source}`);
+                    return true;
+                }
+            } catch (e) {
+                logger.warn(`grantResourceShareCoins via ${source} failed for ${userId}: ${(e as Error).message}`);
+            }
+        }
+
+        try {
+            await this.adjustPaymenterCredits({
+                email,
+                currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
+                mode: 'add',
+                amount: amt,
+            });
+            logger.info(`grantResourceShareCoins fallback: +${amt} COINS to ${email} (user ${userId})`);
+            return true;
+        } catch (e2) {
+            logger.error(`grantResourceShareCoins failed for ${userId}: ${(e2 as Error).message}`);
+            return false;
+        }
+    }
+
+    /**
      * Grant level-up reward COINS to a user via the CANONICAL Paymenter rail
      * (POST /api/victus/coins/grant with source=level_up).
      */

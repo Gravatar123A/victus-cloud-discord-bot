@@ -50,6 +50,7 @@ import { whitelistCommand } from './whitelist.js';
 import { communityCoinsCommand } from './community-coins.js';
 import { levelCommand } from './level.js';
 import { shareResourceCommand } from './shareResource.js';
+import { resourceApplyCommand } from './resourceApply.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -57,6 +58,7 @@ export const commands = new Collection<string, Command>();
 // Register all commands
 const allCommands: Command[] = [
     shareResourceCommand,
+    resourceApplyCommand,
     linkCommand,
     unlinkCommand,
     serversCommand,

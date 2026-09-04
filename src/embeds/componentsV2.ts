@@ -118,6 +118,15 @@ export function infoContainer(title: string, description: string): ContainerBuil
     return createBrandedContainer(Accents.info, `💠 ${title}`, description, 'INFORMATION NODE');
 }
 
+export function cleanContainer(accent: number, title: string, description: string, eyebrow = 'RESOURCE VERIFICATION'): ContainerBuilder {
+    const container = baseContainer(accent);
+    container
+        .addTextDisplayComponents(text(`${panelTitle(title, eyebrow)}\n\n${description}`))
+        .addSeparatorComponents(separator())
+        .addTextDisplayComponents(footerNote('Victus Cloud Resource Hub • Private Operational Node'));
+    return container;
+}
+
 export function linkAccountContainer(
     username: string,
     avatarUrl: string,
@@ -437,6 +446,7 @@ export const ComponentsV2 = {
     errorContainer,
     warningContainer,
     infoContainer,
+    cleanContainer,
     linkAccountContainer,
     linkPanelContainer,
     adminDmContainer,
