@@ -921,48 +921,64 @@ class SupabaseService {
         const email = String(profile.email).toLowerCase();
         const amt = Math.round(amount);
         const ref = `level_up:${eventId || level}:${userId}`;
+        const sourcesToTry = ['level_up', 'level', 'level_reward', 'discord_invite'];
         const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
         const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
-        try {
-            const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${internalToken}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                },
-                body: JSON.stringify({
-                    email,
-                    amount: amt,
-                    source: 'level_up',
-                    reference: String(ref).slice(0, 191),
-                    description: `Level ${level} reward`,
-                }),
-            });
-            const text = await res.text();
-            let data: any = {};
-            try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-            if (!res.ok) {
-                const msg = data?.error || data?.message || text || `HTTP ${res.status}`;
-                throw new Error(msg);
-            }
-            logger.info(`grantLevelCoins: +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
-            return true;
-        } catch (e) {
-            logger.warn(`grantLevelCoins via victus grant failed for ${userId}: ${(e as Error).message} — falling back to adjustPaymenterCredits`);
+
+        for (const source of sourcesToTry) {
             try {
-                await this.adjustPaymenterCredits({
-                    email,
-                    currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
-                    mode: 'add',
-                    amount: amt,
+                const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${internalToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email,
+                        amount: amt,
+                        source,
+                        reference: String(ref).slice(0, 191),
+                        description: `Level ${level} reward`,
+                    }),
                 });
-                logger.info(`grantLevelCoins fallback: +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
+                const text = await res.text();
+                let data: any = {};
+                try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+
+                if (!res.ok) {
+                    const msg = data?.error || data?.message || text || `HTTP ${res.status}`;
+                    // If source is invalid, try next source candidate
+                    if (String(msg).toLowerCase().includes('source is invalid') || String(msg).toLowerCase().includes('invalid source')) {
+                        logger.debug(`grantLevelCoins source '${source}' rejected by panel, trying next source...`);
+                        continue;
+                    }
+                    throw new Error(msg);
+                }
+                logger.info(`grantLevelCoins: +${amt} COINS to ${email} (user ${userId}) for level ${level} using source '${source}'`);
                 return true;
-            } catch (e2) {
-                logger.error(`grantLevelCoins failed for ${userId}: ${(e2 as Error).message}`);
-                return false;
+            } catch (e: any) {
+                if (String(e?.message).toLowerCase().includes('source is invalid') || String(e?.message).toLowerCase().includes('invalid source')) {
+                    continue;
+                }
+                logger.warn(`grantLevelCoins via victus grant ('${source}') failed for ${userId}: ${e.message}`);
+                break;
             }
+        }
+
+        // Final fallback: try adjustPaymenterCredits only if grant endpoint failed
+        try {
+            await this.adjustPaymenterCredits({
+                email,
+                currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
+                mode: 'add',
+                amount: amt,
+            });
+            logger.info(`grantLevelCoins fallback: +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
+            return true;
+        } catch (e2) {
+            logger.error(`grantLevelCoins failed for ${userId}: ${(e2 as Error).message}`);
+            return false;
         }
     }
 
