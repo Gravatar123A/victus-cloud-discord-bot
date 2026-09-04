@@ -27,6 +27,9 @@ export const resourceApplyCommand: Command = {
     async execute(interaction) {
         if (!interaction.guildId) return;
 
+        // Defer reply immediately so interaction never times out in Discord UI
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
         // 1. Account Link Check
         const linked = await supabase.getLinkedAccount(interaction.user.id).catch(() => null);
         if (!linked) {
@@ -39,7 +42,7 @@ export const resourceApplyCommand: Command = {
                 'ACCOUNT LINK REQUIRED'
             );
 
-            await interaction.reply({
+            await interaction.editReply({
                 components: [warningContainer],
                 flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
             });
@@ -62,7 +65,7 @@ export const resourceApplyCommand: Command = {
                 'RESOURCE LISTING REQUIRED'
             );
 
-            await interaction.reply({
+            await interaction.editReply({
                 components: [noListingsContainer],
                 flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
             });
@@ -91,7 +94,7 @@ export const resourceApplyCommand: Command = {
             'REWARD APPLICATION'
         );
 
-        await interaction.reply({
+        await interaction.editReply({
             components: [selectContainer, row],
             flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
         });
@@ -101,11 +104,14 @@ export const resourceApplyCommand: Command = {
         if (interaction.customId !== 'victus_res_select_apply') return;
         if (!interaction.guildId) return;
 
+        // Defer update immediately to acknowledge the select menu interaction before 3s timeout
+        await interaction.deferUpdate();
+
         const listingId = interaction.values[0];
         const listing = await publishedResourcesStore.getListing(listingId);
 
         if (!listing || listing.userId !== interaction.user.id) {
-            await interaction.reply({
+            await interaction.editReply({
                 components: [
                     ComponentsV2.cleanContainer(
                         ComponentsV2.Accents.danger,
@@ -114,13 +120,12 @@ export const resourceApplyCommand: Command = {
                         'ERROR'
                     ),
                 ],
-                flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
             });
             return;
         }
 
         if (listing.applied) {
-            await interaction.reply({
+            await interaction.editReply({
                 components: [
                     ComponentsV2.cleanContainer(
                         ComponentsV2.Accents.warning,
@@ -129,7 +134,6 @@ export const resourceApplyCommand: Command = {
                         'DUPLICATE APPLICATION'
                     ),
                 ],
-                flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
             });
             return;
         }
@@ -173,8 +177,8 @@ export const resourceApplyCommand: Command = {
             });
         }
 
-        // Confirm to applicant
-        await interaction.update({
+        // Confirm to applicant by editing deferred reply
+        await interaction.editReply({
             components: [
                 ComponentsV2.cleanContainer(
                     ComponentsV2.Accents.success,
