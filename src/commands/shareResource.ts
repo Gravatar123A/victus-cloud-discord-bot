@@ -24,36 +24,31 @@ import { config } from '../config.js';
 const CATEGORIES = ['Maps', 'Builds', 'Lobbies', 'Plugins', 'Mods', 'Bots', 'Codes', 'Other'];
 
 /**
- * Builds the interactive preview embed / V2 layout for a draft resource session.
+ * Builds the interactive preview V2 layout for a draft resource session.
  */
 function buildResourcePreviewComponents(session: ResourceSession) {
-    const embed = new EmbedBuilder()
-        .setColor(VICTUS_COLORS.primary)
-        .setTitle(`📌 Resource Preview: ${session.title || 'Untitled Resource'}`)
-        .setDescription(session.description ? session.description.slice(0, 2000) : '_No description provided._')
-        .addFields(
-            { name: '📁 Category', value: session.category || 'Other', inline: true },
-            { name: '🏷️ Tags', value: session.tags.length > 0 ? session.tags.join(', ') : 'None', inline: true },
-            { name: '👤 Creator/Author', value: session.author || 'Unknown / Community', inline: true },
-            { name: '🔗 Primary Source Link', value: session.sourceUrl ? `[View Source Page](${session.sourceUrl})` : 'None', inline: false }
-        );
-
-    if (session.links && session.links.length > 0) {
-        embed.addFields({
-            name: '🌐 Additional Links',
-            value: session.links.map((l, i) => `[Link ${i + 1}](${l})`).join(' • '),
-            inline: false,
-        });
-    }
+    const container = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
 
     if (session.images && session.images.length > 0) {
-        embed.setThumbnail(session.images[0]);
+        container.addMediaGalleryComponents(ComponentsV2.mediaGallery(session.images[0]));
     }
 
-    embed.setFooter({
-        text: 'Victus Cloud Resource Sharing • Ephemeral Preview Session',
-        iconURL: config.branding.logo,
-    });
+    let bodyText = `📌 **Resource Preview: ${session.title || 'Untitled Resource'}**\n\n`;
+    bodyText += `${session.description ? session.description.slice(0, 2000) : '_No description provided._'}\n\n`;
+    bodyText += `### Details\n`;
+    bodyText += `› **Category:** ${session.category || 'Other'}\n`;
+    bodyText += `› **Tags:** ${session.tags.length > 0 ? session.tags.join(', ') : 'None'}\n`;
+    bodyText += `› **Creator/Author:** ${session.author || 'Unknown / Community'}\n`;
+    if (session.sourceUrl) {
+        bodyText += `› **Primary Source:** [View Source Page](${session.sourceUrl})\n`;
+    }
+
+    if (session.links && session.links.length > 0) {
+        bodyText += `\n### Additional Links\n` + session.links.map((l, i) => `› [Link ${i + 1}](${l})`).join('\n') + `\n`;
+    }
+
+    container.addTextDisplayComponents(ComponentsV2.text(bodyText));
+    container.addTextDisplayComponents(ComponentsV2.footerNote('Victus Cloud Resource Sharing • Ephemeral Preview Session'));
 
     const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
@@ -81,7 +76,7 @@ function buildResourcePreviewComponents(session: ResourceSession) {
             .setStyle(ButtonStyle.Danger)
     );
 
-    return { embeds: [embed], components: [row1, row2] };
+    return { components: [container, row1, row2] };
 }
 
 export const shareResourceCommand: Command = {
@@ -324,7 +319,6 @@ export const shareResourceCommand: Command = {
                         'The draft resource sharing session has been cancelled.'
                     ),
                 ],
-                flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
             });
             return;
         }
@@ -392,7 +386,7 @@ export const shareResourceCommand: Command = {
             // Discord thread title max length is 100 characters
             const threadTitle = `[${session.category}] ${session.title}`.slice(0, 100);
 
-            // Construct rich embed for the forum post
+            // Construct rich embed for the forum post (forum posts use standard embeds)
             const postEmbed = new EmbedBuilder()
                 .setColor(VICTUS_COLORS.primary)
                 .setTitle(session.title)
@@ -407,7 +401,7 @@ export const shareResourceCommand: Command = {
                 postEmbed.addFields({ name: '🏷️ Tags', value: session.tags.join(', '), inline: true });
             }
 
-            if (session.images && session.images.length > 0) {
+            if (session.images && session.images.length > 0 && session.images[0].startsWith('http')) {
                 postEmbed.setImage(session.images[0]);
             }
 
@@ -433,7 +427,6 @@ export const shareResourceCommand: Command = {
                 resourceSessionStore.deleteSession(userId, guildId);
 
                 await interaction.editReply({
-                    embeds: [],
                     components: [
                         ComponentsV2.successContainer(
                             'Resource Published!',
@@ -441,7 +434,6 @@ export const shareResourceCommand: Command = {
                             `👉 [Click here to view your forum post](${thread.url})`
                         ),
                     ],
-                    flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
             } catch (error: any) {
                 logger.error('Failed to create forum thread post:', error);
@@ -452,7 +444,6 @@ export const shareResourceCommand: Command = {
                             `Failed to create forum post: ${error?.message || 'Check bot permissions for the forum channel.'}`
                         ),
                     ],
-                    flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
             }
         }
@@ -516,17 +507,16 @@ export const shareResourceCommand: Command = {
                 });
 
                 const preview = buildResourcePreviewComponents(session);
-                await interaction.editReply(preview as any);
+                await interaction.editReply(preview);
             } catch (error: any) {
                 logger.error('Resource scraping failed:', error);
                 await interaction.editReply({
                     components: [
                         ComponentsV2.errorContainer(
-                            'Link Scraping Failed',
+                            'Link Extraction Failed',
                             `Could not fetch metadata from URL: ${error?.message || 'Invalid or unreachable link.'}\n\nYou can still use **Manual Entry** to fill in the details.`
                         ),
                     ],
-                    flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
             }
             return;
@@ -553,7 +543,7 @@ export const shareResourceCommand: Command = {
             });
 
             const preview = buildResourcePreviewComponents(session);
-            await interaction.editReply(preview as any);
+            await interaction.editReply(preview);
             return;
         }
 
@@ -573,7 +563,7 @@ export const shareResourceCommand: Command = {
 
             if (session) {
                 const preview = buildResourcePreviewComponents(session);
-                await interaction.editReply(preview as any);
+                await interaction.editReply(preview);
             }
             return;
         }
@@ -595,7 +585,7 @@ export const shareResourceCommand: Command = {
 
             if (session) {
                 const preview = buildResourcePreviewComponents(session);
-                await interaction.editReply(preview as any);
+                await interaction.editReply(preview);
             }
             return;
         }

@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js';
+import { groqAi } from './groqAi.js';
 
 export interface ScrapedResource {
     title: string;
@@ -270,71 +271,106 @@ export async function scrapeResourceUrl(rawUrl: string): Promise<ScrapedResource
     const cleanUrl = parsedUrl.toString();
     const hostname = parsedUrl.hostname.toLowerCase();
 
-    if (hostname.includes('modrinth.com')) {
-        const modrinthResult = await parseModrinth(cleanUrl);
-        if (modrinthResult) return modrinthResult;
-    }
+    let result: ScrapedResource | null = null;
 
-    if (hostname.includes('github.com')) {
-        const githubResult = await parseGitHub(cleanUrl);
-        if (githubResult) return githubResult;
+    if (hostname.includes('modrinth.com')) {
+        result = await parseModrinth(cleanUrl);
+    } else if (hostname.includes('github.com')) {
+        result = await parseGitHub(cleanUrl);
     }
 
     let html = '';
-    try {
-        const res = await fetchWithTimeout(cleanUrl);
-        if (!res.ok) {
-            logger.warn(`Resource scraper HTTP error ${res.status} for ${cleanUrl}`);
-        } else {
-            html = await res.text();
-        }
-    } catch (error: any) {
-        logger.warn(`Failed to fetch HTML for ${cleanUrl}:`, error?.message || error);
-    }
-
-    if (html) {
-        if (hostname.includes('curseforge.com')) {
-            const result = await parseCurseForge(cleanUrl, html);
-            if (result) return result;
+    if (!result) {
+        try {
+            const res = await fetchWithTimeout(cleanUrl);
+            if (res.ok) {
+                html = await res.text();
+            }
+        } catch (error: any) {
+            logger.warn(`Failed to fetch HTML for ${cleanUrl}:`, error?.message || error);
         }
 
-        if (hostname.includes('spigotmc.org')) {
-            const result = await parseSpigotMC(cleanUrl, html);
-            if (result) return result;
-        }
+        if (html) {
+            if (hostname.includes('curseforge.com')) {
+                result = await parseCurseForge(cleanUrl, html);
+            } else if (hostname.includes('spigotmc.org')) {
+                result = await parseSpigotMC(cleanUrl, html);
+            } else if (hostname.includes('planetminecraft.com')) {
+                result = await parsePlanetMinecraft(cleanUrl, html);
+            }
 
-        if (hostname.includes('planetminecraft.com')) {
-            const result = await parsePlanetMinecraft(cleanUrl, html);
-            if (result) return result;
-        }
-    }
-
-    if (html) {
-        const meta = parseMetaTags(html);
-        if (meta.title || meta.description) {
-            const images: string[] = [];
-            if (meta.image) images.push(meta.image);
-
-            return {
-                title: meta.title || cleanUrl,
-                description: meta.description || 'No description provided.',
-                images,
-                category_hint: 'Other',
-                tags_hint: meta.keywords || [],
-                author: meta.author,
-                source_url: cleanUrl,
-                site_name: meta.siteName || hostname,
-            };
+            if (!result) {
+                const meta = parseMetaTags(html);
+                if (meta.title || meta.description) {
+                    result = {
+                        title: meta.title || cleanUrl,
+                        description: meta.description || 'No description provided.',
+                        images: meta.image ? [meta.image] : [],
+                        category_hint: 'Other',
+                        tags_hint: meta.keywords || [],
+                        author: meta.author,
+                        source_url: cleanUrl,
+                        site_name: meta.siteName || hostname,
+                    };
+                }
+            }
         }
     }
 
-    return {
-        title: parsedUrl.pathname.split('/').filter(Boolean).pop() || hostname,
-        description: `Resource from ${hostname}`,
-        images: [],
-        category_hint: 'Other',
-        tags_hint: [],
-        source_url: cleanUrl,
-        site_name: hostname,
-    };
+    // AI Enrichment & Fallback step
+    if (groqAi.isEnabled()) {
+        try {
+            const aiMeta = await groqAi.extractResourceMetadata(cleanUrl, html);
+            if (aiMeta) {
+                if (!result) {
+                    result = {
+                        title: aiMeta.title || parsedUrl.pathname.split('/').filter(Boolean).pop() || hostname,
+                        description: aiMeta.description || `Resource from ${hostname}`,
+                        images: aiMeta.images || [],
+                        category_hint: aiMeta.category || 'Other',
+                        tags_hint: aiMeta.tags || [],
+                        author: aiMeta.author,
+                        source_url: cleanUrl,
+                        site_name: hostname,
+                    };
+                } else {
+                    if (aiMeta.title && (!result.title || result.title.length < 5)) {
+                        result.title = aiMeta.title;
+                    }
+                    if (aiMeta.description && (!result.description || result.description.length < 30)) {
+                        result.description = aiMeta.description;
+                    }
+                    if (aiMeta.category && (!result.category_hint || result.category_hint === 'Other')) {
+                        result.category_hint = aiMeta.category;
+                    }
+                    if (aiMeta.author && !result.author) {
+                        result.author = aiMeta.author;
+                    }
+                    if (aiMeta.tags && aiMeta.tags.length > 0 && (!result.tags_hint || result.tags_hint.length === 0)) {
+                        result.tags_hint = aiMeta.tags;
+                    }
+                    if (aiMeta.images && aiMeta.images.length > 0 && (!result.images || result.images.length === 0)) {
+                        result.images = aiMeta.images;
+                    }
+                }
+            }
+        } catch (err) {
+            logger.warn('AI enrichment encountered an issue, falling back to scraped data:', err);
+        }
+    }
+
+    if (!result) {
+        result = {
+            title: parsedUrl.pathname.split('/').filter(Boolean).pop() || hostname,
+            description: `Resource from ${hostname}`,
+            images: [],
+            category_hint: 'Other',
+            tags_hint: [],
+            source_url: cleanUrl,
+            site_name: hostname,
+        };
+    }
+
+    return result;
 }
+

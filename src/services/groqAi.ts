@@ -436,6 +436,56 @@ class GroqAiService {
         return this.complete(messages);
     }
 
+    async extractResourceMetadata(url: string, rawText?: string): Promise<{
+        title?: string;
+        description?: string;
+        category?: string;
+        author?: string;
+        tags?: string[];
+        images?: string[];
+    } | null> {
+        if (!this.isEnabled()) return null;
+
+        try {
+            const prompt = `You are an expert Minecraft & Discord bot resource metadata extraction assistant.\n` +
+                `URL to analyze: ${url}\n` +
+                (rawText ? `Extracted Page Snippet:\n${truncate(rawText, 3000)}\n\n` : '\n') +
+                `Your task: Extract structured details for this resource (Minecraft map, build, lobby, plugin, mod, Discord bot, code script, etc.).\n` +
+                `If the raw snippet is empty or insufficient, use web_search or fetch_url to find the resource details on the web.\n\n` +
+                `Return ONLY a raw valid JSON object with these exact keys:\n` +
+                `{\n` +
+                `  "title": "string (clear title, max 80 chars)",\n` +
+                `  "description": "string (comprehensive markdown description of features, usage, version compatibility)",\n` +
+                `  "category": "string (MUST be one of: 'Maps', 'Builds', 'Lobbies', 'Plugins', 'Mods', 'Bots', 'Codes', 'Other')",\n` +
+                `  "author": "string (author/creator/dev name)",\n` +
+                `  "tags": ["array of 3-6 relevant tags"],\n` +
+                `  "images": ["array of image or banner URLs if found"]\n` +
+                `}\n\n` +
+                `Output pure JSON only without markdown formatting.`;
+
+            const messages: ChatMessage[] = [
+                { role: 'system', content: buildSystemPrompt() },
+                { role: 'user', content: prompt },
+            ];
+
+            const answer = await this.complete(messages);
+            const cleaned = answer.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
+
+            const parsed = JSON.parse(cleaned);
+            return {
+                title: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : undefined,
+                description: typeof parsed.description === 'string' && parsed.description.trim() ? parsed.description.trim() : undefined,
+                category: typeof parsed.category === 'string' && parsed.category.trim() ? parsed.category.trim() : undefined,
+                author: typeof parsed.author === 'string' && parsed.author.trim() ? parsed.author.trim() : undefined,
+                tags: Array.isArray(parsed.tags) ? parsed.tags.map(String).filter(Boolean) : undefined,
+                images: Array.isArray(parsed.images) ? parsed.images.map(String).filter((img: string) => img.startsWith('http')) : undefined,
+            };
+        } catch (error) {
+            logger.warn('AI resource metadata extraction failed:', error);
+            return null;
+        }
+    }
+
     private async callChatCompletionsOnce(messages: ChatMessage[], withTools: boolean, model: string, ms: number): Promise<GroqResponseMessage> {
         const endpoint = normalizeEndpoint(config.ai.baseUrl);
         const maxTokens = clampNumber(config.ai.maxTokens, 700, 128, 4000);

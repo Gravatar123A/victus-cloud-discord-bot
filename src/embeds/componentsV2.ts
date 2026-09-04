@@ -432,6 +432,7 @@ export const ComponentsV2 = {
     mediaGallery,
     thumbnail,
     baseContainer,
+    footerNote,
     successContainer,
     errorContainer,
     warningContainer,
