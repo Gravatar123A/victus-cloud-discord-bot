@@ -83,9 +83,9 @@ class ConversationMemoryService {
 
         // 2) try supabase (best-effort)
         try {
-            const h = await supabaseClient.getConversationHistory(discordId, 20);
-            if (h.length) {
-                return h.map(m => ({ role: m.role as Role, content: String(m.content).slice(0, 2000), ts: Date.now() }));
+            const h = await (supabaseClient as any).getConversationHistory?.(discordId, 20);
+            if (Array.isArray(h) && h.length) {
+                return h.map((m: any) => ({ role: m.role as Role, content: String(m.content).slice(0, 2000), ts: Date.now() }));
             }
         } catch { /* ignore */ }
 
@@ -107,7 +107,7 @@ class ConversationMemoryService {
         // async persist: file + supabase (fire-and-forget)
         this.persistFile(discordId, turns).catch(() => {});
         // also try supabase best-effort
-        (supabaseClient.updateConversationHistory as any)?.(discordId, role, content).catch(() => {});
+        (supabaseClient as any).updateConversationHistory?.(discordId, role, content)?.catch?.(() => {});
     }
 
     async addExchange(discordId: string, userPrompt: string, assistantReply: string) {

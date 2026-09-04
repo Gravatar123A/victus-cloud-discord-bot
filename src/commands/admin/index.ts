@@ -23,6 +23,7 @@ import { createPagination } from '../../utils/pagination.js';
 import { logger } from '../../utils/logger.js';
 import { VICTUS_COLORS } from '../../types/index.js';
 import { removeEntitlementRoles, syncEntitlementRoles } from '../../services/entitlementRoles.js';
+import { resourceSettings } from '../../services/resourceSettings.js';
 
 export const adminCommand: Command = {
     data: new SlashCommandBuilder()
@@ -150,6 +151,35 @@ export const adminCommand: Command = {
             sub
                 .setName('sync')
                 .setDescription('Synchronize free-user and paid-client roles')
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('set-resource-forum')
+                .setDescription('Set the target forum channel for user resource posts')
+                .addChannelOption((opt) =>
+                    opt
+                        .setName('channel')
+                        .setDescription('Select target forum channel')
+                        .addChannelTypes(ChannelType.GuildForum)
+                        .setRequired(true)
+                )
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('config-tags')
+                .setDescription('Configure resource category tag mappings')
+                .addStringOption((opt) =>
+                    opt
+                        .setName('category')
+                        .setDescription('Resource category (Maps, Builds, Lobbies, Plugins, Mods, Bots, Codes, Other)')
+                        .setRequired(true)
+                )
+                .addStringOption((opt) =>
+                    opt
+                        .setName('tags')
+                        .setDescription('Comma-separated list of tags to map (e.g., maps, minecraft, worlds)')
+                        .setRequired(true)
+                )
         ),
 
     adminOnly: true,
@@ -187,6 +217,12 @@ export const adminCommand: Command = {
                     break;
                 case 'sync':
                     await handleRoleSync(interaction);
+                    break;
+                case 'set-resource-forum':
+                    await handleSetResourceForum(interaction);
+                    break;
+                case 'config-tags':
+                    await handleConfigTags(interaction);
                     break;
             }
         } catch (error) {
@@ -502,3 +538,50 @@ async function handleStats(interaction: any) {
 
     await interaction.editReply({ embeds: [embed] });
 }
+
+async function handleSetResourceForum(interaction: any) {
+    const channel = interaction.options.getChannel('channel', true);
+
+    if (channel.type !== ChannelType.GuildForum) {
+        await interaction.editReply({
+            embeds: [errorEmbed('Invalid Channel', 'Selected channel must be a Forum Channel.')],
+        });
+        return;
+    }
+
+    await resourceSettings.setForumChannelId(interaction.guildId, channel.id);
+
+    const availableTags = channel.availableTags || [];
+    const tagList = availableTags.length > 0
+        ? availableTags.map((t: any) => `\`${t.name}\``).join(', ')
+        : '_No tags defined on forum channel yet._';
+
+    await interaction.editReply({
+        embeds: [
+            successEmbed(
+                'Resource Forum Channel Configured',
+                `Target forum channel set to ${channel}.\n\n` +
+                `**Detected Forum Channel Tags:**\n${tagList}\n\n` +
+                `Users can now run \`/share-resource\` to post resources directly into this forum channel.`
+            ),
+        ],
+    });
+}
+
+async function handleConfigTags(interaction: any) {
+    const category = interaction.options.getString('category', true);
+    const tagsRaw = interaction.options.getString('tags', true);
+    const tags = tagsRaw.split(',').map((t: string) => t.trim()).filter(Boolean);
+
+    await resourceSettings.setCategoryTagMapping(interaction.guildId, category, tags);
+
+    await interaction.editReply({
+        embeds: [
+            successEmbed(
+                'Category Tag Mapping Updated',
+                `Category **${category}** will now map to tags: ${tags.map((t: string) => `\`${t}\``).join(', ')}.`
+            ),
+        ],
+    });
+}
+
