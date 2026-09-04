@@ -3,15 +3,14 @@ import {
     ButtonBuilder,
     ButtonStyle,
     MessageFlags,
-    ModalBuilder,
     PermissionFlagsBits,
     SlashCommandBuilder,
-    TextInputBuilder,
-    TextInputStyle,
+    StringSelectMenuBuilder,
 } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { supabase } from '../services/supabase.js';
+import { publishedResourcesStore } from '../services/publishedResourcesStore.js';
 import { logger } from '../utils/logger.js';
 
 const STAFF_ROLE_ID = '1340607428252794973';
@@ -20,10 +19,10 @@ const REWARD_COINS_AMOUNT = 40;
 export const resourceApplyCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('resource-apply')
-        .setDescription('Apply for staff review and 40 Victus Coins reward for your shared resource')
+        .setDescription('Apply for staff review and 40 Victus Coins reward for one of your shared resource listings')
         .setDMPermission(false),
 
-    cooldown: 10,
+    cooldown: 5,
 
     async execute(interaction) {
         if (!interaction.guildId) return;
@@ -47,64 +46,109 @@ export const resourceApplyCommand: Command = {
             return;
         }
 
-        // 2. Open Application Details Modal
-        const modal = new ModalBuilder()
-            .setCustomId('victus_res_apply_modal')
-            .setTitle('Resource Reward Application');
+        // 2. Fetch User's Published Listings
+        const userListings = await publishedResourcesStore.getUserListings(interaction.user.id, interaction.guildId);
+        const eligibleListings = userListings.filter((l) => !l.applied);
 
-        const titleInput = new TextInputBuilder()
-            .setCustomId('res_title')
-            .setLabel('Resource Title / Post Link')
-            .setPlaceholder('e.g. Sodium Mod / Medieval Spawn Map')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-            .setMaxLength(100);
+        if (eligibleListings.length === 0) {
+            const noListingsContainer = ComponentsV2.cleanContainer(
+                ComponentsV2.Accents.warning,
+                'No Eligible Resource Listings Found',
+                userListings.length > 0
+                    ? 'All of your published resource listings have already been submitted for reward review!'
+                    : 'You have not published any resource listings yet!\n\n' +
+                      '› **Step 1:** Run `/share-resource` to post your Minecraft mod, plugin, map, bot, or build to the forum.\n' +
+                      '› **Step 2:** Run `/resource-apply` to select your published listing and request staff approval for 40 Victus Coins!',
+                'RESOURCE LISTING REQUIRED'
+            );
 
-        const detailsInput = new TextInputBuilder()
-            .setCustomId('res_details')
-            .setLabel('Key Features & Description')
-            .setPlaceholder('Provide details, features, version, or installation instructions...')
-            .setStyle(TextInputStyle.Paragraph)
-            .setRequired(true)
-            .setMaxLength(2000);
+            await interaction.reply({
+                components: [noListingsContainer],
+                flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
+            });
+            return;
+        }
 
-        const linkInput = new TextInputBuilder()
-            .setCustomId('res_link')
-            .setLabel('Primary Resource / Download URL')
-            .setPlaceholder('https://modrinth.com/mod/sodium or Forum post link')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(false);
+        // 3. Build Select Menu GUI for user to pick listing
+        const selectOptions = eligibleListings.slice(0, 25).map((l) => ({
+            label: `[${l.category}] ${l.title}`.slice(0, 100),
+            value: l.id,
+            description: `Published on ${new Date(l.createdAt).toLocaleDateString()}`.slice(0, 100),
+        }));
 
-        modal.addComponents(
-            new ActionRowBuilder<TextInputBuilder>().addComponents(titleInput),
-            new ActionRowBuilder<TextInputBuilder>().addComponents(detailsInput),
-            new ActionRowBuilder<TextInputBuilder>().addComponents(linkInput)
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('victus_res_select_apply')
+            .setPlaceholder('Select a resource listing to apply for reward...')
+            .addOptions(selectOptions);
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+        const selectContainer = ComponentsV2.cleanContainer(
+            ComponentsV2.Accents.primary,
+            'Select Resource Listing',
+            `You have **${eligibleListings.length}** eligible resource listing(s) available.\n\n` +
+            `Please select which resource listing you would like to submit to staff for verification and your **${REWARD_COINS_AMOUNT} Victus Coins** reward:`,
+            'REWARD APPLICATION'
         );
 
-        await interaction.showModal(modal);
+        await interaction.reply({
+            components: [selectContainer, row],
+            flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
+        });
     },
 
-    async handleModal(interaction) {
-        if (interaction.customId !== 'victus_res_apply_modal') return;
+    async handleSelectMenu(interaction) {
+        if (interaction.customId !== 'victus_res_select_apply') return;
         if (!interaction.guildId) return;
+
+        const listingId = interaction.values[0];
+        const listing = await publishedResourcesStore.getListing(listingId);
+
+        if (!listing || listing.userId !== interaction.user.id) {
+            await interaction.reply({
+                components: [
+                    ComponentsV2.cleanContainer(
+                        ComponentsV2.Accents.danger,
+                        'Resource Listing Not Found',
+                        'Could not find the specified resource listing. It may have been removed.',
+                        'ERROR'
+                    ),
+                ],
+                flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
+            });
+            return;
+        }
+
+        if (listing.applied) {
+            await interaction.reply({
+                components: [
+                    ComponentsV2.cleanContainer(
+                        ComponentsV2.Accents.warning,
+                        'Already Applied',
+                        'This resource listing has already been submitted for staff review.',
+                        'DUPLICATE APPLICATION'
+                    ),
+                ],
+                flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
+            });
+            return;
+        }
 
         const userId = interaction.user.id;
         const userTag = interaction.user.tag;
 
-        const title = interaction.fields.getTextInputValue('res_title');
-        const details = interaction.fields.getTextInputValue('res_details');
-        const link = interaction.fields.getTextInputValue('res_link') || '';
-
-        // Clean container without top banner image
-        const container = ComponentsV2.cleanContainer(
+        // Staff review GUI without top banner image
+        const reviewContainer = ComponentsV2.cleanContainer(
             ComponentsV2.Accents.primary,
             'Resource Reward Application',
             `📌 **Submission Details**\n\n` +
             `› **Creator / Applicant:** <@${userId}> (\`${userTag}\`)\n` +
-            `› **Resource Title:** ${title}\n` +
-            `› **Primary Link:** ${link ? `[View Link](${link})` : 'N/A'}\n\n` +
-            `### Resource Summary & Features\n` +
-            `${details}\n\n` +
+            `› **Resource Title:** ${listing.title}\n` +
+            `› **Category:** ${listing.category}\n` +
+            `› **Forum Listing:** [View Forum Post](${listing.threadUrl})\n` +
+            `› **Primary Link:** ${listing.sourceUrl ? `[View Source Link](${listing.sourceUrl})` : 'N/A'}\n\n` +
+            `### Resource Summary\n` +
+            `${listing.description.slice(0, 1500)}\n\n` +
             `### Staff Verification\n` +
             `Review the resource for quality and compliance. Approving this submission will automatically grant **${REWARD_COINS_AMOUNT} COINS** to <@${userId}>'s Victus Cloud account balance.`,
             'STAFF REVIEW PANEL'
@@ -112,35 +156,34 @@ export const resourceApplyCommand: Command = {
 
         const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
-                .setCustomId(`victus_res_staff_approve:${userId}:${Date.now()}`)
+                .setCustomId(`victus_res_staff_approve:${userId}:${listing.id}`)
                 .setLabel('Approve Resource (+40 Coins)')
                 .setStyle(ButtonStyle.Success),
             new ButtonBuilder()
-                .setCustomId(`victus_res_staff_reject:${userId}:${Date.now()}`)
+                .setCustomId(`victus_res_staff_reject:${userId}:${listing.id}`)
                 .setLabel('Decline Submission')
                 .setStyle(ButtonStyle.Danger)
         );
 
-        // Send public/channel review card with Staff role ping
+        // Post public channel review card with Staff role ping
         if (interaction.channel && 'send' in interaction.channel) {
             await (interaction.channel as any).send({
                 content: `🔔 <@&${STAFF_ROLE_ID}> **New Resource Reward Application Submitted by <@${userId}>!**`,
-                components: [container, buttons],
+                components: [reviewContainer, buttons],
             });
         }
 
-        // Ephemeral user confirmation
-        await interaction.reply({
+        // Confirm to applicant
+        await interaction.update({
             components: [
                 ComponentsV2.cleanContainer(
                     ComponentsV2.Accents.success,
                     'Application Submitted!',
-                    `Your resource application for **${title}** has been sent to staff for review!\n\n` +
+                    `Your resource application for **${listing.title}** has been sent to staff for review!\n\n` +
                     `Once staff approves your submission, **${REWARD_COINS_AMOUNT} COINS** will be automatically transferred to your Victus Cloud account.`,
                     'APPLICATION SENT'
                 ),
             ],
-            flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2,
         });
     },
 
@@ -152,6 +195,7 @@ export const resourceApplyCommand: Command = {
         const parts = customId.split(':');
         const action = parts[0];
         const applicantUserId = parts[1];
+        const listingId = parts[2];
 
         // Enforce Staff Role / Administrator permissions
         const member = interaction.member;
@@ -183,6 +227,9 @@ export const resourceApplyCommand: Command = {
 
         if (action === 'victus_res_staff_approve') {
             const granted = await supabase.grantResourceShareCoins(applicantUserId, REWARD_COINS_AMOUNT);
+            if (listingId) {
+                await publishedResourcesStore.markApplied(listingId, true);
+            }
 
             const resultContainer = ComponentsV2.cleanContainer(
                 ComponentsV2.Accents.success,
@@ -198,7 +245,7 @@ export const resourceApplyCommand: Command = {
                 components: [resultContainer],
             });
 
-            // Send notification DM to applicant
+            // DM notification to applicant
             try {
                 const applicant = await interaction.client.users.fetch(applicantUserId).catch(() => null);
                 await applicant?.send(
@@ -212,6 +259,10 @@ export const resourceApplyCommand: Command = {
         }
 
         if (action === 'victus_res_staff_reject') {
+            if (listingId) {
+                await publishedResourcesStore.markApplied(listingId, false);
+            }
+
             const resultContainer = ComponentsV2.cleanContainer(
                 ComponentsV2.Accents.danger,
                 'Resource Submission Declined',
@@ -225,7 +276,7 @@ export const resourceApplyCommand: Command = {
                 components: [resultContainer],
             });
 
-            // Send notification DM to applicant
+            // DM notification to applicant
             try {
                 const applicant = await interaction.client.users.fetch(applicantUserId).catch(() => null);
                 await applicant?.send(

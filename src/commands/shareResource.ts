@@ -16,6 +16,7 @@ import type { Command } from '../types/index.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { scrapeResourceUrl } from '../services/resourceScraper.js';
 import { resourceSessionStore, ResourceSession } from '../services/resourceSessionStore.js';
+import { publishedResourcesStore } from '../services/publishedResourcesStore.js';
 import { resourceSettings } from '../services/resourceSettings.js';
 import { logger } from '../utils/logger.js';
 import { VICTUS_COLORS } from '../types/index.js';
@@ -423,8 +424,30 @@ export const shareResourceCommand: Command = {
                     appliedTags: matchedTagIds.slice(0, 5), // Discord max 5 applied tags
                 });
 
+                // Store published listing for /resource-apply selection
+                await publishedResourcesStore.addListing({
+                    userId,
+                    guildId,
+                    title: session.title,
+                    description: session.description,
+                    category: session.category,
+                    sourceUrl: session.sourceUrl,
+                    threadUrl: thread.url,
+                    threadId: thread.id,
+                });
+
                 // Clear session
                 resourceSessionStore.deleteSession(userId, guildId);
+
+                // Send notification DM to user with exact text required
+                try {
+                    await interaction.user.send(
+                        `🎉 **Your resource listing "${session.title}" has been published!**\n\n` +
+                        `If you want to get coins for your listing than run \`/resource-apply\` and select your listing`
+                    );
+                } catch (dmErr) {
+                    logger.debug(`Could not send resource-apply DM to ${userId}:`, dmErr);
+                }
 
                 await interaction.editReply({
                     components: [
