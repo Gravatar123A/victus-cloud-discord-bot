@@ -100,18 +100,16 @@ export const resourceApplyCommand: Command = {
         });
     },
 
-    async handleSelectMenu(interaction) {
+async handleSelectMenu(interaction) {
         if (interaction.customId !== 'victus_res_select_apply') return;
         if (!interaction.guildId) return;
-
-        // Defer update immediately to acknowledge the select menu interaction before 3s timeout
-        await interaction.deferUpdate();
 
         const listingId = interaction.values[0];
         const listing = await publishedResourcesStore.getListing(listingId);
 
         if (!listing || listing.userId !== interaction.user.id) {
-            await interaction.editReply({
+            await interaction.update({
+                content: null,
                 components: [
                     ComponentsV2.cleanContainer(
                         ComponentsV2.Accents.danger,
@@ -125,7 +123,8 @@ export const resourceApplyCommand: Command = {
         }
 
         if (listing.applied) {
-            await interaction.editReply({
+            await interaction.update({
+                content: null,
                 components: [
                     ComponentsV2.cleanContainer(
                         ComponentsV2.Accents.warning,
@@ -145,12 +144,12 @@ export const resourceApplyCommand: Command = {
         const reviewContainer = ComponentsV2.cleanContainer(
             ComponentsV2.Accents.primary,
             'Resource Reward Application',
-            `📌 **Submission Details**\n\n` +
-            `› **Creator / Applicant:** <@${userId}> (\`${userTag}\`)\n` +
-            `› **Resource Title:** ${listing.title}\n` +
-            `› **Category:** ${listing.category}\n` +
-            `› **Forum Listing:** [View Forum Post](${listing.threadUrl})\n` +
-            `› **Primary Link:** ${listing.sourceUrl ? `[View Source Link](${listing.sourceUrl})` : 'N/A'}\n\n` +
+            `dY"O **Submission Details**\n\n` +
+            `�?� **Creator / Applicant:** <@${userId}> (\`${userTag}\`)\n` +
+            `�?� **Resource Title:** ${listing.title}\n` +
+            `�?� **Category:** ${listing.category}\n` +
+            `�?� **Forum Listing:** [View Forum Post](${listing.threadUrl})\n` +
+            `�?� **Primary Link:** ${listing.sourceUrl ? `[View Source Link](${listing.sourceUrl})` : 'N/A'}\n\n` +
             `### Resource Summary\n` +
             `${listing.description.slice(0, 1500)}\n\n` +
             `### Staff Verification\n` +
@@ -171,14 +170,10 @@ export const resourceApplyCommand: Command = {
 
         // Post public channel review card with Staff role ping
         try {
-            let targetChannel: any = interaction.channel;
-            if (!targetChannel && interaction.channelId) {
-                targetChannel = await interaction.guild?.channels.fetch(interaction.channelId).catch(() => null);
-            }
-
-            if (targetChannel && typeof targetChannel.send === 'function') {
+            const targetChannel = interaction.channel;
+            if (targetChannel && targetChannel.isTextBased() && typeof targetChannel.send === 'function') {
                 await targetChannel.send({
-                    content: `🔔 <@&${STAFF_ROLE_ID}> **New Resource Reward Application Submitted by <@${userId}>!**`,
+                    content: `dY"" <@&${STAFF_ROLE_ID}> **New Resource Reward Application Submitted by <@${userId}>!**`,
                     components: [reviewContainer, buttons],
                     flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
@@ -189,8 +184,9 @@ export const resourceApplyCommand: Command = {
             logger.error('Failed to post staff review card to channel:', sendErr);
         }
 
-        // Confirm to applicant by editing deferred reply
-        await interaction.editReply({
+        // Confirm to applicant by updating the select menu message
+        await interaction.update({
+            content: null,
             components: [
                 ComponentsV2.cleanContainer(
                     ComponentsV2.Accents.success,
@@ -239,27 +235,10 @@ export const resourceApplyCommand: Command = {
             return;
         }
 
-        await interaction.deferUpdate();
-
-        if (action === 'victus_res_staff_approve') {
-            const granted = await supabase.grantResourceShareCoins(applicantUserId, REWARD_COINS_AMOUNT);
-            if (listingId) {
-                await publishedResourcesStore.markApplied(listingId, true);
-            }
-
-            const resultContainer = ComponentsV2.cleanContainer(
-                ComponentsV2.Accents.success,
-                'Resource Approved',
-                `✅ **Application Approved by <@${interaction.user.id}>!**\n\n` +
-                `🎉 **${REWARD_COINS_AMOUNT} COINS** have been successfully credited to <@${applicantUserId}>'s linked Victus Cloud account balance.` +
-                (granted ? '' : '\n\n⚠️ _Note: Automated coin grant encountered a notice. Balance mirrored directly._'),
-                'APPROVAL COMPLETE'
-            );
-
-            await interaction.editReply({
-                content: `✅ **Resource Application Approved by <@${interaction.user.id}>**`,
-                components: [resultContainer],
-            });
+        await interaction.update({
+            content: `✅ **Resource Application Approved by <@${interaction.user.id}>**`,
+            components: [resultContainer],
+        });
 
             // DM notification to applicant
             try {
@@ -287,7 +266,7 @@ export const resourceApplyCommand: Command = {
                 'SUBMISSION DECLINED'
             );
 
-            await interaction.editReply({
+            await interaction.update({
                 content: `❌ **Resource Application Declined by <@${interaction.user.id}>**`,
                 components: [resultContainer],
             });
