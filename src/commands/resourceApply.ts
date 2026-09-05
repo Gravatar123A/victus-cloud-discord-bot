@@ -235,10 +235,19 @@ async handleSelectMenu(interaction) {
             return;
         }
 
-        await interaction.update({
-            content: `✅ **Resource Application Approved by <@${interaction.user.id}>**`,
-            components: [resultContainer],
-        });
+        if (action === 'victus_res_staff_approve') {
+            const resultContainer = ComponentsV2.cleanContainer(
+                ComponentsV2.Accents.success,
+                'Resource Submission Approved',
+                `✅ **Application Approved by <@${interaction.user.id}>.**\n\n` +
+                `The resource submission from <@${applicantUserId}> was reviewed and approved by staff. **${REWARD_COINS_AMOUNT} COINS** have been credited to your Victus Cloud account.`,
+                'APPROVAL CONFIRMED'
+            );
+
+            await interaction.update({
+                content: `✅ **Resource Application Approved by <@${interaction.user.id}>**`,
+                components: [resultContainer],
+            });
 
             // DM notification to applicant
             try {
