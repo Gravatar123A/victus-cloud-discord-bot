@@ -170,11 +170,23 @@ export const resourceApplyCommand: Command = {
         );
 
         // Post public channel review card with Staff role ping
-        if (interaction.channel && 'send' in interaction.channel) {
-            await (interaction.channel as any).send({
-                content: `🔔 <@&${STAFF_ROLE_ID}> **New Resource Reward Application Submitted by <@${userId}>!**`,
-                components: [reviewContainer, buttons],
-            });
+        try {
+            let targetChannel: any = interaction.channel;
+            if (!targetChannel && interaction.channelId) {
+                targetChannel = await interaction.guild?.channels.fetch(interaction.channelId).catch(() => null);
+            }
+
+            if (targetChannel && typeof targetChannel.send === 'function') {
+                await targetChannel.send({
+                    content: `🔔 <@&${STAFF_ROLE_ID}> **New Resource Reward Application Submitted by <@${userId}>!**`,
+                    components: [reviewContainer, buttons],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+            } else {
+                logger.warn(`Could not find sendable channel to post staff review card for applicant ${userId}`);
+            }
+        } catch (sendErr) {
+            logger.error('Failed to post staff review card to channel:', sendErr);
         }
 
         // Confirm to applicant by editing deferred reply
