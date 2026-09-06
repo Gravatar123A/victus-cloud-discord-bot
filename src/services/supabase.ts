@@ -736,6 +736,11 @@ class SupabaseService {
     async getPaymenterBalances(email: string): Promise<{ coins: number; credits: number; found: boolean }> {
         if (!email) return { coins: 0, credits: 0, found: false };
 
+        // The internal COINS route is the authoritative view. The generic admin
+        // API can expose summed/legacy credit rows while the mutation route
+        // operates on the active COINS row, which makes an absolute sync unsafe.
+        const internalCoins = await this.getPaymenterInternalCoins(email);
+
         try {
             const { data, error } = await this.client.functions.invoke('admin-paymenter', {
                 body: { endpoint: 'credits.balance', email },
@@ -744,7 +749,7 @@ class SupabaseService {
                 logger.warn(`getPaymenterBalances edge function failed: ${await describeFunctionError(error)}`);
             } else if (data && (data as any).found) {
                 return {
-                    coins: Number((data as any).coins) || 0,
+                    coins: internalCoins ?? (Number((data as any).coins) || 0),
                     credits: Number((data as any).credits) || 0,
                     found: true,
                 };
@@ -753,11 +758,31 @@ class SupabaseService {
             logger.warn(`getPaymenterBalances edge invoke error: ${(e as Error).message}`);
         }
 
+        if (internalCoins !== null) return { coins: internalCoins, credits: 0, found: true };
+
         // Fall back to the direct Paymenter API only when it is configured.
         if (config.paymenter.url && config.paymenter.apiKey) {
             return this.getPaymenterBalancesDirect(email);
         }
         return { coins: 0, credits: 0, found: false };
+    }
+
+    private async getPaymenterInternalCoins(email: string): Promise<number | null> {
+        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || '').replace(/\/$/, '');
+        const internalToken = this.paymenterInternalToken();
+        if (!email || !paymenterUrl || !internalToken) return null;
+        try {
+            const response = await fetch(`${paymenterUrl}/api/victus/coins?email=${encodeURIComponent(email)}`, {
+                headers: { 'Authorization': `Bearer ${internalToken}`, 'Accept': 'application/json' },
+            });
+            if (!response.ok) return null;
+            const data = await response.json() as any;
+            if (!data?.found) return null;
+            return this.paymenterCoinBalance(data);
+        } catch (error) {
+            logger.debug(`Paymenter internal balance lookup failed for ${email}: ${(error as Error).message}`);
+            return null;
+        }
     }
 
     /**
@@ -825,8 +850,9 @@ class SupabaseService {
 
     private async setPaymenterCoinsNow(email: string, amount: number): Promise<boolean> {
         const desired = Math.max(0, Math.round(amount));
-        const live = await this.getPaymenterBalances(email);
-        const current = live.found ? Math.max(0, Math.round(live.coins)) : 0;
+        const internalCurrent = await this.getPaymenterInternalCoins(email);
+        const live = internalCurrent === null ? await this.getPaymenterBalances(email) : null;
+        const current = Math.max(0, Math.round(internalCurrent ?? (live?.found ? live.coins : 0)));
         if (current === desired) return true;
 
         const delta = desired - current;
@@ -842,9 +868,13 @@ class SupabaseService {
         });
 
         if (after === desired) return true;
-        const verified = await this.getPaymenterBalances(email).catch(() => ({ coins: 0, credits: 0, found: false }));
-        if (verified.found && Math.round(verified.coins) === desired) return true;
-        logger.warn(`setPaymenterCoins verification failed for ${email}: expected ${desired}, got ${after ?? verified.coins}`);
+        const verifiedInternal = await this.getPaymenterInternalCoins(email);
+        const verified = verifiedInternal === null
+            ? await this.getPaymenterBalances(email).catch(() => ({ coins: 0, credits: 0, found: false }))
+            : null;
+        const verifiedCoins = verifiedInternal ?? verified?.coins ?? 0;
+        if ((verifiedInternal !== null || verified?.found) && Math.round(verifiedCoins) === desired) return true;
+        logger.warn(`setPaymenterCoins verification failed for ${email}: expected ${desired}, got ${after ?? verifiedCoins}`);
         return false;
     }
 

@@ -171,7 +171,7 @@ async handleSelectMenu(interaction) {
         // Post public channel review card with Staff role ping
         try {
             const targetChannel = interaction.channel;
-            if (targetChannel && targetChannel.isTextBased() && typeof targetChannel.send === 'function') {
+            if (targetChannel && targetChannel.isTextBased() && 'send' in targetChannel && typeof targetChannel.send === 'function') {
                 await targetChannel.send({
                     content: `dY"" <@&${STAFF_ROLE_ID}> **New Resource Reward Application Submitted by <@${userId}>!**`,
                     components: [reviewContainer, buttons],
