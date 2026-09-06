@@ -1088,51 +1088,59 @@ class SupabaseService {
         const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
         const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
         const reference = `discord_link:${linked.discord_id}`;
+        const grantSources = ['discord_link', 'discord_invite', 'invite', 'referral', 'level_up'];
 
-        try {
-            const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${internalToken}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                },
-                body: JSON.stringify({
-                    email,
-                    amount,
-                    source: 'discord_link',
-                    reference: reference.slice(0, 191),
-                    description: 'Linked Discord account via /link',
-                }),
-            });
-            const text = await res.text();
-            let data: any = {};
-            try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-            if (!res.ok) {
-                // If panel says already granted (deduped by reference), treat as success and mark flag.
-                const msg = String(data?.error || data?.message || text || '').toLowerCase();
-                if (msg.includes('already') || msg.includes('duplicate') || res.status === 409) {
-                    await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount }).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id);
-                    logger.info(`grantDiscordLinkCoins: deduped grant for ${linked.discord_id} (panel says already granted)`);
-                    return true;
-                }
-                throw new Error(data?.error || data?.message || text || `HTTP ${res.status}`);
-            }
-            // Mark as granted (best-effort; ignore if columns missing before migration)
-            await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount, coins_revoked: false, coins_revoked_at: null } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, (e) => logger.debug(`grantDiscordLinkCoins: mark granted failed (migration pending): ${(e as Error).message}`));
-            logger.info(`grantDiscordLinkCoins: +${amount} COINS to ${email} (discord ${linked.discord_id})`);
-            return true;
-        } catch (e) {
-            logger.warn(`grantDiscordLinkCoins via victus grant failed for ${linked.discord_id}: ${(e as Error).message}, falling back to legacy adjust`);
+        for (const source of grantSources) {
             try {
-                await this.adjustPaymenterCredits({ email, currency: process.env.VICTUS_COINS_CURRENCY || 'COINS', mode: 'add', amount });
-                await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, () => {});
-                logger.info(`grantDiscordLinkCoins fallback: +${amount} COINS to ${email}`);
+                const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${internalToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email,
+                        amount,
+                        source,
+                        reference: reference.slice(0, 191),
+                        description: 'Linked Discord account via /link',
+                    }),
+                });
+                const text = await res.text();
+                let data: any = {};
+                try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+                if (!res.ok) {
+                    const msg = String(data?.error || data?.message || text || '').toLowerCase();
+                    if (msg.includes('already') || msg.includes('duplicate') || res.status === 409) {
+                        await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount }).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id);
+                        logger.info(`grantDiscordLinkCoins: deduped grant for ${linked.discord_id} (panel says already granted)`);
+                        return true;
+                    }
+                    if (msg.includes('source is invalid') || msg.includes('invalid source')) {
+                        logger.debug(`grantDiscordLinkCoins source '${source}' rejected by panel, trying next source...`);
+                        continue;
+                    }
+                    throw new Error(data?.error || data?.message || text || `HTTP ${res.status}`);
+                }
+                await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount, coins_revoked: false, coins_revoked_at: null } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, (e) => logger.debug(`grantDiscordLinkCoins: mark granted failed (migration pending): ${(e as Error).message}`));
+                logger.info(`grantDiscordLinkCoins: +${amount} COINS to ${email} (discord ${linked.discord_id}) via source '${source}'`);
                 return true;
-            } catch (e2) {
-                logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${(e2 as Error).message}`);
-                return false;
+            } catch (e) {
+                const msg = String((e as Error).message || '').toLowerCase();
+                if (msg.includes('source is invalid') || msg.includes('invalid source')) continue;
+                logger.warn(`grantDiscordLinkCoins via victus grant failed for ${linked.discord_id}: ${(e as Error).message}, falling back to legacy adjust`);
+                break;
             }
+        }
+        try {
+            await this.adjustPaymenterCredits({ email, currency: process.env.VICTUS_COINS_CURRENCY || 'COINS', mode: 'add', amount });
+            await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, () => {});
+            logger.info(`grantDiscordLinkCoins fallback: +${amount} COINS to ${email}`);
+            return true;
+        } catch (e2) {
+            logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${(e2 as Error).message}`);
+            return false;
         }
     }
 
