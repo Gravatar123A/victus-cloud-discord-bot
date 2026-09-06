@@ -107,6 +107,9 @@ async function describeFunctionError(error: unknown): Promise<string> {
 }
 
 class SupabaseService {
+    private readonly paymenterSyncLocks = new Map<string, Promise<boolean>>();
+    private paymenterReconciliationRunning = false;
+
     public client: SupabaseClient;
 
     constructor() {
@@ -797,20 +800,170 @@ class SupabaseService {
         return out({}, true);
     }
 
-    /** Set a user's Paymenter coins balance (mirror of the economy wallet). */
-    async setPaymenterCoins(target: { email?: string; user_id?: string }, amount: number): Promise<void> {
-        await this.adjustPaymenterCredits({
-            ...target,
-            currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
-            mode: 'set',
-            amount: Math.max(0, Math.round(amount)),
-        }).catch((e) => logger.warn(`setPaymenterCoins failed: ${(e as Error).message}`));
+    /**
+     * Mirror a user's economy wallet to Paymenter using the supported internal
+     * grant/spend routes. Paymenter deliberately rejects unreferenced COINS
+     * increases through the generic admin credit endpoint.
+     */
+    async setPaymenterCoins(target: { email?: string; user_id?: string }, amount: number): Promise<boolean> {
+        const profile = !target.email && target.user_id ? await this.getUserProfile(target.user_id).catch(() => null) : null;
+        const email = String(target.email || profile?.email || '').trim().toLowerCase();
+        if (!email) {
+            logger.warn('setPaymenterCoins skipped: target has no email');
+            return false;
+        }
+
+        const previous = this.paymenterSyncLocks.get(email) || Promise.resolve(true);
+        const next = previous.catch(() => false).then(() => this.setPaymenterCoinsNow(email, amount));
+        this.paymenterSyncLocks.set(email, next);
+        try {
+            return await next;
+        } finally {
+            if (this.paymenterSyncLocks.get(email) === next) this.paymenterSyncLocks.delete(email);
+        }
+    }
+
+    private async setPaymenterCoinsNow(email: string, amount: number): Promise<boolean> {
+        const desired = Math.max(0, Math.round(amount));
+        const live = await this.getPaymenterBalances(email);
+        const current = live.found ? Math.max(0, Math.round(live.coins)) : 0;
+        if (current === desired) return true;
+
+        const delta = desired - current;
+        const after = await this.mutatePaymenterCoins(
+            email,
+            delta,
+            'admin_adjust',
+            `economy_sync:${email}:${current}:${desired}`,
+            `Economy wallet synchronization (${current} → ${desired} COINS)`,
+        ).catch((error) => {
+            logger.warn(`setPaymenterCoins failed for ${email}: ${(error as Error).message}`);
+            return null;
+        });
+
+        if (after === desired) return true;
+        const verified = await this.getPaymenterBalances(email).catch(() => ({ coins: 0, credits: 0, found: false }));
+        if (verified.found && Math.round(verified.coins) === desired) return true;
+        logger.warn(`setPaymenterCoins verification failed for ${email}: expected ${desired}, got ${after ?? verified.coins}`);
+        return false;
+    }
+
+    private paymenterInternalToken(): string {
+        return process.env.VICTUS_INTERNAL_API_TOKEN
+            || process.env.PAYMENTER_INTERNAL_API_TOKEN
+            || process.env.PTERODACTYL_INTERNAL_API_TOKEN
+            || '';
+    }
+
+    private paymenterCoinBalance(data: any): number | null {
+        for (const value of [data?.coins, data?.balance, data?.attributes?.balance]) {
+            const parsed = Number(value);
+            if (Number.isFinite(parsed)) return Math.round(parsed);
+        }
+        return null;
+    }
+
+    private async mutatePaymenterCoins(
+        email: string,
+        delta: number,
+        source: string,
+        reference: string,
+        description: string,
+    ): Promise<number> {
+        if (!delta) {
+            const balance = await this.getPaymenterBalances(email);
+            return Math.round(balance.coins);
+        }
+
+        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
+        const internalToken = this.paymenterInternalToken();
+        if (!paymenterUrl || !internalToken) {
+            throw new Error('Paymenter internal coin API is not configured');
+        }
+
+        const endpoint = delta > 0 ? 'grant' : 'spend';
+        let lastError = 'Paymenter coin mutation failed';
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                const response = await fetch(`${paymenterUrl}/api/victus/coins/${endpoint}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${internalToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email,
+                        amount: Math.abs(Math.round(delta)),
+                        source,
+                        reference: reference.slice(0, 191),
+                        description,
+                    }),
+                });
+                const text = await response.text();
+                let data: any = {};
+                try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+                if (response.ok) {
+                    const balance = this.paymenterCoinBalance(data);
+                    if (balance !== null) return balance;
+                    throw new Error('Paymenter returned no COINS balance');
+                }
+                lastError = String(data?.error || data?.message || text || `HTTP ${response.status}`).slice(0, 300);
+                if (response.status < 500 && response.status !== 429) break;
+            } catch (error) {
+                lastError = (error as Error).message;
+            }
+            await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+        }
+        throw new Error(lastError);
+    }
+
+    private async mirrorProfileCoinsFromPaymenter(userId: string, balance: number, context: string): Promise<void> {
+        await this.setProfileCoins(userId, balance);
+        logger.info(`Mirrored ${balance} COINS to economy wallet for ${userId} (${context})`);
     }
 
     /** Directly set the Supabase coins mirror (profiles.total_cp). */
     async setProfileCoins(userId: string, amount: number): Promise<void> {
         const { error } = await this.client.from('profiles').update({ total_cp: Math.max(0, Math.round(amount)) }).eq('id', userId);
         if (error) logger.warn(`setProfileCoins failed: ${error.message}`);
+    }
+
+    /** Pull all profile wallets into Paymenter in a rate-limited repair pass. */
+    async reconcilePaymenterCoins(reason = 'periodic'): Promise<{ total: number; synced: number; failed: number }> {
+        if (this.paymenterReconciliationRunning) return { total: 0, synced: 0, failed: 0 };
+        this.paymenterReconciliationRunning = true;
+        try {
+        const profiles: Array<{ id: string; email: string; total_cp: number }> = [];
+        for (let offset = 0; ; offset += 200) {
+            const { data, error } = await this.client
+                .from('profiles')
+                .select('id,email,total_cp')
+                .not('email', 'is', null)
+                .range(offset, offset + 199);
+            if (error) {
+                logger.error(`Paymenter reconciliation query failed (${reason}):`, error);
+                return { total: profiles.length, synced: 0, failed: profiles.length };
+            }
+            const page = (data || []) as Array<{ id: string; email: string; total_cp: number }>;
+            profiles.push(...page.filter((profile) => profile.email));
+            if (page.length < 200) break;
+        }
+
+        let synced = 0;
+        let failed = 0;
+        for (let offset = 0; offset < profiles.length; offset += 3) {
+            const batch = profiles.slice(offset, offset + 3);
+            const results = await Promise.all(batch.map((profile) => this.setPaymenterCoins({ email: profile.email }, Number(profile.total_cp ?? 0))));
+            synced += results.filter(Boolean).length;
+            failed += results.filter((result) => !result).length;
+            await new Promise((resolve) => setTimeout(resolve, 150));
+        }
+        logger.info(`Paymenter reconciliation (${reason}): ${synced}/${profiles.length} wallets synchronized${failed ? `, ${failed} failed` : ''}`);
+        return { total: profiles.length, synced, failed };
+        } finally {
+            this.paymenterReconciliationRunning = false;
+        }
     }
 
     async adjustPaymenterCredits(input: {
@@ -844,14 +997,7 @@ class SupabaseService {
     // Discord Invite Coins (escrow ledger)
     // ============================================
 
-    /**
-     * Grant invite-reward COINS to an inviter via the CANONICAL Paymenter rail
-     * (adjustPaymenterCredits, currency=COINS, mode 'add') — NOT profiles.total_cp
-     * / econGrantCp. Resolves the inviter's Paymenter account by their linked
-     * Victus profile email. Returns false (so the caller can leave the credit
-     * 'pending' and retry later) if the inviter has no profile/email or the
-     * Paymenter adjustment fails.
-     */
+    /** Grant invite COINS and mirror the resulting absolute balance to Supabase. */
     async grantInviteCoins(inviterUserId: string, amount: number, reference?: string): Promise<boolean> {
         if (!inviterUserId || !Number.isFinite(amount) || amount <= 0) return false;
         const profile = await this.getUserProfile(inviterUserId);
@@ -862,48 +1008,14 @@ class SupabaseService {
         const email = String(profile.email).toLowerCase();
         const amt = Math.round(amount);
         const ref = reference || `invite:${inviterUserId}:${Date.now()}`;
-        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
-        const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
         try {
-            const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${internalToken}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                },
-                body: JSON.stringify({
-                    email,
-                    amount: amt,
-                    source: 'discord_invite',
-                    reference: String(ref).slice(0, 191),
-                    description: `Discord invite reward`,
-                }),
-            });
-            const text = await res.text();
-            let data: any = {};
-            try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-            if (!res.ok) {
-                const msg = data?.error || data?.message || text || `HTTP ${res.status}`;
-                throw new Error(msg);
-            }
+            const balance = await this.mutatePaymenterCoins(email, amt, 'discord_invite', String(ref), 'Discord invite reward');
+            await this.mirrorProfileCoinsFromPaymenter(inviterUserId, balance, 'discord invite');
             logger.info(`grantInviteCoins: +${amt} COINS to ${email} (user ${inviterUserId}) via victus grant`);
             return true;
         } catch (e) {
-            logger.warn(`grantInviteCoins via victus grant failed for ${inviterUserId}: ${(e as Error).message} — falling back to legacy adjust`);
-            try {
-                await this.adjustPaymenterCredits({
-                    email,
-                    currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
-                    mode: 'add',
-                    amount: amt,
-                });
-                logger.info(`grantInviteCoins fallback: +${amt} COINS to ${email} (user ${inviterUserId})`);
-                return true;
-            } catch (e2) {
-                logger.error(`grantInviteCoins failed for ${inviterUserId}: ${(e2 as Error).message}`);
-                return false;
-            }
+            logger.error(`grantInviteCoins failed for ${inviterUserId}: ${(e as Error).message}`);
+            return false;
         }
     }
 
@@ -920,59 +1032,18 @@ class SupabaseService {
         const email = String(profile.email).toLowerCase();
         const amt = Math.round(amount);
         const ref = reference || `resource_share:${userId}:${Date.now()}`;
-        const sourcesToTry = ['discord_invite', 'level_up', 'resource_share'];
-        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
-        const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
-
-        for (const source of sourcesToTry) {
-            try {
-                const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${internalToken}`,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email,
-                        amount: amt,
-                        source,
-                        reference: String(ref).slice(0, 191),
-                        description: `Resource Share approval reward (${amt} COINS)`,
-                    }),
-                });
-                const text = await res.text();
-                let data: any = {};
-                try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-
-                if (res.ok) {
-                    logger.info(`grantResourceShareCoins: +${amt} COINS to ${email} (user ${userId}) via source=${source}`);
-                    return true;
-                }
-            } catch (e) {
-                logger.warn(`grantResourceShareCoins via ${source} failed for ${userId}: ${(e as Error).message}`);
-            }
-        }
-
         try {
-            await this.adjustPaymenterCredits({
-                email,
-                currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
-                mode: 'add',
-                amount: amt,
-            });
-            logger.info(`grantResourceShareCoins fallback: +${amt} COINS to ${email} (user ${userId})`);
+            const balance = await this.mutatePaymenterCoins(email, amt, 'admin_adjust', String(ref), `Resource share approval reward (${amt} COINS)`);
+            await this.mirrorProfileCoinsFromPaymenter(userId, balance, 'resource share');
+            logger.info(`grantResourceShareCoins: +${amt} COINS to ${email} (user ${userId})`);
             return true;
-        } catch (e2) {
-            logger.error(`grantResourceShareCoins failed for ${userId}: ${(e2 as Error).message}`);
+        } catch (e) {
+            logger.error(`grantResourceShareCoins failed for ${userId}: ${(e as Error).message}`);
             return false;
         }
     }
 
-    /**
-     * Grant level-up reward COINS to a user via the CANONICAL Paymenter rail
-     * (POST /api/victus/coins/grant with source=level_up).
-     */
+    /** Grant a level-up reward and mirror Paymenter's resulting balance to Supabase. */
     async grantLevelCoins(userId: string, level: number, eventId: string, amount: number): Promise<boolean> {
         if (!userId || !Number.isFinite(amount) || amount <= 0) return false;
         const profile = await this.getUserProfile(userId);
@@ -983,63 +1054,13 @@ class SupabaseService {
         const email = String(profile.email).toLowerCase();
         const amt = Math.round(amount);
         const ref = `level_up:${eventId || level}:${userId}`;
-        const sourcesToTry = ['level_up', 'level', 'level_reward', 'discord_invite'];
-        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
-        const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
-
-        for (const source of sourcesToTry) {
-            try {
-                const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${internalToken}`,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email,
-                        amount: amt,
-                        source,
-                        reference: String(ref).slice(0, 191),
-                        description: `Level ${level} reward`,
-                    }),
-                });
-                const text = await res.text();
-                let data: any = {};
-                try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-
-                if (!res.ok) {
-                    const msg = data?.error || data?.message || text || `HTTP ${res.status}`;
-                    // If source is invalid, try next source candidate
-                    if (String(msg).toLowerCase().includes('source is invalid') || String(msg).toLowerCase().includes('invalid source')) {
-                        logger.debug(`grantLevelCoins source '${source}' rejected by panel, trying next source...`);
-                        continue;
-                    }
-                    throw new Error(msg);
-                }
-                logger.info(`grantLevelCoins: +${amt} COINS to ${email} (user ${userId}) for level ${level} using source '${source}'`);
-                return true;
-            } catch (e: any) {
-                if (String(e?.message).toLowerCase().includes('source is invalid') || String(e?.message).toLowerCase().includes('invalid source')) {
-                    continue;
-                }
-                logger.warn(`grantLevelCoins via victus grant ('${source}') failed for ${userId}: ${e.message}`);
-                break;
-            }
-        }
-
-        // Final fallback: try adjustPaymenterCredits only if grant endpoint failed
         try {
-            await this.adjustPaymenterCredits({
-                email,
-                currency: process.env.VICTUS_COINS_CURRENCY || 'COINS',
-                mode: 'add',
-                amount: amt,
-            });
-            logger.info(`grantLevelCoins fallback: +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
+            const balance = await this.mutatePaymenterCoins(email, amt, 'discord_level', ref, `Level ${level} reward`);
+            await this.mirrorProfileCoinsFromPaymenter(userId, balance, `level ${level}`);
+            logger.info(`grantLevelCoins: +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
             return true;
-        } catch (e2) {
-            logger.error(`grantLevelCoins failed for ${userId}: ${(e2 as Error).message}`);
+        } catch (e) {
+            logger.error(`grantLevelCoins failed for ${userId}: ${(e as Error).message}`);
             return false;
         }
     }
@@ -1085,61 +1106,23 @@ class SupabaseService {
             return false;
         }
         const email = String(profile.email).toLowerCase();
-        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
-        const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
         const reference = `discord_link:${linked.discord_id}`;
-        const grantSources = ['discord_link', 'discord_invite', 'invite', 'referral', 'level_up'];
-
-        for (const source of grantSources) {
-            try {
-                const res = await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${internalToken}`,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email,
-                        amount,
-                        source,
-                        reference: reference.slice(0, 191),
-                        description: 'Linked Discord account via /link',
-                    }),
-                });
-                const text = await res.text();
-                let data: any = {};
-                try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-                if (!res.ok) {
-                    const msg = String(data?.error || data?.message || text || '').toLowerCase();
-                    if (msg.includes('already') || msg.includes('duplicate') || res.status === 409) {
-                        await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount }).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id);
-                        logger.info(`grantDiscordLinkCoins: deduped grant for ${linked.discord_id} (panel says already granted)`);
-                        return true;
-                    }
-                    if (msg.includes('source is invalid') || msg.includes('invalid source')) {
-                        logger.debug(`grantDiscordLinkCoins source '${source}' rejected by panel, trying next source...`);
-                        continue;
-                    }
-                    throw new Error(data?.error || data?.message || text || `HTTP ${res.status}`);
-                }
-                await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount, coins_revoked: false, coins_revoked_at: null } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, (e) => logger.debug(`grantDiscordLinkCoins: mark granted failed (migration pending): ${(e as Error).message}`));
-                logger.info(`grantDiscordLinkCoins: +${amount} COINS to ${email} (discord ${linked.discord_id}) via source '${source}'`);
-                return true;
-            } catch (e) {
-                const msg = String((e as Error).message || '').toLowerCase();
-                if (msg.includes('source is invalid') || msg.includes('invalid source')) continue;
-                logger.warn(`grantDiscordLinkCoins via victus grant failed for ${linked.discord_id}: ${(e as Error).message}, falling back to legacy adjust`);
-                break;
-            }
-        }
         try {
-            await this.adjustPaymenterCredits({ email, currency: process.env.VICTUS_COINS_CURRENCY || 'COINS', mode: 'add', amount });
-            await this.client.from('discord_linked_accounts').update({ coins_granted: true, coins_granted_at: new Date().toISOString(), coins_amount: amount } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, () => {});
-            logger.info(`grantDiscordLinkCoins fallback: +${amount} COINS to ${email}`);
+            const balance = await this.mutatePaymenterCoins(email, amount, 'discord_invite', reference, 'Linked Discord account via /link');
+            await this.mirrorProfileCoinsFromPaymenter(linked.user_id, balance, 'Discord link reward');
+            await this.client.from('discord_linked_accounts').update({
+                coins_granted: true,
+                coins_granted_at: new Date().toISOString(),
+                coins_amount: amount,
+                coins_revoked: false,
+                coins_revoked_at: null,
+                coins_last_error: null,
+            } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id);
+            logger.info(`grantDiscordLinkCoins: +${amount} COINS to ${email} (discord ${linked.discord_id})`);
             return true;
-        } catch (e2) {
-            logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${(e2 as Error).message}`);
+        } catch (e) {
+            await this.client.from('discord_linked_accounts').update({ coins_last_error: String((e as Error).message).slice(0, 500) } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, () => {});
+            logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${(e as Error).message}`);
             return false;
         }
     }
@@ -1172,18 +1155,15 @@ class SupabaseService {
         }
         const email = String(profile.email).toLowerCase();
         try {
-            await this.adjustPaymenterCredits({ email, currency: process.env.VICTUS_COINS_CURRENCY || 'COINS', mode: 'remove', amount });
+            const balance = await this.mutatePaymenterCoins(
+                email,
+                -amount,
+                'discord_invite',
+                `discord_link_revoke:${discordId}`,
+                'Left Discord server — link reward deducted',
+            );
+            await this.mirrorProfileCoinsFromPaymenter(row.user_id, balance, 'Discord link revocation');
             await this.client.from('discord_linked_accounts').update({ coins_revoked: true, coins_revoked_at: new Date().toISOString() } as any).eq('discord_id', discordId).then(() => {}, (e) => logger.debug(`revoke mark failed: ${(e as Error).message}`));
-            // Also record a local panel history entry via the internal token if available (best-effort).
-            const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
-            const internalToken = process.env.VICTUS_INTERNAL_API_TOKEN || process.env.PAYMENTER_INTERNAL_API_TOKEN || process.env.PTERODACTYL_INTERNAL_API_TOKEN || '';
-            if (internalToken && paymenterUrl) {
-                await fetch(`${paymenterUrl}/api/victus/coins/grant`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${internalToken}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                    body: JSON.stringify({ email, amount, source: 'discord_link_revoke', reference: `discord_link_revoke:${discordId}:${Date.now()}`, description: 'Left Discord server — 100 COINS deducted' }),
-                }).catch(() => {});
-            }
             logger.info(`revokeDiscordLinkCoins: -${amount} COINS from ${email} (discord ${discordId} left)`);
             return true;
         } catch (e) {

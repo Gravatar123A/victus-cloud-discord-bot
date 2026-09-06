@@ -250,6 +250,19 @@ export const readyEvent: Event = {
         restoreVoiceXpSessions(client);
         startLevelUpWorker(client);
 
+        // Keep Paymenter aligned with the Discord economy wallet. The initial
+        // pass repairs historical missed rewards; later passes recover from
+        // transient billing/API failures without blocking Discord commands.
+        const reconcileCoins = (reason: string) => {
+            supabase.reconcilePaymenterCoins(reason).catch((error) => {
+                logger.error(`Paymenter COINS reconciliation failed (${reason}):`, error);
+            });
+        };
+        setTimeout(() => reconcileCoins('startup repair'), 20_000).unref?.();
+        const coinReconciliationTimer = setInterval(() => reconcileCoins('periodic'), 10 * 60 * 1000);
+        coinReconciliationTimer.unref?.();
+        logger.info('Paymenter COINS reconciliation worker started (10m interval)');
+
         await syncEntitlementRoles(client).catch((error) => {
             logger.error('Initial entitlement role sync failed:', error);
         });

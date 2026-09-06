@@ -49,10 +49,11 @@ async function processOne(client: Client<true>): Promise<boolean> {
             }
 
             const now = new Date().toISOString();
+            const syncedProfile = await supabase.getUserProfile(event.user_id);
             await supabase.updateLevelUpEvent(event.id, {
                 coins_rewarded_at: now,
                 coins_processing_at: null,
-                coins_target: Number(profile.total_cp ?? 0) + config.economy.coinsPerLevel,
+                coins_target: Number(syncedProfile?.total_cp ?? profile.total_cp ?? 0),
             });
             event.coins_rewarded_at = now;
         }

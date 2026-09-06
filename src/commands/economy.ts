@@ -66,9 +66,12 @@ async function loadCtx(discordId: string): Promise<Ctx | null> {
 
 // Mirror a user's economy coins balance (Supabase profiles.total_cp) back to
 // their Paymenter coins, so Paymenter stays the synced source of truth.
-async function pushCoins(userId: string): Promise<void> {
+async function pushCoins(userId: string): Promise<boolean> {
     const p = await supabase.getUserProfile(userId).catch(() => null);
-    if ((p as any)?.email) await supabase.setPaymenterCoins({ email: (p as any).email }, Number((p as any).total_cp ?? 0));
+    if (!(p as any)?.email) return false;
+    const synced = await supabase.setPaymenterCoins({ email: (p as any).email }, Number((p as any).total_cp ?? 0));
+    if (!synced) logger.warn(`Paymenter COINS mirror pending for economy user ${userId}`);
+    return synced;
 }
 
 // Notify the recipient of a completed transfer via DM. Fails gracefully if the
