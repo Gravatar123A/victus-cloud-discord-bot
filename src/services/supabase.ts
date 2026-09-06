@@ -753,6 +753,8 @@ class SupabaseService {
                     credits: Number((data as any).credits) || 0,
                     found: true,
                 };
+            } else if (data && (data as any).found === false) {
+                return { coins: internalCoins ?? 0, credits: 0, found: false };
             }
         } catch (e) {
             logger.warn(`getPaymenterBalances edge invoke error: ${(e as Error).message}`);
@@ -855,17 +857,31 @@ class SupabaseService {
         const current = Math.max(0, Math.round(internalCurrent ?? (live?.found ? live.coins : 0)));
         if (current === desired) return true;
 
-        const delta = desired - current;
-        const after = await this.mutatePaymenterCoins(
-            email,
-            delta,
-            'admin_adjust',
-            `economy_sync:${email}:${current}:${desired}`,
-            `Economy wallet synchronization (${current} → ${desired} COINS)`,
-        ).catch((error) => {
+        if (internalCurrent === null && live && !live.found) {
+            logger.debug(`setPaymenterCoins skipped for ${email}: no Paymenter account`);
+            return false;
+        }
+
+        let after: number | null = current;
+        let part = 0;
+        try {
+            while (after !== desired) {
+                const delta = desired - after;
+                const step = Math.sign(delta) * Math.min(1000, Math.abs(delta));
+                after = await this.mutatePaymenterCoins(
+                    email,
+                    step,
+                    'admin_adjust',
+                    `economy_sync:${email}:${current}:${desired}:part-${part}`,
+                    `Economy wallet synchronization (${current} → ${desired} COINS)`,
+                );
+                part++;
+                if (part > 10000) throw new Error('Paymenter synchronization exceeded the safety limit');
+            }
+        } catch (error) {
             logger.warn(`setPaymenterCoins failed for ${email}: ${(error as Error).message}`);
-            return null;
-        });
+            after = null;
+        }
 
         if (after === desired) return true;
         const verifiedInternal = await this.getPaymenterInternalCoins(email);
