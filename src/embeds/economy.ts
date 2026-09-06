@@ -151,7 +151,7 @@ export function transferContainer(discordId: string, profile: any, isAdmin = fal
                 `# 💸 Transfer\n` +
                 `Send currency to another **linked** member. Pick what to send:\n${HR}\n` +
                 `⭐ **Coins** — ${fmt(profile?.total_cp)} available · instant, on-platform\n` +
-                `💳 **Credits** — billing credits, sent via Paymenter\n` +
+                `💳 **Credits** — billing credits, sent via Paymenter (may be unavailable if billing is down)\n` +
                 `-# Recipients must have linked their Victus Cloud account with /link.`,
             ),
         );

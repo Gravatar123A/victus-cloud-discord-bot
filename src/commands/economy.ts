@@ -125,15 +125,12 @@ async function buildView(view: string, discordId: string, page = 0): Promise<Con
     if (!ctx) return notLinked();
     const { userId, profile, isAdmin } = ctx;
 
-    // Coins are the unified currency, sourced from Paymenter. Pull the live
-    // balances and reconcile the Supabase mirror (profiles.total_cp) so the
-    // economy, leaderboard and levels stay in sync with Paymenter.
+    // Coins are authoritative in Supabase (profiles.total_cp); Paymenter is
+    // only the billing mirror. Do NOT overwrite total_cp on every view — the
+    // previous sync made the dashboard flip between sources and look "not accurate".
+    // Pull Paymenter strictly for the Credits figure.
     const bal = await supabase.getPaymenterBalances(profile.email).catch(() => ({ coins: 0, credits: 0, found: false }));
-    if (bal.found) {
-        await supabase.setProfileCoins(userId, bal.coins).catch(() => undefined);
-        (profile as any).total_cp = bal.coins;
-    }
-    const coins = bal.found ? bal.coins : Number((profile as any).total_cp ?? 0);
+    const coins = Number((profile as any).total_cp ?? 0);
     const credits = bal.found ? bal.credits : null;
 
     switch (view) {
@@ -336,7 +333,7 @@ export const economyCommand: Command = {
             if (!toLinked?.user_id) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Recipient not linked', `<@${toDiscordId}> has not linked their Victus Cloud account, so they can't receive transfers yet.`, ctx.isAdmin)], flags: V2 }));
 
             const toUserId = toLinked.user_id;
-            const curLabel = cur === 'cp' ? 'CP' : 'Credits';
+            const curLabel = cur === 'cp' ? 'Coins' : 'Credits';
             const client = interaction.client;
             const token = stashOp(async () => {
                 if (cur === 'cp') {
