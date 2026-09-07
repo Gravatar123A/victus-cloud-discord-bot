@@ -1331,15 +1331,26 @@ class SupabaseService {
      * Call Pterodactyl API through edge function
      */
     async pterodactylApi(endpoint: string, method = 'GET', body?: any): Promise<any> {
-        const { data, error } = await this.client.functions.invoke('admin-pterodactyl', {
-            body: { endpoint, method, body },
-        });
+        let lastError: unknown = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            const { data, error } = await this.client.functions.invoke('admin-pterodactyl', {
+                body: { endpoint, method, body },
+            });
 
-        if (error) {
-            logger.error(`Pterodactyl API call failed (${endpoint}): ${await describeFunctionError(error)}`);
-            throw error;
+            if (!error) return data;
+            lastError = error;
+            const detail = await describeFunctionError(error);
+            const rateLimited = /\b429\b|too many attempts|rate.?limit/i.test(detail);
+            if (!rateLimited || attempt === 3) {
+                logger.error(`Pterodactyl API call failed (${endpoint}): ${detail}`);
+                throw error;
+            }
+
+            const delayMs = attempt * 2_000;
+            logger.warn(`Pterodactyl API rate limited (${endpoint}); retrying in ${delayMs / 1000}s`);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
-        return data;
+        throw lastError;
     }
 
     /**

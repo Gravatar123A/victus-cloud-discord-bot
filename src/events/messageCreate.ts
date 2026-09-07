@@ -125,7 +125,8 @@ async function replyWithAi(message: Message, prompt: string, publicReply: boolea
         });
         await mirrorPublicReply(message, publicReply, answer);
     } catch (error) {
-        logger.error(publicReply ? 'AI channel response failed:' : 'AI DM response failed:', error);
+        const reason = error instanceof Error ? error.message : String(error);
+        logger.warn(`${publicReply ? 'AI channel response' : 'AI DM response'} unavailable: ${reason}`);
         await message.reply({
             content: fallbackMessage,
             allowedMentions: { repliedUser: false },

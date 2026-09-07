@@ -428,7 +428,10 @@ class GroqAiService {
         ];
 
         try {
-            const raw = await this.complete(messages, false);
+            // Moderation is best-effort. A provider returning no text must fall
+            // back to the local detectors without generating an application
+            // error stack for every message.
+            const raw = await this.complete(messages, false, false);
             const jsonStart = raw.indexOf('{');
             const jsonEnd = raw.lastIndexOf('}');
             if (jsonStart < 0 || jsonEnd <= jsonStart) return null;
@@ -723,7 +726,11 @@ class GroqAiService {
         throw new Error('Azure AI returned an empty response.');
     }
 
-    private async complete(messages: ChatMessage[], allowTools = config.ai.webSearchEnabled): Promise<string> {
+    private async complete(
+        messages: ChatMessage[],
+        allowTools = config.ai.webSearchEnabled,
+        logFailure = true,
+    ): Promise<string> {
         if (!config.ai.apiKey) {
             throw new Error('AI is not configured. Set OPENROUTER_API_KEY (or AI_API_KEY) in the bot environment.');
         }
@@ -747,6 +754,7 @@ class GroqAiService {
                     }
                     throw new Error('AI is temporarily unavailable (Azure subscription key invalid). Staff has been notified — please try again later or open a ticket.');
                 }
+                if (logFailure) logger.error('Groq AI request failed:', e);
                 throw e;
             }
         }
@@ -788,7 +796,7 @@ class GroqAiService {
 
             throw new Error('AI returned an empty response.');
         } catch (error) {
-            logger.error('Groq AI request failed:', error);
+            if (logFailure) logger.error('Groq AI request failed:', error);
             throw error;
         }
     }
