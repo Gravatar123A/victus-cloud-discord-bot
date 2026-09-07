@@ -73,7 +73,15 @@ async function processOne(client: Client<true>): Promise<boolean> {
 
         if (!event.dm_sent_at) {
             const user = await client.users.fetch(linked.discord_id);
-            await user.send({ components: [levelCard(linked.discord_id, event.level, eventXp, rankedUp)], flags: ComponentsV2.IS_COMPONENTS_V2 });
+            try {
+                await user.send({ components: [levelCard(linked.discord_id, event.level, eventXp, rankedUp)], flags: ComponentsV2.IS_COMPONENTS_V2 });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                // A user who is no longer reachable through Discord should not
+                // block the Paymenter reward and public level announcement.
+                if (!/no mutual guilds|cannot send messages to this user|50007|50001/i.test(message)) throw error;
+                logger.info(`Level event ${event.id}: DM unavailable; continuing with public notification`);
+            }
             await supabase.updateLevelUpEvent(event.id, { dm_sent_at: new Date().toISOString() });
         }
 
