@@ -23,7 +23,6 @@ import {
     adminContainer,
     bankContainer,
     confirmContainer,
-    convertContainer,
     cpDashboardContainer,
     historyContainer,
     leaderboardContainer,
@@ -141,10 +140,6 @@ async function buildView(view: string, discordId: string, page = 0): Promise<Con
             return bankContainer(discordId, profile, isAdmin);
         case 'transfer':
             return transferContainer(discordId, profile, isAdmin);
-        case 'convert': {
-            const rates = await supabase.getEconomyRates().catch(() => []);
-            return convertContainer(discordId, rates, profile, credits == null ? null : Number(credits), isAdmin);
-        }
         case 'admin':
             return isAdmin ? adminContainer(discordId) : resultContainer(discordId, false, 'Staff only', 'You do not have access to the admin economy controls.', false);
         case 'leaderboard': {
@@ -191,7 +186,7 @@ function amountModal(customId: string, title: string, label: string, placeholder
 export const economyCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('economy')
-        .setDescription('Manage your Victus economy — Coins, bank, transfers, conversions, leaderboard & more')
+        .setDescription('Manage your Victus economy — Coins, bank, transfers, leaderboard & more')
         .setDMPermission(false),
 
     async execute(interaction: ChatInputCommandInteraction) {
@@ -225,7 +220,10 @@ export const economyCommand: Command = {
 
         // Navigation / pagination
         if (action === 'dash') return void (await interaction.update({ components: [await buildView('wallet', discordId)], flags: V2 }));
-        if (action === 'nav2') return void (await interaction.update({ components: [await buildView(parts[3], discordId)], flags: V2 }));
+        if (action === 'nav2') {
+            const view = parts[3] === 'convert' ? 'wallet' : parts[3];
+            return void (await interaction.update({ components: [await buildView(view, discordId)], flags: V2 }));
+        }
         if (action === 'lb') return void (await interaction.update({ components: [await buildView('leaderboard', discordId, Math.max(0, parseInt(parts[3] || '0', 10) || 0))], flags: V2 }));
         if (action === 'hist') return void (await interaction.update({ components: [await buildView('history', discordId, Math.max(0, parseInt(parts[3] || '0', 10) || 0))], flags: V2 }));
 
@@ -248,7 +246,9 @@ export const economyCommand: Command = {
         }
 
         // Convert → modal (amount)
-        if (action === 'conv') return interaction.showModal(amountModal(`econ:m:conv:${discordId}:${parts[3]}`, 'Convert', 'Amount to convert'));
+        if (action === 'conv') {
+            return void (await interaction.update({ components: [resultContainer(discordId, false, 'Conversion unavailable', 'Coin-to-credit and credit-to-coin conversions are no longer supported. Coins and billing credits are separate balances.', false)], flags: V2 }));
+        }
 
         // Admin
         if (action === 'adjadj') {
@@ -387,7 +387,9 @@ export const economyCommand: Command = {
         }
 
         // ── Convert (confirm) ──
-        if (op === 'conv') {
+        /* Legacy conversion handler retained only as a migration marker. It is
+         * intentionally disabled and must never execute.
+        if (false && op === 'conv') {
             const pair = parts[4]; // cp_credits | credits_cp
             const [from, to] = pair.split('_');
             const amount = parseAmount(val('amount'));
@@ -434,6 +436,7 @@ export const economyCommand: Command = {
         }
 
         // ── Admin: adjust Coins (confirm) ──
+        */
         if (op === 'adjadj') {
             if (!ctx.isAdmin) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Staff only', 'You are not an admin.', false)], flags: V2 }));
             const targetDiscordId = parseDiscordId(val('to'));

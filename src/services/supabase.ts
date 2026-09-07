@@ -634,11 +634,11 @@ class SupabaseService {
     }
 
     econSpendCp(userId: string, amount: number, reason?: string, meta?: Record<string, unknown>) {
-        return this.econRpc('econ_spend_cp', { p_user: userId, p_amount: amount, p_reason: reason ?? null, p_meta: meta ?? {} });
+        return Promise.resolve({ ok: false, error: 'Coin-to-credit conversions are disabled.' });
     }
 
     econGrantCp(userId: string, amount: number, kind = 'convert_in', reason?: string, meta?: Record<string, unknown>) {
-        return this.econRpc('econ_grant_cp', { p_user: userId, p_amount: amount, p_kind: kind, p_reason: reason ?? null, p_meta: meta ?? {} });
+        return Promise.resolve({ ok: false, error: 'Credit-to-coin conversions are disabled.' });
     }
 
     econAdminAdjustCp(adminUserId: string, userId: string, delta: number, reason?: string) {
@@ -650,12 +650,7 @@ class SupabaseService {
     }
 
     async getEconomyRates(): Promise<any[]> {
-        const { data, error } = await this.client.from('economy_rates').select('*').eq('enabled', true);
-        if (error) {
-            logger.error('getEconomyRates failed:', error);
-            return [];
-        }
-        return data || [];
+        return [];
     }
 
     async getEconomyLedger(userId: string, limit = 8, offset = 0): Promise<any[]> {

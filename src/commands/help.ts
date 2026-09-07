@@ -36,7 +36,7 @@ function getSelectMenu(currentVal?: string) {
             { label: 'Music System', description: 'Compact player & audio controls', value: 'music' },
             { label: 'Utility', description: 'AI assistant, general prefix utilities', value: 'utility' },
             { label: 'Fun', description: 'Entertainment & engagement', value: 'fun' },
-            { label: 'Economy', description: 'Coins ledger, bank, converts & rankings', value: 'economy' },
+            { label: 'Economy', description: 'Coins ledger, bank, transfers & rankings', value: 'economy' },
             { label: 'Giveaways', description: 'Premium lottery creation & boosters', value: 'giveaways' },
             { label: 'Tickets System', description: 'Interactive website ticket relays', value: 'tickets' },
             { label: 'Logging', description: 'Server tracking & alerts', value: 'logging' },

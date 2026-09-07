@@ -35,7 +35,6 @@ function navRow(ownerId: string, current: string, isAdmin = false): ActionRowBui
         { label: 'Wallet', value: 'wallet', emoji: '💼', description: 'Coins, level & balances' },
         { label: 'Bank', value: 'bank', emoji: '🏦', description: 'Deposit / withdraw Coins' },
         { label: 'Transfer', value: 'transfer', emoji: '💸', description: 'Send Coins or credits' },
-        { label: 'Convert', value: 'convert', emoji: '🔁', description: 'Swap between currencies' },
         { label: 'Leaderboard', value: 'leaderboard', emoji: '🏆', description: 'Top contributors' },
         { label: 'History', value: 'history', emoji: '🧾', description: 'Your transactions' },
     ];
@@ -112,7 +111,6 @@ export function cpDashboardContainer(o: DashboardOpts): ContainerBuilder {
     c.addActionRowComponents(btnRow(
         new ButtonBuilder().setCustomId(`econ:dash:${o.discordId}`).setLabel('Refresh').setStyle(ButtonStyle.Secondary).setEmoji('🔄'),
         new ButtonBuilder().setCustomId(`econ:nav2:${o.discordId}:transfer`).setLabel('Transfer').setStyle(ButtonStyle.Primary).setEmoji('💸'),
-        new ButtonBuilder().setCustomId(`econ:nav2:${o.discordId}:convert`).setLabel('Convert').setStyle(ButtonStyle.Secondary).setEmoji('🔁'),
         new ButtonBuilder().setLabel('Open Web').setStyle(ButtonStyle.Link).setURL(`${config.branding.website}/dashboard/rank`).setEmoji('🌐'),
     ));
     return c;
