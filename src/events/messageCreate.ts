@@ -16,6 +16,7 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { calculateLevel } from '../utils/vccrs.js';
 import { buildFinalEmbedPayload } from '../commands/embed.js';
 import { bridgeDiscordMessageToWeb } from '../services/chatBridge.js';
+import { inspectModerationMessage } from '../services/moderation.js';
 
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
@@ -150,6 +151,14 @@ export const messageCreateEvent: Event = {
         void bridgeDiscordMessageToWeb(message);
 
         if (message.author.bot) return;
+
+        if (message.inGuild()) {
+            const moderated = await inspectModerationMessage(message).catch((error) => {
+                logger.debug(`Moderation inspection failed for ${message.id}: ${(error as Error).message}`);
+                return false;
+            });
+            if (moderated) return;
+        }
 
         // --- AFK System ---
         if (message.inGuild()) {

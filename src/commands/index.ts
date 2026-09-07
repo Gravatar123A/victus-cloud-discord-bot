@@ -52,6 +52,8 @@ import { levelCommand } from './level.js';
 import { shareResourceCommand } from './shareResource.js';
 import { resourceApplyCommand } from './resourceApply.js';
 import { manualDcLinkCommand } from './manualdclink.js';
+import { currencyCommand } from './currency.js';
+import { pricingCommand } from './pricing.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -61,6 +63,8 @@ const allCommands: Command[] = [
     shareResourceCommand,
     resourceApplyCommand,
     manualDcLinkCommand,
+    currencyCommand,
+    pricingCommand,
     linkCommand,
     unlinkCommand,
     serversCommand,

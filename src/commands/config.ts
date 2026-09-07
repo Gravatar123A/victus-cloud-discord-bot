@@ -59,6 +59,52 @@ export const configCommand: Command = {
         )
         .addSubcommand((sub) =>
             sub
+                .setName('moderation-enable')
+                .setDescription('Enable AI language and conduct moderation')
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('moderation-disable')
+                .setDescription('Disable AI language and conduct moderation')
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('language-channel')
+                .setDescription('Set the channel where non-English messages are flagged')
+                .addChannelOption((opt) =>
+                    opt
+                        .setName('channel')
+                        .setDescription('Channel where English is required')
+                        .addChannelTypes(ChannelType.GuildText)
+                        .setRequired(true)
+                )
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('languages-channel')
+                .setDescription('Set the channel for messages in other languages')
+                .addChannelOption((opt) =>
+                    opt
+                        .setName('channel')
+                        .setDescription('Channel where other languages are allowed')
+                        .addChannelTypes(ChannelType.GuildText)
+                        .setRequired(true)
+                )
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('moderation-logs')
+                .setDescription('Set the private channel for moderation logs')
+                .addChannelOption((opt) =>
+                    opt
+                        .setName('channel')
+                        .setDescription('Channel for AI moderation and escalation logs')
+                        .addChannelTypes(ChannelType.GuildText)
+                        .setRequired(true)
+                )
+        )
+        .addSubcommand((sub) =>
+            sub
                 .setName('transcript-channel')
                 .setDescription('Set the channel where ticket transcripts are posted on close')
                 .addChannelOption((opt) =>
@@ -86,6 +132,9 @@ export const configCommand: Command = {
                 const roleId = settings?.linked_role_id || 'Not set';
                 const logChannelId = settings?.log_channel_id || 'Not set';
                 const aiChannelId = settings?.ai_channel_id || config.bot.aiChannelId || 'Not set';
+                const moderationLanguageChannelId = settings?.moderation_language_channel_id || 'Not set';
+                const moderationOtherLanguagesChannelId = settings?.moderation_other_languages_channel_id || 'Not set';
+                const moderationLogChannelId = settings?.moderation_log_channel_id || 'Not set';
                 const ticketPanelChannelId = settings?.ticket_panel_channel_id || 'Not set';
                 const ticketParentCategoryId = settings?.ticket_parent_category_id || 'Not set';
                 const archiveChannelId = settings?.ticket_archive_channel_id || 'Not set';
@@ -102,6 +151,10 @@ export const configCommand: Command = {
                     `**Linked Role:** ${roleId !== 'Not set' ? `<@&${roleId}>` : '`Not set`'}\n` +
                     `**Audit Logs:** ${logChannelId !== 'Not set' ? `<#${logChannelId}>` : '`Not set`'}\n` +
                     `**AI Support Channel:** ${aiChannelId !== 'Not set' ? `<#${aiChannelId}>` : '`Not set`'}\n` +
+                    `**AI Moderation:** ${settings?.moderation_enabled ? '`Enabled`' : '`Disabled`'}\n` +
+                    `**English-Only Channel:** ${moderationLanguageChannelId !== 'Not set' ? `<#${moderationLanguageChannelId}>` : '`Not set`'}\n` +
+                    `**Other Languages Channel:** ${moderationOtherLanguagesChannelId !== 'Not set' ? `<#${moderationOtherLanguagesChannelId}>` : '`Not set`'}\n` +
+                    `**Moderation Logs:** ${moderationLogChannelId !== 'Not set' ? `<#${moderationLogChannelId}>` : '`Not set`'}\n` +
                     `**Ticket Panel Channel:** ${ticketPanelChannelId !== 'Not set' ? `<#${ticketPanelChannelId}>` : '`Not set`'}\n` +
                     `**Default Ticket Category:** ${ticketParentCategoryId !== 'Not set' ? `\`${ticketParentCategoryId}\`` : '`Not set`'}\n` +
                     `**Ticket Transcripts:** ${archiveChannelId !== 'Not set' ? `<#${archiveChannelId}>` : '`Not set`'}\n` +
@@ -213,6 +266,45 @@ export const configCommand: Command = {
                     ],
                     flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
+            }
+
+            if (subcommand === 'moderation-enable' || subcommand === 'moderation-disable') {
+                const enabled = subcommand === 'moderation-enable';
+                const success = await supabase.updateBotSettings(interaction.guildId, {
+                    moderation_enabled: enabled,
+                });
+                if (!success) throw new Error('Database update failed');
+                await interaction.editReply({
+                    components: [ComponentsV2.successContainer(
+                        enabled ? 'AI Moderation Enabled' : 'AI Moderation Disabled',
+                        enabled
+                            ? 'Language and conduct checks are now active using the configured channels.'
+                            : 'The bot will stop automatically flagging messages. Existing warnings remain available to moderators.',
+                    )],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+
+            if (subcommand === 'language-channel' || subcommand === 'languages-channel' || subcommand === 'moderation-logs') {
+                const channel = interaction.options.getChannel('channel', true);
+                const key = subcommand === 'language-channel'
+                    ? 'moderation_language_channel_id'
+                    : subcommand === 'languages-channel'
+                        ? 'moderation_other_languages_channel_id'
+                        : 'moderation_log_channel_id';
+                const label = subcommand === 'language-channel'
+                    ? 'English-only channel'
+                    : subcommand === 'languages-channel'
+                        ? 'Other-languages channel'
+                        : 'Moderation log channel';
+                const success = await supabase.updateBotSettings(interaction.guildId, { [key]: channel.id });
+                if (!success) throw new Error('Database update failed');
+                await interaction.editReply({
+                    components: [ComponentsV2.successContainer('Moderation Configuration Updated', `${label} is now <#${channel.id}>.`)],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
             }
         } catch (error) {
             logger.error('Config command error:', error);

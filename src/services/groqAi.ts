@@ -394,6 +394,61 @@ class GroqAiService {
         return config.ai.model;
     }
 
+    /**
+     * Classify one short guild message. This is deliberately a separate,
+     * tool-free call: moderation must never browse the web or inherit the
+     * conversational assistant's tone. The caller applies conservative
+     * confidence thresholds before taking action.
+     */
+    async classifyModeration(content: string): Promise<{
+        language: string;
+        english: boolean;
+        languageConfidence: number;
+        abusive: boolean;
+        abuseConfidence: number;
+        category: string;
+        reason: string;
+    } | null> {
+        if (!this.isEnabled()) return null;
+
+        const messages: ChatMessage[] = [
+            {
+                role: 'system',
+                content: [
+                    'You are a strict Discord safety classifier for Victus Cloud.',
+                    'Return ONLY one valid JSON object, with no markdown or explanation.',
+                    'Detect the dominant natural-language language and targeted abuse.',
+                    'Do not mark short neutral text, usernames, URLs, code, game commands, emojis, or ordinary frustration as abusive.',
+                    'Abusive means a targeted insult, harassment, threat, hate/slur, sexual harassment, or clearly degrading attack.',
+                    'For language, classify natural text as English when it is genuinely English; mixed text is English if the meaningful sentence is English.',
+                    'Required schema: {"language":"English","english":true,"languageConfidence":0.99,"abusive":false,"abuseConfidence":0.01,"category":"none","reason":"brief reason"}',
+                ].join('\n'),
+            },
+            { role: 'user', content: `Message to classify:\n${content.slice(0, 1800)}` },
+        ];
+
+        try {
+            const raw = await this.complete(messages, false);
+            const jsonStart = raw.indexOf('{');
+            const jsonEnd = raw.lastIndexOf('}');
+            if (jsonStart < 0 || jsonEnd <= jsonStart) return null;
+            const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)) as Record<string, unknown>;
+            const number = (value: unknown) => Math.max(0, Math.min(1, Number(value) || 0));
+            return {
+                language: String(parsed.language || 'Unknown').slice(0, 40),
+                english: parsed.english === true || String(parsed.language || '').toLowerCase() === 'english',
+                languageConfidence: number(parsed.languageConfidence),
+                abusive: parsed.abusive === true,
+                abuseConfidence: number(parsed.abuseConfidence),
+                category: String(parsed.category || 'none').slice(0, 40),
+                reason: String(parsed.reason || 'Policy classification').slice(0, 240),
+            };
+        } catch (error) {
+            logger.debug(`Moderation classification failed: ${(error as Error).message}`);
+            return null;
+        }
+    }
+
     async askVictus(question: string, context?: AiUserContext): Promise<string> {
         const messages: ChatMessage[] = [
             { role: 'system', content: buildSystemPrompt() },
@@ -668,14 +723,14 @@ class GroqAiService {
         throw new Error('Azure AI returned an empty response.');
     }
 
-    private async complete(messages: ChatMessage[]): Promise<string> {
+    private async complete(messages: ChatMessage[], allowTools = config.ai.webSearchEnabled): Promise<string> {
         if (!config.ai.apiKey) {
             throw new Error('AI is not configured. Set OPENROUTER_API_KEY (or AI_API_KEY) in the bot environment.');
         }
 
         if (isAzureResponsesApi(config.ai.baseUrl)) {
             try {
-                return await this.callResponsesApi(messages, config.ai.webSearchEnabled);
+                return await this.callResponsesApi(messages, allowTools);
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 const isAuth = /401|403|invalid subscription key|unauthorized/i.test(msg);
@@ -684,7 +739,7 @@ class GroqAiService {
                     const hasOrKey = !!process.env.OPENROUTER_API_KEY;
                     if (hasOrKey) {
                         try {
-                            const fallback = await this.callChatCompletions(messages, config.ai.webSearchEnabled);
+                            const fallback = await this.callChatCompletions(messages, allowTools);
                             return typeof fallback === 'string' ? fallback : (fallback.content ?? '');
                         } catch (fallbackErr) {
                             logger.error('OpenRouter fallback also failed:', fallbackErr);
@@ -696,7 +751,7 @@ class GroqAiService {
             }
         }
 
-        const withTools = config.ai.webSearchEnabled;
+        const withTools = allowTools;
         const conversation: ChatMessage[] = [...messages];
 
         try {

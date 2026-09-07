@@ -114,6 +114,36 @@ export function warningContainer(title: string, description: string): ContainerB
     return createBrandedContainer(Accents.warning, `⚠️ ${title}`, description, 'ATTENTION REQUIRED');
 }
 
+/** Public, short-lived moderation notice. The message is deleted by the
+ * moderation service after five seconds, while the DM and staff log remain. */
+export function moderationWarningContainer(
+    title: string,
+    description: string,
+    guildId: string,
+    otherLanguageChannelId?: string | null,
+): ContainerBuilder {
+    const container = baseContainer(Accents.warning)
+        .addTextDisplayComponents(text(
+            `${panelTitle(`⚠️ ${title}`, 'SERVER LANGUAGE POLICY')}\n\n` +
+            `${description}\n\n` +
+            `**Enforcement:** 3 warnings = service suspension. 3 suspensions = server ban.`,
+        ))
+        .addSeparatorComponents(separator());
+
+    if (otherLanguageChannelId) {
+        container.addActionRowComponents(
+            new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                    .setLabel('Use the other-language channel')
+                    .setStyle(ButtonStyle.Link)
+                    .setURL(`https://discord.com/channels/${guildId}/${otherLanguageChannelId}`),
+            ),
+        );
+    }
+
+    return container.addTextDisplayComponents(footerNote('This notice expires automatically after five seconds.'));
+}
+
 export function infoContainer(title: string, description: string): ContainerBuilder {
     return createBrandedContainer(Accents.info, `💠 ${title}`, description, 'INFORMATION NODE');
 }
@@ -436,6 +466,7 @@ export function userInfoContainer(
 }
 
 export const ComponentsV2 = {
+    panelTitle,
     text,
     separator,
     mediaGallery,
@@ -445,6 +476,7 @@ export const ComponentsV2 = {
     successContainer,
     errorContainer,
     warningContainer,
+    moderationWarningContainer,
     infoContainer,
     cleanContainer,
     linkAccountContainer,

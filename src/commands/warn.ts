@@ -14,6 +14,8 @@ import { warnSettings, WarnConfig, WarningRecord } from '../services/warnSetting
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
 import { whitelistSettings } from '../services/whitelistSettings.js';
+import { enforceWarningThreshold } from '../services/moderation.js';
+import { supabase } from '../services/supabase.js';
 
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
 const EPH = undefined as any;
@@ -126,6 +128,8 @@ export const warnCommand: Command = {
             const reason = interaction.options.getString('reason', true);
             const warnings = await warnSettings.getWarnings(interaction.guildId!, targetUser.id);
             const warnCount = warnings.length + 1;
+            const botSettings = await supabase.getBotSettings(interaction.guildId!).catch(() => null);
+            const warningLogChannelId = botSettings?.moderation_log_channel_id || config.warnChannelId;
             
             const warningId = Math.random().toString(36).slice(2, 8);
             const record: WarningRecord = {
@@ -135,14 +139,16 @@ export const warnCommand: Command = {
                 moderatorId: interaction.user.id,
                 moderatorName: interaction.user.username,
                 reason: reason,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                source: 'manual',
+                category: 'manual',
             };
 
             await warnSettings.addWarning(interaction.guildId!, targetUser.id, record);
 
             // 1. Post to warn log channel (always inside guild, so we can use V2 components + separator!)
-            if (config.warnChannelId) {
-                const warnChannel = interaction.guild?.channels.cache.get(config.warnChannelId);
+            if (warningLogChannelId) {
+                const warnChannel = interaction.guild?.channels.cache.get(warningLogChannelId);
                 if (warnChannel?.isTextBased()) {
                     const logCard = ComponentsV2.baseContainer(ComponentsV2.Accents.warning);
                     logCard.addTextDisplayComponents(ComponentsV2.text(
@@ -171,16 +177,23 @@ export const warnCommand: Command = {
                 .setTimestamp();
             await targetUser.send({ embeds: [dmEmbed] }).catch(() => {});
 
+            const escalation = interaction.guild
+                ? await enforceWarningThreshold(interaction.guild, targetUser, warnCount, reason)
+                : 'none';
+            const escalationText = escalation === 'none'
+                ? ''
+                : ` The user was **${escalation}** after reaching the moderation threshold.`;
+
             // 3. Reply to Moderator
             if (isPrefix) {
                 const successEmbed = new EmbedBuilder()
                     .setColor(0x2b2d31)
                     .setTitle('✅ Warning Issued')
-                    .setDescription(`Successfully warned <@${targetUser.id}>.\n\n**Warning ID:** \`${warningId}\` | **Total Warns:** \`${warnCount}\``);
+                    .setDescription(`Successfully warned <@${targetUser.id}>.\n\n**Warning ID:** \`${warningId}\` | **Total Warns:** \`${warnCount}\`\n${escalationText}`);
                 await interaction.reply({ embeds: [successEmbed] });
             } else {
                 await interaction.reply({
-                    components: [ComponentsV2.successContainer('Warning Issued', `Warned <@${targetUser.id}> successfully (Warning ID: \`${warningId}\`, Total: \`${warnCount}\`).`)],
+                    components: [ComponentsV2.successContainer('Warning Issued', `Warned <@${targetUser.id}> successfully (Warning ID: \`${warningId}\`, Total: \`${warnCount}\`).${escalationText}`)],
                     flags: V2 | EPH
                 });
             }

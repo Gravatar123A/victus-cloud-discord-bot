@@ -14,6 +14,8 @@ export interface WarningRecord {
     moderatorName: string;
     reason: string;
     timestamp: string;
+    source?: 'manual' | 'ai_moderation' | string;
+    category?: string;
 }
 
 const DEFAULT_CONFIG: WarnConfig = {

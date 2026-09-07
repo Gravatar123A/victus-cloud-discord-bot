@@ -4,6 +4,9 @@ A next-generation Discord bot that functions as a full extension of the Victus C
 
 ## Features
 
+- **AI Moderation** - Optional English-only detection, conduct filtering, warning logs, and escalation policy
+- **Currency and Pricing Utilities** - `/currency` conversion GUI and `/pricing` website-synced catalog
+
 - 🔐 **Secure Account Linking** - Link Discord to Victus Cloud account
 - 🎮 **Server Management** - Start/stop/restart servers, send console commands
 - 💳 **Billing Integration** - View services, invoices, billing status
@@ -92,6 +95,8 @@ Do not set `MAIN_FILE` to `index.js` unless this root launcher exists in the ser
 | `/services` | View active services |
 | `/invoices` | View your invoices |
 | `/ask` | Ask the Victus Cloud AI assistant |
+| `/currency` | Open the currency conversion GUI |
+| `/pricing` | View the live Victus Cloud service pricing catalog |
 | `/ticket` | Create support ticket |
 | `/community-coins` | Set up a Community Coins listing (shows this server's ID + publish steps) |
 | `/level` | View your synchronized community XP, level, rank and progress |
@@ -143,6 +148,17 @@ To disable automatic channel replies:
 ```bash
 /config ai-disable
 ```
+
+To configure optional AI moderation, use the admin-only commands:
+
+```text
+/config language-channel channel:#english
+/config languages-channel channel:#other-languages
+/config moderation-logs channel:#moderation-logs
+/config moderation-enable
+```
+
+Moderation sends a short-lived Components V2 notice, a private DM, and a staff log. Three active warnings create a service suspension; three suspensions create a ban. Use `/warn remove` or `/warn reset` to manually correct a warning record. The website admin panel exposes the same settings.
 
 If your Pterodactyl panel shows `preg_match(): Unknown modifier '-'`, do not add regex validation rules for Groq values. Use plain `nullable|string` style validation, or only set `GROQ_API_KEY` and let the bot defaults handle the model/base URL.
 

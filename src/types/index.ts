@@ -108,6 +108,10 @@ export interface BotSettings {
     ticket_allow_user_reopen: boolean;
     prefix: string | null;
     suggestion_channel_id: string | null;
+    moderation_enabled: boolean;
+    moderation_language_channel_id: string | null;
+    moderation_other_languages_channel_id: string | null;
+    moderation_log_channel_id: string | null;
     updated_at: string;
 }
 
