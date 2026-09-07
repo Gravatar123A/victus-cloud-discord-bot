@@ -1,9 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const entrypoint = new URL("./dist/index.js", import.meta.url);
 
-if (!existsSync(entrypoint)) {
+if (!existsSync(entrypoint) || statSync(entrypoint).size === 0) {
     console.log("[Victus Bot] dist/index.js not found. Building TypeScript before startup...");
     const build = spawnSync("npm", ["run", "build"], {
         stdio: "inherit",
