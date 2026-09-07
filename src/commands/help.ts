@@ -211,8 +211,7 @@ export const helpCommand: Command = {
                 desc = `Manage Coins, credit sync, bank ledgers, and rankings.\n\n` +
                     `### Command Catalog\n` +
                     `› \`/account\` • Main dashboard displaying Coins, level, and billing credits.\n` +
-                    `› \`/economy\` • Open interactive bank, transfer, and convert panel.\n` +
-                    `› \`/economy conversion\` • Swap between Coins and billing Credits.\n\n` +
+                    `› \`/economy\` • Open the interactive bank and transfer panel.\n\n` +
                     `_Wallet and ledger are fully synchronized with paymenter / main dashboard._`;
                 break;
 
