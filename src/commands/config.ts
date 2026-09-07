@@ -278,7 +278,7 @@ export const configCommand: Command = {
                     components: [ComponentsV2.successContainer(
                         enabled ? 'AI Moderation Enabled' : 'AI Moderation Disabled',
                         enabled
-                            ? 'Language and conduct checks are now active using the configured channels.'
+                            ? 'Language and conduct checks are now active. If no English-only channel is configured, language checks apply to all guild channels except the optional other-language channel.'
                             : 'The bot will stop automatically flagging messages. Existing warnings remain available to moderators.',
                     )],
                     flags: ComponentsV2.IS_COMPONENTS_V2,

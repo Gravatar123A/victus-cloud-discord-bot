@@ -31,8 +31,35 @@ const EXPLICIT_ABUSE = [
     /\bgo die\b/i,
 ];
 
+// Script detection handles Hindi and other languages written in native script.
+// Romanized Hindi needs a conservative phrase/token detector because it uses
+// the same Latin alphabet as English (for example, "baat sun").
+const NON_ENGLISH_SCRIPT = /[\u0900-\u097F\u0980-\u09FF\u0600-\u06FF\u0400-\u04FF\u3040-\u30FF\uAC00-\uD7AF\u4E00-\u9FFF]/u;
+const ROMANIZED_HINDI_WORDS = new Set([
+    'baat', 'bhai', 'bhaiya', 'kya', 'kyun', 'hai', 'hain', 'nahi', 'nahin',
+    'tum', 'aap', 'aapka', 'mera', 'mujhe', 'tujhe', 'yeh', 'woh', 'kaise',
+    'karo', 'karna', 'bata', 'bolo', 'suno', 'sun', 'yaar', 'chal', 'ruko',
+    'dekh', 'theek', 'thik', 'mila', 'chahiye', 'kaam', 'raha', 'rahi',
+    'kuch', 'abhi', 'idhar', 'udhar', 'pakka', 'sach', 'galat', 'acha',
+    'accha', 'shukriya', 'namaste', 'namaskar', 'zara', 'jaldi', 'oye',
+]);
+
 function hasExplicitAbuse(content: string): boolean {
     return EXPLICIT_ABUSE.some((pattern) => pattern.test(content));
+}
+
+function detectNonEnglishLocally(content: string): { language: string; reason: string } | null {
+    if (NON_ENGLISH_SCRIPT.test(content)) {
+        return { language: 'non-English script', reason: 'Non-English writing system detected.' };
+    }
+
+    const tokens = content.toLowerCase().match(/[a-z]+/g) || [];
+    const hits = new Set(tokens.filter((token) => ROMANIZED_HINDI_WORDS.has(token)));
+    const strongPhrase = /\b(?:baat\s+sun|oye\s+(?:sun|suno|bhai)|kya\s+(?:hai|kar)|mujhe\s+(?:bata|chahiye))\b/i.test(content);
+    if (strongPhrase || hits.size >= 2) {
+        return { language: 'Hindi (Romanized)', reason: 'Romanized Hindi language markers detected.' };
+    }
+    return null;
 }
 
 async function classifyWithTimeout(content: string): Promise<Awaited<ReturnType<typeof groqAi.classifyModeration>>> {
@@ -197,7 +224,13 @@ export async function inspectModerationMessage(message: Message): Promise<boolea
     if (message.content.startsWith('/')) return false;
 
     const languageChannelId = settings.moderation_language_channel_id;
-    const languageCheck = Boolean(languageChannelId && message.channelId === languageChannelId);
+    const otherLanguageChannelId = settings.moderation_other_languages_channel_id;
+    // If an English-only channel has not been selected yet, check all guild
+    // channels except the explicitly configured other-language channel. This
+    // prevents an enabled system from appearing silently inactive.
+    const languageCheck = languageChannelId
+        ? message.channelId === languageChannelId
+        : message.channelId !== otherLanguageChannelId;
     const abuseCheck = true;
     if (!languageCheck && !abuseCheck) return false;
 
@@ -208,9 +241,10 @@ export async function inspectModerationMessage(message: Message): Promise<boolea
         const content = message.content.trim().slice(0, 1800);
         const explicitAbuse = hasExplicitAbuse(content);
         const classification = content.length >= 4 ? await classifyWithTimeout(content) : null;
+        const localLanguage = languageCheck ? detectNonEnglishLocally(content) : null;
         const abusive = explicitAbuse || Boolean(classification?.abusive && (classification.abuseConfidence >= 0.88));
         const nonEnglish = languageCheck && Boolean(
-            classification && !classification.english && classification.languageConfidence >= 0.86,
+            localLanguage || (classification && !classification.english && classification.languageConfidence >= 0.86),
         );
 
         if (abusive) {
@@ -225,7 +259,7 @@ export async function inspectModerationMessage(message: Message): Promise<boolea
         if (nonEnglish) {
             await recordAutomaticWarning(
                 message,
-                `Detected language: ${classification?.language || 'non-English'}. ${policyText(settings.moderation_other_languages_channel_id)}`,
+                `Detected language: ${localLanguage?.language || classification?.language || 'non-English'}. ${localLanguage?.reason || 'AI language classifier detected non-English text.'} ${policyText(settings.moderation_other_languages_channel_id)}`,
                 'language',
                 false,
             );

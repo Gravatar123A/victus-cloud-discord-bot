@@ -420,7 +420,7 @@ class GroqAiService {
                     'Detect the dominant natural-language language and targeted abuse.',
                     'Do not mark short neutral text, usernames, URLs, code, game commands, emojis, or ordinary frustration as abusive.',
                     'Abusive means a targeted insult, harassment, threat, hate/slur, sexual harassment, or clearly degrading attack.',
-                    'For language, classify natural text as English when it is genuinely English; mixed text is English if the meaningful sentence is English.',
+                    'For language, classify natural text as English only when it is genuinely English. Romanized or transliterated Hindi, Urdu, Arabic, Bengali, Punjabi, and other languages written with Latin letters are still non-English. If a message contains a meaningful non-English phrase such as "baat sun", classify it as non-English even when it also contains English words.',
                     'Required schema: {"language":"English","english":true,"languageConfidence":0.99,"abusive":false,"abuseConfidence":0.01,"category":"none","reason":"brief reason"}',
                 ].join('\n'),
             },
