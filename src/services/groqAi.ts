@@ -29,6 +29,13 @@ type GroqChatResponse = {
     choices?: { message?: GroqResponseMessage }[];
 };
 
+type ChatProvider = {
+    apiKey: string;
+    baseUrl: string;
+    apiKeys?: string[];
+    model?: string;
+};
+
 type SearchResult = {
     title: string;
     url: string;
@@ -544,8 +551,14 @@ class GroqAiService {
         }
     }
 
-    private async callChatCompletionsOnce(messages: ChatMessage[], withTools: boolean, model: string, ms: number): Promise<GroqResponseMessage> {
-        const endpoint = normalizeEndpoint(config.ai.baseUrl);
+    private async callChatCompletionsOnce(
+        messages: ChatMessage[],
+        withTools: boolean,
+        model: string,
+        ms: number,
+        provider: ChatProvider = config.ai,
+    ): Promise<GroqResponseMessage> {
+        const endpoint = normalizeEndpoint(provider.baseUrl);
         const maxTokens = clampNumber(config.ai.maxTokens, 700, 128, 4000);
         const temperature = clampNumber(config.ai.temperature, 0.35, 0, 1.5);
         const controller = new AbortController();
@@ -562,7 +575,7 @@ class GroqAiService {
                 body.tool_choice = 'auto';
             }
             const isAzure = isAzureEndpoint(endpoint);
-            const isOR = isOpenRouter(config.ai.baseUrl, model);
+            const isOR = isOpenRouter(provider.baseUrl, model);
             if (isOR) {
                 (body as any).reasoning = { effort: 'high', exclude: false };
                 (body as any).top_p = 0.95;
@@ -571,8 +584,8 @@ class GroqAiService {
                 method: 'POST',
                 headers: {
                     ...(isAzure
-                        ? { 'api-key': config.ai.apiKey }
-                        : { Authorization: `Bearer ${config.ai.apiKey}` }),
+                        ? { 'api-key': provider.apiKey }
+                        : { Authorization: `Bearer ${provider.apiKey}` }),
                     'Content-Type': 'application/json',
                     ...(isOR ? { 'HTTP-Referer': 'https://victuscloud.com', 'X-Title': 'Victus Cloud' } : {}),
                 },
@@ -591,19 +604,39 @@ class GroqAiService {
             clearTimeout(timeout);
         }
     }
-    private async callChatCompletions(messages: ChatMessage[], withTools: boolean): Promise<GroqResponseMessage> {
-        const isOR = isOpenRouter(config.ai.baseUrl, config.ai.model);
-        if (!isOR) return this.callChatCompletionsOnce(messages, withTools, config.ai.model, 25000);
+    private async callChatCompletions(
+        messages: ChatMessage[],
+        withTools: boolean,
+        providerOverride?: ChatProvider,
+    ): Promise<GroqResponseMessage> {
+        const provider = providerOverride || config.ai;
+        const keys = provider.apiKeys?.length ? provider.apiKeys : [provider.apiKey];
+        const requestedModel = providerOverride?.model;
+        const isOR = isOpenRouter(provider.baseUrl, requestedModel || config.ai.model);
+        const tryModel = async (model: string, ms: number): Promise<GroqResponseMessage> => {
+            let lastError: unknown;
+            for (const apiKey of keys) {
+                try {
+                    return await this.callChatCompletionsOnce(messages, withTools, model, ms, { ...provider, apiKey });
+                } catch (error) {
+                    lastError = error;
+                }
+            }
+            throw lastError instanceof Error ? lastError : new Error('AI provider request failed.');
+        };
+
+        if (requestedModel) return tryModel(requestedModel, isOR ? 30000 : 25000);
+        if (!isOR) return tryModel(config.ai.model, 25000);
         const lastUser = [...messages].reverse().find(m => (m as any).role === "user") as any;
         const text = lastUser?.content || (messages[messages.length-1] as any)?.content || "";
         const complex = isComplexQuery(String(text));
         const primary = complex ? 'poolside/laguna-xs-2.1:free' : 'nvidia/nemotron-3.5-lightning:free';
         const primaryMs = complex ? 12000 : 15000;
         try {
-            return await this.callChatCompletionsOnce(messages, withTools, primary, primaryMs);
+            return await tryModel(primary, primaryMs);
         } catch (e) {
             console.warn(`${primary} failed, falling back to nemotron-ultra: ${e instanceof Error ? e.message : String(e)}`);
-            return await this.callChatCompletionsOnce(messages, withTools, 'nvidia/nemotron-3-ultra-550b-a55b:free', 40000);
+            return await tryModel('nvidia/nemotron-3-ultra-550b-a55b:free', 40000);
         }
     }
 
@@ -741,7 +774,22 @@ class GroqAiService {
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 const isAuth = /401|403|invalid subscription key|unauthorized/i.test(msg);
-                if (isAuth) {
+                const hasFallback = Boolean(config.ai.fallbackBaseUrl && config.ai.fallbackApiKeys.length);
+                if (hasFallback) {
+                    logger.warn(`Primary AI request failed (${msg}) — trying configured fallback provider`);
+                    try {
+                        const fallback = await this.callChatCompletions(messages, allowTools, {
+                            apiKey: config.ai.fallbackApiKeys[0],
+                            apiKeys: config.ai.fallbackApiKeys,
+                            baseUrl: config.ai.fallbackBaseUrl,
+                            model: config.ai.fallbackModel,
+                        });
+                        return fallback.content ?? '';
+                    } catch (fallbackErr) {
+                        logger.error('Configured AI fallback also failed:', fallbackErr);
+                    }
+                }
+                if (isAuth && !hasFallback) {
                     logger.warn(`Azure AI auth failed (${msg}) — trying fallback`);
                     const hasOrKey = !!process.env.OPENROUTER_API_KEY;
                     if (hasOrKey) {

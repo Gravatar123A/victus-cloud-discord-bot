@@ -4,6 +4,26 @@ function victusComUrl(url: string): string {
     return url.replace(/victuscloud\.xyz/gi, 'victuscloud.com');
 }
 
+function splitApiKeys(...names: string[]): string[] {
+    const keys = names.flatMap((name) => (process.env[name] || '').split(/[\r\n,]+/));
+    return [...new Set(keys.map((key) => key.trim()).filter(Boolean))];
+}
+
+const openRouterKeys = splitApiKeys('OPENROUTER_API_KEYS', 'OPENROUTER_API_KEY');
+const primaryAiKeys = openRouterKeys.length
+    ? openRouterKeys
+    : splitApiKeys('AI_API_KEYS', 'AI_API_KEY', 'GROQ_API_KEYS', 'GROQ_API_KEY');
+const primaryAiBaseUrl = openRouterKeys.length
+    ? (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1')
+    : (process.env.AI_BASE_URL || process.env.GROQ_BASE_URL || 'https://openrouter.ai/api/v1');
+const explicitFallbackKeys = splitApiKeys('AI_FALLBACK_API_KEYS', 'VICTUS_AI_API_KEYS');
+const fallbackAiKeys = explicitFallbackKeys.length
+    ? explicitFallbackKeys
+    : (/cognitiveservices\.azure\.com/i.test(primaryAiBaseUrl) ? primaryAiKeys : []);
+const fallbackAiBaseUrl = process.env.AI_FALLBACK_BASE_URL || (fallbackAiKeys.length
+    ? (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1')
+    : '');
+
 // Validate required environment variables
 const requiredEnvVars = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY'];
 for (const envVar of requiredEnvVars) {
@@ -63,18 +83,20 @@ export const config = {
     // GROQ_* names still work. The API KEY is a secret and is NEVER committed — set
     // AI_API_KEY (or GROQ_API_KEY) in the bot's .env on the host.
     ai: {
-        apiKey: process.env.OPENROUTER_API_KEY || process.env.AI_API_KEY || process.env.GROQ_API_KEY || '',
-        baseUrl: process.env.OPENROUTER_API_KEY
-            ? (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1')
-            : (process.env.AI_BASE_URL || process.env.GROQ_BASE_URL || 'https://openrouter.ai/api/v1'),
-        model: process.env.OPENROUTER_API_KEY
+        apiKey: primaryAiKeys[0] || '',
+        apiKeys: primaryAiKeys,
+        baseUrl: primaryAiBaseUrl,
+        model: openRouterKeys.length
             ? (process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-lightning:free')
             : (process.env.AI_MODEL || process.env.GROQ_MODEL || 'nvidia/nemotron-3.5-lightning:free'),
+        fallbackApiKeys: fallbackAiKeys,
+        fallbackBaseUrl: fallbackAiBaseUrl,
+        fallbackModel: process.env.AI_FALLBACK_MODEL || process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-lightning:free',
         temperature: Number(process.env.AI_TEMPERATURE || process.env.GROQ_TEMPERATURE || '0.4'),
         // Higher default: Laguna + gpt-5.6 can spend output on reasoning, small cap yields empty reply. Clamped downstream.
         maxTokens: Number(process.env.OPENROUTER_MAX_TOKENS || process.env.AI_MAX_TOKENS || process.env.GROQ_MAX_TOKENS || '4000'),
         systemPrompt: process.env.VICTUS_AI_SYSTEM_PROMPT || '',
-        enabled: !!(process.env.OPENROUTER_API_KEY || process.env.AI_API_KEY || process.env.GROQ_API_KEY),
+        enabled: primaryAiKeys.length > 0,
         // Keyless web access (DuckDuckGo HTML scrape) exposed to the AI as tools.
         // Defaults to true unless AI_WEB_SEARCH is explicitly set to "false".
         webSearchEnabled: process.env.AI_WEB_SEARCH !== 'false',
