@@ -11,13 +11,13 @@ import type { Event } from '../types/index.js';
 import { registerApplicationCommands } from '../utils/registerCommands.js';
 import { initTicketBridge } from '../services/ticketBridge.js';
 import { startUptimeHeartbeat } from '../services/uptimeHeartbeat.js';
-import { initializeFonts } from 'musicard';
 import { startGiveawayScheduler } from '../commands/giveaway.js';
 import { updateServerStats } from '../commands/serverstats.js';
 import { setGuildInvites, type CachedInvite } from '../services/inviteCache.js';
 import { startLevelUpWorker } from '../services/levelUp.js';
 import { restoreVoiceXpSessions } from './voiceStateUpdate.js';
 import { syncEntitlementRoles } from '../services/entitlementRoles.js';
+import { leaderboardService } from '../services/leaderboardService.js';
 
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
@@ -223,12 +223,9 @@ export const readyEvent: Event = {
     async execute(client: Client<true>) {
         logger.info(`Logged in as ${client.user.tag}`);
 
-        // Initialize musicard fonts
-        try {
-            initializeFonts();
-        } catch (err) {
-            logger.error('Failed to initialize musicard fonts:', err);
-        }
+        // Music-card fonts are optional. Do not load musicard during startup because
+        // some Pterodactyl images do not ship the native canvas binding. The music
+        // renderer already falls back to the text panel when a card is requested.
         logger.info(`Serving ${client.guilds.cache.size} guilds`);
 
         // Connect to the Lavalink music node now that the gateway is ready.
@@ -352,11 +349,17 @@ export const readyEvent: Event = {
         await runServerStats();
         setInterval(runServerStats, 5 * 60 * 1000);
 
+        // Live Leaderboard Auto-Updater (every 1 minute)
+        await leaderboardService.updateAllLeaderboards(client).catch((err) => logger.error('Initial leaderboard update error:', err));
+        setInterval(() => {
+            leaderboardService.updateAllLeaderboards(client).catch((err) => logger.error('Leaderboard 1-minute update error:', err));
+        }, 60_000);
+        logger.info('Live Leaderboard 1-minute auto-update scheduler started');
+
         await processNotificationQueue(client);
         setInterval(() => {
             processNotificationQueue(client).catch((error) => logger.error('DM queue interval failed:', error));
         }, 15000);
-
         client.user.setPresence({
             status: 'online',
             activities: [

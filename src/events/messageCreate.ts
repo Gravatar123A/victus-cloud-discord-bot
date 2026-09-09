@@ -17,6 +17,8 @@ import { calculateLevel } from '../utils/vccrs.js';
 import { buildFinalEmbedPayload } from '../commands/embed.js';
 import { bridgeDiscordMessageToWeb } from '../services/chatBridge.js';
 import { inspectModerationMessage } from '../services/moderation.js';
+import { memberStatsService } from '../services/memberStatsService.js';
+import { ticketTranslationService } from '../services/ticketTranslationService.js';
 
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
@@ -280,7 +282,65 @@ export const messageCreateEvent: Event = {
                     args.push(match[1] || match[2] || match[0]);
                 }
 
-                const commandName = args.shift()?.toLowerCase();
+                let commandName = args.shift()?.toLowerCase();
+                if (commandName === 'lb') commandName = 'leaderboard';
+
+                if (commandName === 'translate') {
+                    const ticket = await supabase.getTicketByChannel(message.channelId).catch(() => null);
+                    if (!ticket) {
+                        await message.reply('⚠️ The `!translate` command can only be used inside a ticket channel.').catch(() => {});
+                        return;
+                    }
+                    const settings = await supabase.getBotSettings(message.guildId!).catch(() => null);
+                    const staffRoleIds = [
+                        ...(settings?.ticket_staff_role_ids || []),
+                        ...(settings?.ticket_admin_role_ids || []),
+                    ];
+                    const isStaff = !!message.member && (
+                        message.member.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+                        staffRoleIds.some((id: string) => message.member?.roles.cache.has(id))
+                    );
+                    const isOwner = message.author.id === ticket.discord_id;
+                    if (!isStaff && !isOwner) {
+                        await message.reply('⛔ Only staff or the ticket creator can manage ticket translation.').catch(() => {});
+                        return;
+                    }
+
+                    const subAction = (args[0] || 'toggle').toLowerCase();
+                    if (subAction === 'off' || subAction === 'disable' || subAction === 'pause') {
+                        const updated = await ticketTranslationService.toggleTranslation(message.channelId, false);
+                        await message.reply(`⏸️ **Live Translation Paused.** Translation disabled by <@${message.author.id}>.`).catch(() => {});
+                        return;
+                    }
+                    if (subAction === 'on' || subAction === 'enable' || subAction === 'resume') {
+                        const updated = await ticketTranslationService.toggleTranslation(message.channelId, true);
+                        await message.reply(`🟢 **Live Translation Resumed!** Auto-translating between **${updated?.languageEmoji} ${updated?.languageName}** and **🇬🇧 English**.`).catch(() => {});
+                        return;
+                    }
+                    if (subAction === 'toggle') {
+                        const updated = await ticketTranslationService.toggleTranslation(message.channelId);
+                        await message.reply(
+                            updated?.enabled
+                                ? `🟢 **Live Translation Resumed!** Auto-translating between **${updated.languageEmoji} ${updated.languageName}** and **🇬🇧 English**.`
+                                : `⏸️ **Live Translation Paused.** Translation disabled by <@${message.author.id}>.`
+                        ).catch(() => {});
+                        return;
+                    }
+
+                    // Otherwise treat subAction as language code/name (e.g. !translate es or !translate spanish)
+                    const lang = ticketTranslationService.getLanguage(subAction);
+                    const updated = await ticketTranslationService.setLanguage(message.channelId, ticket.id, ticket.discord_id, lang.code, lang.code !== 'en');
+                    const card = ticketTranslationService.buildLanguageSelector(ticket.id, ticket.discord_id, updated);
+                    await message.reply({
+                        content: `🌐 **Ticket translation updated!** Language set to **${updated.languageEmoji} ${updated.languageName}** (${updated.enabled ? '🟢 Enabled' : '⏸️ Disabled'}).`,
+                    }).catch(() => {});
+                    await (message.channel as any).send({
+                        components: [card],
+                        flags: ComponentsV2.IS_COMPONENTS_V2,
+                    }).catch(() => undefined);
+                    return;
+                }
+
                 if (commandName) {
                     // Check standard commands
                     const command = message.client.commands.get(commandName);
@@ -439,6 +499,7 @@ export const messageCreateEvent: Event = {
             const looksLikeCommand = content.startsWith('/') || content.startsWith(prefix);
             if (!looksLikeCommand) {
                 void awardMessageXp(message.author.id).catch(() => undefined);
+                void memberStatsService.recordMessage(message.guildId!, message.author.id).catch(() => undefined);
             }
         }
 

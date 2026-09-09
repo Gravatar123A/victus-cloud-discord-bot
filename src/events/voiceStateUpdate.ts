@@ -4,6 +4,7 @@ import type { Event } from '../types/index.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { awardVoiceXp } from '../services/activityXp.js';
+import { memberStatsService } from '../services/memberStatsService.js';
 import { j2cSettings } from '../services/j2cSettings.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 
@@ -50,6 +51,7 @@ function startSession(guildId: string, userId: string): void {
         }
         if (!isActive(voice)) return;
         void awardVoiceXp(userId, 1).catch(() => undefined);
+        void memberStatsService.recordVoiceMinute(guildId, userId, 1).catch(() => undefined);
     }, 60_000);
 
     // Don't keep the process alive solely for this timer.

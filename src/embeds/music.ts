@@ -15,8 +15,6 @@ import {
     MediaGalleryItemBuilder,
 } from 'discord.js';
 import type { Player, Track, UnresolvedTrack } from 'lavalink-client';
-import { Bloom } from 'musicard';
-import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
@@ -104,9 +102,15 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
     const reqId = requesterId(track);
     const live = !!info?.isStream;
 
-    // Generate musicard Bloom image
+    // Canvas is an optional enhancement. Some Pterodactyl images cannot load the
+    // platform-specific @napi-rs/canvas binding, so never import it at module load
+    // time or a music dependency failure will take the whole Discord bot offline.
     let cardBuffer: Buffer = Buffer.alloc(0);
     try {
+        const [{ Bloom }, { createCanvas, loadImage }] = await Promise.all([
+            import('musicard'),
+            import('@napi-rs/canvas'),
+        ]);
         cardBuffer = await Bloom({
             trackName: info?.title || 'Unknown Title',
             artistName: info?.author || 'Unknown Artist',
@@ -138,7 +142,7 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
             }
         });
     } catch (err) {
-        logger.error('Failed to generate musicard:', err);
+        logger.warn('Music card renderer unavailable; using the text music panel instead:', err);
     }
 
     const files: AttachmentBuilder[] = [];
@@ -152,6 +156,7 @@ export async function nowPlayingContainer(player: Player, guild?: any): Promise<
     if (cardBuffer.length > 0) {
         let finalBuffer = cardBuffer;
         try {
+            const { createCanvas, loadImage } = await import('@napi-rs/canvas');
             const loopName = player.repeatMode === 'off' ? 'Off' : player.repeatMode === 'track' ? 'Track' : 'Queue';
             const sourceName = info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown';
             

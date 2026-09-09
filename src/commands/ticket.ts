@@ -29,6 +29,7 @@ import { requireAdmin } from '../middleware/requireLinked.js';
 import { logger } from '../utils/logger.js';
 import { groqAi } from '../services/groqAi.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
+import { ticketTranslationService, TOP_10_LANGUAGES } from '../services/ticketTranslationService.js';
 
 // ============================================
 // Custom IDs for components
@@ -130,6 +131,32 @@ export const ticketCommand: Command = {
             sub
                 .setName('categories')
                 .setDescription('Manage ticket categories (Admin only)')
+        )
+        .addSubcommand(sub =>
+            sub
+                .setName('translate')
+                .setDescription('Manage live multi-language translation for this ticket')
+                .addStringOption(opt =>
+                    opt
+                        .setName('action')
+                        .setDescription('Action to perform')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: 'Toggle On/Off', value: 'toggle' },
+                            { name: 'Enable Translation', value: 'enable' },
+                            { name: 'Disable Translation', value: 'disable' },
+                            { name: 'Set Language', value: 'set' }
+                        )
+                )
+                .addStringOption(opt =>
+                    opt
+                        .setName('language')
+                        .setDescription('Language to set (if setting)')
+                        .setRequired(false)
+                        .addChoices(
+                            ...TOP_10_LANGUAGES.map(l => ({ name: `${l.emoji} ${l.name}`, value: l.code }))
+                        )
+                )
         )
         .addSubcommandGroup(group =>
             group
@@ -260,7 +287,13 @@ export const ticketCommand: Command = {
             const subcommand = interaction.options.getSubcommand();
             logger.info(`👉 [Execute] Subcommand: ${subcommandGroup ? subcommandGroup + ' ' : ''}${subcommand}`);
 
-            // Admin check for all current subcommands
+            // Ticket Translation can be managed by staff or ticket creator
+            if (subcommand === 'translate') {
+                await handleTicketTranslateCommand(interaction);
+                return;
+            }
+
+            // Admin check for all other subcommands
             const isAdmin = await requireAdmin(interaction);
             if (!isAdmin) {
                 logger.warn(`🚫 [Execute] Access denied for ${interaction.user.tag}`);
@@ -407,6 +440,16 @@ export const ticketCommand: Command = {
                 await handleShowQuestionAddModal(interaction, categoryId);
                 return;
             }
+
+            // Ticket Translation Toggle & Reset buttons
+            if (customId.startsWith('ticket_trans_toggle:')) {
+                await handleTranslationToggle(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_trans_reset:')) {
+                await handleTranslationReset(interaction);
+                return;
+            }
         } catch (error) {
             logger.error('Button handler error:', error);
             const container = ComponentsV2.errorContainer(
@@ -442,6 +485,12 @@ export const ticketCommand: Command = {
                 const categoryId = customId.split('_')[3];
                 const index = parseInt(interaction.values[0]);
                 await handleRemoveQuestion(interaction, categoryId, index);
+                return;
+            }
+
+            // Ticket Language Select Menu
+            if (customId.startsWith('ticket_lang_select:')) {
+                await handleLanguageSelect(interaction);
                 return;
             }
         } catch (error) {
@@ -1151,6 +1200,13 @@ async function handleConfirmTicket(interaction: any) {
         }).catch(() => undefined);
     }
 
+    // Spawn Language Selection & Live Translation card
+    const translationCard = ticketTranslationService.buildLanguageSelector(ticket.id, interaction.user.id);
+    await ticketChannel.send({
+        components: [translationCard],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    }).catch(() => undefined);
+
     // Clean up pending data
     pendingTickets.delete(interaction.user.id);
 
@@ -1857,5 +1913,194 @@ async function handleAddQuestionSubmit(interaction: any, categoryId: string) {
         });
     } else {
         await interaction.reply({ content: '❌ Failed to add question.', ephemeral: true });
+    }
+}
+
+// ============================================
+// Multi-Language Translation Handlers
+// ============================================
+
+async function handleTicketTranslateCommand(interaction: any): Promise<void> {
+    const channelId = interaction.channelId;
+    const ticket = await supabase.getTicketByChannel(channelId).catch(() => null);
+    if (!ticket) {
+        await interaction.reply({
+            content: '⚠️ This command can only be used inside an active ticket channel.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+
+    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
+    const isStaff = memberHasTicketStaffAccess(interaction, settings, ticket.category);
+    const isOwner = interaction.user.id === ticket.discord_id;
+
+    if (!isStaff && !isOwner) {
+        await interaction.reply({
+            content: '⛔ Only staff members or the ticket creator can manage ticket translation.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+
+    const action = interaction.options.getString('action', true);
+    const langCode = interaction.options.getString('language');
+
+    if (action === 'set') {
+        if (!langCode) {
+            await interaction.reply({
+                content: '⚠️ Please select a language when using the `set` action.',
+                flags: MessageFlags.Ephemeral,
+            });
+            return;
+        }
+
+        const updated = await ticketTranslationService.setLanguage(
+            channelId,
+            ticket.id,
+            ticket.discord_id,
+            langCode,
+            langCode !== 'en'
+        );
+
+        const card = ticketTranslationService.buildLanguageSelector(ticket.id, ticket.discord_id, updated);
+        await interaction.reply({
+            content: `🌐 **Ticket translation updated!** Language set to **${updated.languageEmoji} ${updated.languageName}** (${updated.enabled ? '🟢 Enabled' : '⏸️ Paused'}).`,
+            flags: MessageFlags.Ephemeral,
+        });
+
+        await interaction.channel.send({
+            components: [card],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        }).catch(() => undefined);
+        return;
+    }
+
+    if (action === 'enable' || action === 'disable' || action === 'toggle') {
+        const explicit = action === 'enable' ? true : action === 'disable' ? false : undefined;
+        let current = await ticketTranslationService.getState(channelId);
+        if (!current) {
+            current = await ticketTranslationService.setLanguage(channelId, ticket.id, ticket.discord_id, 'en', false);
+        }
+
+        const updated = await ticketTranslationService.toggleTranslation(channelId, explicit);
+        const card = ticketTranslationService.buildLanguageSelector(ticket.id, ticket.discord_id, updated);
+
+        await interaction.reply({
+            content: updated?.enabled
+                ? `🟢 **Live Translation Activated!** Messages will auto-translate between **${updated.languageEmoji} ${updated.languageName}** and **🇬🇧 English**.`
+                : `⏸️ **Live Translation Paused.** Translation has been disabled by <@${interaction.user.id}>.`,
+        });
+
+        await interaction.channel.send({
+            components: [card],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        }).catch(() => undefined);
+    }
+}
+
+async function handleTranslationToggle(interaction: any): Promise<void> {
+    const channelId = interaction.channelId;
+    const ticket = await supabase.getTicketByChannel(channelId).catch(() => null);
+    if (!ticket) {
+        await interaction.reply({ content: '⚠️ Ticket not found.', flags: MessageFlags.Ephemeral });
+        return;
+    }
+
+    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
+    const isStaff = memberHasTicketStaffAccess(interaction, settings, ticket.category);
+    const isOwner = interaction.user.id === ticket.discord_id;
+    if (!isStaff && !isOwner) {
+        await interaction.reply({
+            content: '⛔ Only staff or the ticket creator can toggle translation.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+
+    const updated = await ticketTranslationService.toggleTranslation(channelId);
+    if (!updated) {
+        await interaction.reply({ content: '⚠️ No translation state found for this ticket.', flags: MessageFlags.Ephemeral });
+        return;
+    }
+
+    const card = ticketTranslationService.buildLanguageSelector(ticket.id, ticket.discord_id, updated);
+    await interaction.update({
+        components: [card],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+
+    const statusMsg = updated.enabled
+        ? `▶️ **Live Translation Resumed!** Auto-translating between **${updated.languageEmoji} ${updated.languageName}** and **🇬🇧 English**.`
+        : `⏸️ **Live Translation Paused.** Translation has been temporarily disabled by <@${interaction.user.id}>.`;
+
+    await interaction.channel.send({ content: statusMsg }).catch(() => undefined);
+}
+
+async function handleTranslationReset(interaction: any): Promise<void> {
+    const channelId = interaction.channelId;
+    const ticket = await supabase.getTicketByChannel(channelId).catch(() => null);
+    if (!ticket) {
+        await interaction.reply({ content: '⚠️ Ticket not found.', flags: MessageFlags.Ephemeral });
+        return;
+    }
+
+    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
+    const isStaff = memberHasTicketStaffAccess(interaction, settings, ticket.category);
+    const isOwner = interaction.user.id === ticket.discord_id;
+    if (!isStaff && !isOwner) {
+        await interaction.reply({
+            content: '⛔ Only staff or the ticket creator can reset translation.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+
+    const updated = await ticketTranslationService.setLanguage(channelId, ticket.id, ticket.discord_id, 'en', false);
+    const card = ticketTranslationService.buildLanguageSelector(ticket.id, ticket.discord_id, updated);
+    await interaction.update({
+        components: [card],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+
+    await interaction.channel.send({
+        content: `🇬🇧 **Translation Disabled.** Language reset to standard English by <@${interaction.user.id}>.`,
+    }).catch(() => undefined);
+}
+
+async function handleLanguageSelect(interaction: any): Promise<void> {
+    const customId = interaction.customId;
+    const [, ticketId, customerId] = customId.split(':');
+    const selectedLang = interaction.values[0];
+
+    const channelId = interaction.channelId;
+    const ticket = await supabase.getTicketByChannel(channelId).catch(() => null);
+
+    const updated = await ticketTranslationService.setLanguage(
+        channelId,
+        ticketId,
+        customerId,
+        selectedLang,
+        selectedLang !== 'en'
+    );
+
+    const card = ticketTranslationService.buildLanguageSelector(ticketId, customerId, updated);
+    await interaction.update({
+        components: [card],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+
+    if (selectedLang !== 'en') {
+        const announcement =
+            `🌐 **Live Multi-Language Translation Activated!**\n` +
+            `• Messages from <@${customerId}> will be auto-translated from **${updated.languageEmoji} ${updated.languageName}** to **🇬🇧 English** for staff.\n` +
+            `• Staff responses in English will be translated to **${updated.languageEmoji} ${updated.languageName}** for <@${customerId}>.\n` +
+            `• Staff can pause, re-enable, or reset translation anytime using the buttons above or \`/ticket translate\`.`;
+
+        await interaction.channel.send({ content: announcement }).catch(() => undefined);
+    } else {
+        await interaction.channel.send({
+            content: `🇬🇧 **Standard English Selected.** Auto-translation is disabled for this ticket.`,
+        }).catch(() => undefined);
     }
 }

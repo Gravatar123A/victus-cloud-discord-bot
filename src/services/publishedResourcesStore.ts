@@ -16,6 +16,7 @@ export interface PublishedResourceListing {
     applied?: boolean;
     appliedAt?: number;
     approved?: boolean;
+    likes?: string[];
 }
 
 const LOCAL_STORE_PATH = join(process.cwd(), 'data', 'published-resources.json');
@@ -30,6 +31,9 @@ class PublishedResourcesStore {
             const raw = await readFile(LOCAL_STORE_PATH, 'utf8');
             const data: PublishedResourceListing[] = JSON.parse(raw);
             for (const item of data) {
+                if (!item.likes || !Array.isArray(item.likes)) {
+                    item.likes = [];
+                }
                 this.listings.set(item.id, item);
             }
         } catch (error: any) {
@@ -50,14 +54,19 @@ class PublishedResourcesStore {
         }
     }
 
-    public async addListing(data: Omit<PublishedResourceListing, 'id' | 'createdAt'>): Promise<PublishedResourceListing> {
+    public generateListingId(): string {
+        return `res_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    }
+
+    public async addListing(data: Omit<PublishedResourceListing, 'createdAt'> & { createdAt?: number }): Promise<PublishedResourceListing> {
         await this.ensureLoaded();
-        const id = `res_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const id = data.id || this.generateListingId();
         const listing: PublishedResourceListing = {
             ...data,
             id,
-            createdAt: Date.now(),
-            applied: false,
+            createdAt: data.createdAt || Date.now(),
+            applied: data.applied ?? false,
+            likes: Array.isArray(data.likes) ? data.likes : [],
         };
         this.listings.set(id, listing);
         await this.persist();
@@ -78,6 +87,41 @@ class PublishedResourcesStore {
     public async getListing(id: string): Promise<PublishedResourceListing | undefined> {
         await this.ensureLoaded();
         return this.listings.get(id);
+    }
+
+    public async getListingByThreadId(threadId: string): Promise<PublishedResourceListing | undefined> {
+        await this.ensureLoaded();
+        for (const item of this.listings.values()) {
+            if (item.threadId === threadId) {
+                return item;
+            }
+        }
+        return undefined;
+    }
+
+    public async hasUserLiked(listingId: string, userId: string): Promise<boolean> {
+        await this.ensureLoaded();
+        const item = this.listings.get(listingId);
+        if (!item || !Array.isArray(item.likes)) return false;
+        return item.likes.includes(userId);
+    }
+
+    public async addLike(listingId: string, userId: string): Promise<{ success: boolean; likesCount: number; error?: string }> {
+        await this.ensureLoaded();
+        const item = this.listings.get(listingId);
+        if (!item) {
+            return { success: false, likesCount: 0, error: 'not_found' };
+        }
+        if (!Array.isArray(item.likes)) {
+            item.likes = [];
+        }
+        if (item.likes.includes(userId)) {
+            return { success: false, likesCount: item.likes.length, error: 'already_liked' };
+        }
+        item.likes.push(userId);
+        this.listings.set(listingId, item);
+        await this.persist();
+        return { success: true, likesCount: item.likes.length };
     }
 
     public async markApplied(id: string, approved = true): Promise<boolean> {

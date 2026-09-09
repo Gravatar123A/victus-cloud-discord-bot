@@ -173,7 +173,7 @@ async handleSelectMenu(interaction) {
             const targetChannel = interaction.channel;
             if (targetChannel && targetChannel.isTextBased() && 'send' in targetChannel && typeof targetChannel.send === 'function') {
                 await targetChannel.send({
-                    content: `dY"" <@&${STAFF_ROLE_ID}> **New Resource Reward Application Submitted by <@${userId}>!**`,
+                    content: `📢 <@&${STAFF_ROLE_ID}> **New Resource Reward Application Submitted by <@${userId}>!**`,
                     components: [reviewContainer, buttons],
                     flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
@@ -236,6 +236,17 @@ async handleSelectMenu(interaction) {
         }
 
         if (action === 'victus_res_staff_approve') {
+            if (listingId) {
+                await publishedResourcesStore.markApplied(listingId, true);
+            }
+
+            // Award 40 coins to applicant in Paymenter and Supabase
+            await supabase.grantResourceShareCoins(
+                applicantUserId,
+                REWARD_COINS_AMOUNT,
+                `resource_approval:${listingId || 'manual'}:${applicantUserId}`
+            );
+
             const resultContainer = ComponentsV2.cleanContainer(
                 ComponentsV2.Accents.success,
                 'Resource Submission Approved',

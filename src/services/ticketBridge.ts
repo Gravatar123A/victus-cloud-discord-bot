@@ -9,6 +9,7 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { createTicketControlPanel } from '../commands/ticket.js';
+import { ticketTranslationService } from './ticketTranslationService.js';
 
 const WEB_GUILD_ID = 'victus-web';
 const DC_PREFIX = 'dc:'; // marks a ticket_message that originated from Discord
@@ -114,6 +115,12 @@ async function handleNewWebTicket(client: Client<true>, ticket: any): Promise<vo
         await channel.send({
             content: webPing || `🎫 New website ticket #${ticket.ticket_number ?? ''}`,
             allowedMentions: { parse: ['roles', 'users'] },
+        }).catch(() => undefined);
+
+        const transCard = ticketTranslationService.buildLanguageSelector(ticket.id, linked?.discord_id || 'web-user');
+        await channel.send({
+            components: [transCard],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
         }).catch(() => undefined);
     } catch (e) {
         logger.error('ticketBridge: control panel send failed, falling back to text:', e);
@@ -225,7 +232,72 @@ export async function handleTicketChannelMessage(message: Message): Promise<bool
         attachments: [...message.attachments.values()].map((a) => a.url),
     });
 
+    // Real-time bidirectional translation
+    void handleTicketTranslation(message, ticket, isStaff).catch((err) => {
+        logger.error('Error during ticket message translation:', err);
+    });
+
     return true;
+}
+
+async function handleTicketTranslation(message: Message, ticket: any, isStaff: boolean): Promise<void> {
+    const rawContent = message.content?.trim();
+    if (!rawContent || rawContent.length < 2) return;
+
+    // Skip commands, internal staff comments
+    if (
+        rawContent.startsWith('//') ||
+        rawContent.startsWith('/*') ||
+        rawContent.startsWith('!') ||
+        rawContent.startsWith('/')
+    ) {
+        return;
+    }
+
+    const state = await ticketTranslationService.getState(message.channelId);
+    if (!state || !state.enabled || state.language === 'en') {
+        return;
+    }
+
+    const isCustomer = message.author.id === ticket.discord_id || !isStaff;
+    const selectedLang = ticketTranslationService.getLanguage(state.language);
+    const englishLang = ticketTranslationService.getLanguage('en');
+
+    try {
+        if (isCustomer) {
+            // Customer message: translate to English for staff
+            const translated = await ticketTranslationService.translate(rawContent, 'en', state.language);
+            if (translated && translated.trim().toLowerCase() !== rawContent.toLowerCase()) {
+                const notice = ticketTranslationService.formatTranslationNotice({
+                    isCustomer: true,
+                    authorName: message.member?.displayName || message.author.username,
+                    authorId: ticket.discord_id,
+                    sourceLanguage: selectedLang,
+                    targetLanguage: englishLang,
+                    originalText: rawContent,
+                    translatedText: translated,
+                });
+                await (message.channel as any).send({ content: notice }).catch(() => undefined);
+            }
+        } else {
+            // Staff message: translate to customer's chosen language
+            const translated = await ticketTranslationService.translate(rawContent, state.language, 'en');
+            if (translated && translated.trim().toLowerCase() !== rawContent.toLowerCase()) {
+                const notice = ticketTranslationService.formatTranslationNotice({
+                    isCustomer: false,
+                    authorName: message.member?.displayName || message.author.username,
+                    authorId: ticket.discord_id,
+                    sourceLanguage: englishLang,
+                    targetLanguage: selectedLang,
+                    originalText: rawContent,
+                    translatedText: translated,
+                });
+                await (message.channel as any).send({ content: notice }).catch(() => undefined);
+            }
+        }
+    } catch (err) {
+        logger.warn(`Failed translating message in ticket channel ${message.channelId}:`, err);
+    }
 }
 
 function truncate(value: string, max: number): string {

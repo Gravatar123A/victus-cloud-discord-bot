@@ -18,6 +18,7 @@ import { scrapeResourceUrl } from '../services/resourceScraper.js';
 import { resourceSessionStore, ResourceSession } from '../services/resourceSessionStore.js';
 import { publishedResourcesStore } from '../services/publishedResourcesStore.js';
 import { resourceSettings } from '../services/resourceSettings.js';
+import { supabase } from '../services/supabase.js';
 import { logger } from '../utils/logger.js';
 import { VICTUS_COLORS } from '../types/index.js';
 import { config } from '../config.js';
@@ -193,6 +194,146 @@ export const shareResourceCommand: Command = {
             );
 
             await interaction.showModal(modal);
+            return;
+        }
+
+        // 0. Like Button -> Grant 20 Coins to creator
+        if (customId.startsWith('victus_res_btn_like:')) {
+            const parts = customId.split(':');
+            const listingId = parts[1];
+            let listing = listingId ? await publishedResourcesStore.getListing(listingId) : undefined;
+
+            // Fallback by channel/thread ID if listing ID wasn't matched
+            if (!listing && interaction.channelId) {
+                listing = await publishedResourcesStore.getListingByThreadId(interaction.channelId);
+            }
+
+            if (!listing) {
+                await interaction.reply({
+                    content: '⚠️ Resource listing data not found.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            // Prevent self-likes
+            if (listing.userId === interaction.user.id) {
+                await interaction.reply({
+                    content: '⚠️ You cannot like your own resource!',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            // Prevent duplicate likes
+            const alreadyLiked = await publishedResourcesStore.hasUserLiked(listing.id, interaction.user.id);
+            if (alreadyLiked) {
+                await interaction.reply({
+                    content: '❤️ You have already liked this resource!',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            // Register like
+            const likeResult = await publishedResourcesStore.addLike(listing.id, interaction.user.id);
+            if (!likeResult.success) {
+                await interaction.reply({
+                    content: '⚠️ Failed to record like. Please try again.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            const currentLikes = likeResult.likesCount;
+
+            // Rebuild button row with updated count
+            const updatedLikeButton = new ButtonBuilder()
+                .setCustomId(`victus_res_btn_like:${listing.id}`)
+                .setLabel(`Like (${currentLikes})`)
+                .setEmoji('❤️')
+                .setStyle(ButtonStyle.Secondary);
+
+            const updatedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(updatedLikeButton);
+
+            if (listing.sourceUrl) {
+                updatedRow.addComponents(
+                    new ButtonBuilder()
+                        .setLabel('Visit Source')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(listing.sourceUrl)
+                );
+            }
+
+            // Update starter message components
+            await interaction.update({
+                components: [updatedRow],
+            });
+
+            // Grant 20 coins to the creator via Paymenter
+            const LIKE_REWARD_COINS = 20;
+            const rewardResult = await supabase.grantResourceLikeCoins(
+                listing.userId,
+                LIKE_REWARD_COINS,
+                `resource_like:${listing.id}:${interaction.user.id}`
+            );
+
+            // Ephemeral confirmation to liker
+            if (rewardResult.success) {
+                await interaction.followUp({
+                    content: `❤️ You liked **${listing.title}**! The creator received **${LIKE_REWARD_COINS} Victus Coins** in their Paymenter account.`,
+                    flags: MessageFlags.Ephemeral,
+                });
+            } else if (rewardResult.error === 'not_linked') {
+                await interaction.followUp({
+                    content: `❤️ You liked **${listing.title}**! (The creator hasn't linked their Victus Cloud account yet, so coins could not be credited).`,
+                    flags: MessageFlags.Ephemeral,
+                });
+            } else {
+                await interaction.followUp({
+                    content: `❤️ You liked **${listing.title}**!`,
+                    flags: MessageFlags.Ephemeral,
+                });
+            }
+
+            // Best-effort DM to the creator
+            try {
+                const ownerUser = await interaction.client.users.fetch(listing.userId).catch(() => null);
+                if (ownerUser) {
+                    if (rewardResult.success) {
+                        await ownerUser.send({
+                            components: [
+                                ComponentsV2.cleanContainer(
+                                    ComponentsV2.Accents.success,
+                                    'Resource Liked! +20 Coins',
+                                    `🎉 <@${interaction.user.id}> liked your resource **${listing.title}**!\n\n` +
+                                    `**+${LIKE_REWARD_COINS} Victus Coins** have been credited directly to your Victus Cloud account balance! 💰\n\n` +
+                                    `👉 [View Your Resource Forum Post](${listing.threadUrl})`,
+                                    'COIN REWARD'
+                                ),
+                            ],
+                            flags: ComponentsV2.IS_COMPONENTS_V2,
+                        }).catch(() => {});
+                    } else if (rewardResult.error === 'not_linked') {
+                        await ownerUser.send({
+                            components: [
+                                ComponentsV2.cleanContainer(
+                                    ComponentsV2.Accents.warning,
+                                    'Resource Liked! Link Account to Claim Coins',
+                                    `🎉 <@${interaction.user.id}> liked your resource **${listing.title}**!\n\n` +
+                                    `You would have earned **+${LIKE_REWARD_COINS} Victus Coins**, but your Discord account is not linked to Victus Cloud.\n\n` +
+                                    `Run \`/link\` to connect your account and start earning rewards!`,
+                                    'ACTION REQUIRED'
+                                ),
+                            ],
+                            flags: ComponentsV2.IS_COMPONENTS_V2,
+                        }).catch(() => {});
+                    }
+                }
+            } catch (dmErr) {
+                logger.debug(`Could not send like DM to resource owner ${listing.userId}:`, dmErr);
+            }
+
             return;
         }
 
@@ -414,18 +555,41 @@ export const shareResourceCommand: Command = {
             const postContent = `🚀 **New Resource Shared by <@${interaction.user.id}>!**\n` +
                 (session.sourceUrl ? `🔗 **Link:** ${session.sourceUrl}` : '');
 
+            const listingId = publishedResourcesStore.generateListingId();
+
+            const likeButton = new ButtonBuilder()
+                .setCustomId(`victus_res_btn_like:${listingId}`)
+                .setLabel('Like (0)')
+                .setEmoji('❤️')
+                .setStyle(ButtonStyle.Secondary);
+
+            const postComponents: ActionRowBuilder<ButtonBuilder>[] = [
+                new ActionRowBuilder<ButtonBuilder>().addComponents(likeButton),
+            ];
+
+            if (session.sourceUrl) {
+                postComponents[0].addComponents(
+                    new ButtonBuilder()
+                        .setLabel('Visit Source')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(session.sourceUrl)
+                );
+            }
+
             try {
                 const thread = await forumChannel.threads.create({
                     name: threadTitle,
                     message: {
                         content: postContent,
                         embeds: [postEmbed],
+                        components: postComponents,
                     },
                     appliedTags: matchedTagIds.slice(0, 5), // Discord max 5 applied tags
                 });
 
-                // Store published listing for /resource-apply selection
+                // Store published listing for /resource-apply selection and like tracking
                 await publishedResourcesStore.addListing({
+                    id: listingId,
                     userId,
                     guildId,
                     title: session.title,
@@ -434,6 +598,7 @@ export const shareResourceCommand: Command = {
                     sourceUrl: session.sourceUrl,
                     threadUrl: thread.url,
                     threadId: thread.id,
+                    likes: [],
                 });
 
                 // Clear session

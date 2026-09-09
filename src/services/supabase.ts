@@ -1063,24 +1063,77 @@ class SupabaseService {
     /**
      * Grant resource share reward COINS to a user via Paymenter API or legacy adjust fallback.
      */
-    async grantResourceShareCoins(userId: string, amount: number = 40, reference?: string): Promise<boolean> {
-        if (!userId || !Number.isFinite(amount) || amount <= 0) return false;
-        const profile = await this.getUserProfile(userId);
+    async grantResourceShareCoins(userIdOrDiscordId: string, amount: number = 40, reference?: string): Promise<boolean> {
+        if (!userIdOrDiscordId || !Number.isFinite(amount) || amount <= 0) return false;
+        let profile = await this.getUserProfile(userIdOrDiscordId).catch(() => null);
+        let victusUserId = userIdOrDiscordId;
+        if (!profile) {
+            const linked = await this.getLinkedAccount(userIdOrDiscordId).catch(() => null);
+            if (linked?.user_id) {
+                victusUserId = linked.user_id;
+                profile = await this.getUserProfile(linked.user_id).catch(() => null);
+            }
+        }
         if (!profile?.email) {
-            logger.warn(`grantResourceShareCoins: no profile/email for user ${userId}`);
+            logger.warn(`grantResourceShareCoins: no profile/email for user ${userIdOrDiscordId}`);
             return false;
         }
         const email = String(profile.email).toLowerCase();
         const amt = Math.round(amount);
-        const ref = reference || `resource_share:${userId}:${Date.now()}`;
+        const ref = reference || `resource_share:${userIdOrDiscordId}:${Date.now()}`;
+        if (profile?.id) {
+            victusUserId = profile.id;
+        }
         try {
             const balance = await this.mutatePaymenterCoins(email, amt, 'admin_adjust', String(ref), `Resource share approval reward (${amt} COINS)`);
-            await this.mirrorProfileCoinsFromPaymenter(userId, balance, 'resource share');
-            logger.info(`grantResourceShareCoins: +${amt} COINS to ${email} (user ${userId})`);
+            await this.mirrorProfileCoinsFromPaymenter(victusUserId, balance, 'resource share');
+            logger.info(`grantResourceShareCoins: +${amt} COINS to ${email} (user ${userIdOrDiscordId})`);
             return true;
         } catch (e) {
-            logger.error(`grantResourceShareCoins failed for ${userId}: ${(e as Error).message}`);
+            logger.error(`grantResourceShareCoins failed for ${userIdOrDiscordId}: ${(e as Error).message}`);
             return false;
+        }
+    }
+
+    /**
+     * Grant resource like reward COINS (20 coins) to the resource author via Paymenter API.
+     * Mirrors the resulting balance to Supabase.
+     */
+    async grantResourceLikeCoins(
+        userIdOrDiscordId: string,
+        amount: number = 20,
+        reference?: string
+    ): Promise<{ success: boolean; email?: string; error?: string }> {
+        if (!userIdOrDiscordId || !Number.isFinite(amount) || amount <= 0) {
+            return { success: false, error: 'invalid_params' };
+        }
+
+        let profile = await this.getUserProfile(userIdOrDiscordId).catch(() => null);
+        let victusUserId = userIdOrDiscordId;
+        if (!profile) {
+            const linked = await this.getLinkedAccount(userIdOrDiscordId).catch(() => null);
+            if (linked?.user_id) {
+                victusUserId = linked.user_id;
+                profile = await this.getUserProfile(linked.user_id).catch(() => null);
+            }
+        }
+
+        if (!profile?.email) {
+            logger.warn(`grantResourceLikeCoins: no profile/email for user ${userIdOrDiscordId}`);
+            return { success: false, error: 'not_linked' };
+        }
+
+        const email = String(profile.email).toLowerCase();
+        const amt = Math.round(amount);
+        const ref = reference || `resource_like:${userIdOrDiscordId}:${Date.now()}`;
+        try {
+            const balance = await this.mutatePaymenterCoins(email, amt, 'admin_adjust', String(ref), `Resource Like reward (+${amt} COINS)`);
+            await this.mirrorProfileCoinsFromPaymenter(victusUserId, balance, 'resource like');
+            logger.info(`grantResourceLikeCoins: +${amt} COINS to ${email} (user ${userIdOrDiscordId})`);
+            return { success: true, email };
+        } catch (e) {
+            logger.error(`grantResourceLikeCoins failed for ${userIdOrDiscordId}: ${(e as Error).message}`);
+            return { success: false, email, error: (e as Error).message };
         }
     }
 
