@@ -254,10 +254,12 @@ async function parsePlanetMinecraft(url: string, html: string): Promise<ScrapedR
     };
 }
 
+export type ScraperProgressCallback = (percent: number, stage: string, detail?: string) => void | Promise<void>;
+
 /**
  * Main Web Scraper entry point. Accepts any HTTP/HTTPS URL and returns structured resource metadata.
  */
-export async function scrapeResourceUrl(rawUrl: string): Promise<ScrapedResource> {
+export async function scrapeResourceUrl(rawUrl: string, onProgress?: ScraperProgressCallback): Promise<ScrapedResource> {
     let parsedUrl: URL;
     try {
         parsedUrl = new URL(rawUrl.trim());
@@ -271,17 +273,22 @@ export async function scrapeResourceUrl(rawUrl: string): Promise<ScrapedResource
     const cleanUrl = parsedUrl.toString();
     const hostname = parsedUrl.hostname.toLowerCase();
 
+    await onProgress?.(15, 'Validating URL & establishing connection...', `Host: ${hostname}`);
+
     let result: ScrapedResource | null = null;
 
     if (hostname.includes('modrinth.com')) {
+        await onProgress?.(40, 'Querying Modrinth Project API...', 'Fetching project summary, gallery & metadata');
         result = await parseModrinth(cleanUrl);
     } else if (hostname.includes('github.com')) {
+        await onProgress?.(40, 'Querying GitHub Repository API...', 'Fetching repo details, topics & license');
         result = await parseGitHub(cleanUrl);
     }
 
     let html = '';
     if (!result) {
         try {
+            await onProgress?.(35, 'Downloading page HTML & assets...', 'Streaming HTTP response');
             const res = await fetchWithTimeout(cleanUrl);
             if (res.ok) {
                 html = await res.text();
@@ -291,6 +298,7 @@ export async function scrapeResourceUrl(rawUrl: string): Promise<ScrapedResource
         }
 
         if (html) {
+            await onProgress?.(60, 'Parsing page document & OpenGraph tags...', 'Extracting metadata, author & screenshots');
             if (hostname.includes('curseforge.com')) {
                 result = await parseCurseForge(cleanUrl, html);
             } else if (hostname.includes('spigotmc.org')) {
@@ -320,6 +328,7 @@ export async function scrapeResourceUrl(rawUrl: string): Promise<ScrapedResource
     // AI Enrichment & Fallback step
     if (groqAi.isEnabled()) {
         try {
+            await onProgress?.(80, 'Running AI metadata enhancement...', 'Classifying category & synthesizing tags');
             const aiMeta = await groqAi.extractResourceMetadata(cleanUrl, html);
             if (aiMeta) {
                 if (!result) {
@@ -370,6 +379,8 @@ export async function scrapeResourceUrl(rawUrl: string): Promise<ScrapedResource
             site_name: hostname,
         };
     }
+
+    await onProgress?.(98, 'Extraction finalized', 'Building interactive preview card');
 
     return result;
 }

@@ -237,7 +237,7 @@ async function parsePlanetMinecraft(url, html) {
 /**
  * Main Web Scraper entry point. Accepts any HTTP/HTTPS URL and returns structured resource metadata.
  */
-export async function scrapeResourceUrl(rawUrl) {
+export async function scrapeResourceUrl(rawUrl, onProgress) {
     let parsedUrl;
     try {
         parsedUrl = new URL(rawUrl.trim());
@@ -250,16 +250,20 @@ export async function scrapeResourceUrl(rawUrl) {
     }
     const cleanUrl = parsedUrl.toString();
     const hostname = parsedUrl.hostname.toLowerCase();
+    await onProgress?.(15, 'Validating URL & establishing connection...', `Host: ${hostname}`);
     let result = null;
     if (hostname.includes('modrinth.com')) {
+        await onProgress?.(40, 'Querying Modrinth Project API...', 'Fetching project summary, gallery & metadata');
         result = await parseModrinth(cleanUrl);
     }
     else if (hostname.includes('github.com')) {
+        await onProgress?.(40, 'Querying GitHub Repository API...', 'Fetching repo details, topics & license');
         result = await parseGitHub(cleanUrl);
     }
     let html = '';
     if (!result) {
         try {
+            await onProgress?.(35, 'Downloading page HTML & assets...', 'Streaming HTTP response');
             const res = await fetchWithTimeout(cleanUrl);
             if (res.ok) {
                 html = await res.text();
@@ -269,6 +273,7 @@ export async function scrapeResourceUrl(rawUrl) {
             logger.warn(`Failed to fetch HTML for ${cleanUrl}:`, error?.message || error);
         }
         if (html) {
+            await onProgress?.(60, 'Parsing page document & OpenGraph tags...', 'Extracting metadata, author & screenshots');
             if (hostname.includes('curseforge.com')) {
                 result = await parseCurseForge(cleanUrl, html);
             }
@@ -298,6 +303,7 @@ export async function scrapeResourceUrl(rawUrl) {
     // AI Enrichment & Fallback step
     if (groqAi.isEnabled()) {
         try {
+            await onProgress?.(80, 'Running AI metadata enhancement...', 'Classifying category & synthesizing tags');
             const aiMeta = await groqAi.extractResourceMetadata(cleanUrl, html);
             if (aiMeta) {
                 if (!result) {
@@ -349,5 +355,6 @@ export async function scrapeResourceUrl(rawUrl) {
             site_name: hostname,
         };
     }
+    await onProgress?.(98, 'Extraction finalized', 'Building interactive preview card');
     return result;
 }

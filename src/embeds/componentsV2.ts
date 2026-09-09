@@ -157,6 +157,41 @@ export function cleanContainer(accent: number, title: string, description: strin
     return container;
 }
 
+/**
+ * Builds a high-precision monospace progress bar for terminal and dashboard displays.
+ */
+export function progressBar(percent: number, totalBlocks = 20): string {
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+    const filled = Math.max(0, Math.min(totalBlocks, Math.round((clamped / 100) * totalBlocks)));
+    const empty = Math.max(0, totalBlocks - filled);
+    return `${'█'.repeat(filled)}${'░'.repeat(empty)}`;
+}
+
+/**
+ * High-craft Industrial/Utilitarian loading container with live progress telemetry for resource extraction.
+ */
+export function resourceLoadingContainer(
+    url: string,
+    percent: number,
+    stage: string,
+    detail?: string
+): ContainerBuilder {
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+    const bar = progressBar(clamped, 20);
+    const cleanDisplayUrl = url.length > 55 ? `${url.slice(0, 52)}...` : url;
+
+    let body = `Connecting to external host and extracting resource metadata:\n`;
+    body += `› **Target URL:** \`${cleanDisplayUrl}\`\n\n`;
+    body += `### \`[${bar}]\` **${clamped}%**\n`;
+    body += `› **Pipeline Status:** ${stage}\n`;
+    if (detail) {
+        body += `› **Telemetry:** ${detail}\n`;
+    }
+    body += `\n-# Real-time scraping & AI metadata extraction in progress...`;
+
+    return cleanContainer(Accents.primary, 'Extracting Resource Data...', body, 'INGESTION PIPELINE');
+}
+
 export function linkAccountContainer(
     username: string,
     avatarUrl: string,
@@ -479,6 +514,8 @@ export const ComponentsV2 = {
     moderationWarningContainer,
     infoContainer,
     cleanContainer,
+    progressBar,
+    resourceLoadingContainer,
     linkAccountContainer,
     linkPanelContainer,
     adminDmContainer,

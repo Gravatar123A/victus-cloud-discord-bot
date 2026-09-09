@@ -673,10 +673,88 @@ export const shareResourceCommand: Command = {
         if (customId === 'victus_res_modal_url') {
             await interaction.deferUpdate();
 
-            const rawUrl = interaction.fields.getTextInputValue('url_input');
+            const rawUrl = (interaction.fields.getTextInputValue('url_input') || '').trim();
+
+            let currentPercent = 15;
+            let currentStage = 'Connecting to resource server & verifying target URL...';
+            let currentDetail = 'Resolving host & establishing secure stream';
+            let lastEditTime = 0;
+            let pendingTimer: NodeJS.Timeout | null = null;
+            let isComplete = false;
+
+            const renderLoading = async () => {
+                if (isComplete) return;
+                try {
+                    const container = ComponentsV2.resourceLoadingContainer(
+                        rawUrl,
+                        currentPercent,
+                        currentStage,
+                        currentDetail
+                    );
+                    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('victus_res_btn_loading')
+                            .setLabel(`Extracting Data... ${currentPercent}%`)
+                            .setStyle(ButtonStyle.Secondary)
+                            .setDisabled(true)
+                    );
+                    await interaction.editReply({ components: [container, row] }).catch(() => {});
+                    lastEditTime = Date.now();
+                } catch {
+                    // Ignore discord edit rate limits or temporary network errors
+                }
+            };
+
+            const updateProgress = (percent: number, stage: string, detail?: string) => {
+                if (isComplete) return;
+                if (percent > currentPercent) {
+                    currentPercent = Math.min(96, percent);
+                }
+                currentStage = stage;
+                if (detail) currentDetail = detail;
+
+                const elapsed = Date.now() - lastEditTime;
+                if (elapsed >= 900) {
+                    if (pendingTimer) {
+                        clearTimeout(pendingTimer);
+                        pendingTimer = null;
+                    }
+                    renderLoading();
+                } else if (!pendingTimer) {
+                    pendingTimer = setTimeout(() => {
+                        pendingTimer = null;
+                        renderLoading();
+                    }, 900 - elapsed);
+                }
+            };
+
+            // Immediately display initial loading progress
+            await renderLoading();
+
+            // Background step progress ticker to ensure visual feedback even during slow network requests
+            const TICKER_STEPS = [
+                { percent: 28, stage: 'Downloading page manifest & document tree...', detail: 'HTTP stream active' },
+                { percent: 48, stage: 'Parsing OpenGraph tags & page metadata...', detail: 'Extracting title & description' },
+                { percent: 68, stage: 'Discovering gallery images & asset screenshots...', detail: 'Validating media resolution' },
+                { percent: 85, stage: 'Classifying category & synthesizing discovery tags...', detail: 'Semantic analysis in progress' },
+                { percent: 94, stage: 'Finalizing extraction & formatting preview card...', detail: 'Structuring interactive components' },
+            ];
+
+            let tickerIndex = 0;
+            const tickerInterval = setInterval(() => {
+                if (isComplete || tickerIndex >= TICKER_STEPS.length) return;
+                const step = TICKER_STEPS[tickerIndex++];
+                updateProgress(step.percent, step.stage, step.detail);
+            }, 1200);
 
             try {
-                const scraped = await scrapeResourceUrl(rawUrl);
+                const scraped = await scrapeResourceUrl(rawUrl, (percent, stage, detail) => {
+                    updateProgress(percent, stage, detail);
+                });
+
+                isComplete = true;
+                clearInterval(tickerInterval);
+                if (pendingTimer) clearTimeout(pendingTimer);
 
                 // Map category hint
                 let category = 'Other';
@@ -697,6 +775,10 @@ export const shareResourceCommand: Command = {
                 const preview = buildResourcePreviewComponents(session);
                 await interaction.editReply(preview);
             } catch (error: any) {
+                isComplete = true;
+                clearInterval(tickerInterval);
+                if (pendingTimer) clearTimeout(pendingTimer);
+
                 logger.error('Resource scraping failed:', error);
                 await interaction.editReply({
                     components: [
