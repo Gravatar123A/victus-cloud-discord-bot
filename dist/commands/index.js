@@ -48,6 +48,7 @@ import { whitelistCommand } from './whitelist.js';
 import { communityCoinsCommand } from './community-coins.js';
 import { levelCommand } from './level.js';
 import { shareResourceCommand } from './shareResource.js';
+import { massShareResourceCommand } from './massShareResource.js';
 import { resourceApplyCommand } from './resourceApply.js';
 import { manualDcLinkCommand } from './manualdclink.js';
 import { currencyCommand } from './currency.js';
@@ -61,6 +62,7 @@ export const commands = new Collection();
 const allCommands = [
     staffaiCommand,
     shareResourceCommand,
+    massShareResourceCommand,
     resourceApplyCommand,
     manualDcLinkCommand,
     currencyCommand,
