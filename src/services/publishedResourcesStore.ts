@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { supabase } from './supabase.js';
 import { logger } from '../utils/logger.js';
 
 export interface PublishedResourceListing {
@@ -16,6 +17,9 @@ export interface PublishedResourceListing {
     applied?: boolean;
     appliedAt?: number;
     approved?: boolean;
+    reviewedBy?: string;
+    reviewedAt?: number;
+    rejectionReason?: string;
     likes?: string[];
 }
 
@@ -27,6 +31,24 @@ class PublishedResourcesStore {
 
     private async ensureLoaded(): Promise<void> {
         if (this.loaded) return;
+
+        // 1. Load from Supabase custom embed backup
+        try {
+            const embed = await supabase.getCustomEmbed('global', '_published_resources');
+            if (embed?.description) {
+                const data: PublishedResourceListing[] = JSON.parse(embed.description);
+                for (const item of data) {
+                    if (!item.likes || !Array.isArray(item.likes)) {
+                        item.likes = [];
+                    }
+                    this.listings.set(item.id, item);
+                }
+            }
+        } catch (supabaseErr) {
+            logger.debug('Failed to load published resources from Supabase:', supabaseErr);
+        }
+
+        // 2. Load / merge local file cache
         try {
             const raw = await readFile(LOCAL_STORE_PATH, 'utf8');
             const data: PublishedResourceListing[] = JSON.parse(raw);
@@ -34,7 +56,9 @@ class PublishedResourcesStore {
                 if (!item.likes || !Array.isArray(item.likes)) {
                     item.likes = [];
                 }
-                this.listings.set(item.id, item);
+                if (!this.listings.has(item.id)) {
+                    this.listings.set(item.id, item);
+                }
             }
         } catch (error: any) {
             if (error?.code !== 'ENOENT') {
@@ -45,12 +69,23 @@ class PublishedResourcesStore {
     }
 
     private async persist(): Promise<void> {
+        const list = Array.from(this.listings.values());
+
+        // 1. Write to local disk
         try {
             await mkdir(dirname(LOCAL_STORE_PATH), { recursive: true });
-            const list = Array.from(this.listings.values());
             await writeFile(LOCAL_STORE_PATH, `${JSON.stringify(list, null, 2)}\n`, 'utf8');
         } catch (error) {
             logger.error('Failed to write published-resources.json:', error);
+        }
+
+        // 2. Persist to Supabase cloud
+        try {
+            await supabase.saveCustomEmbed('global', '_published_resources', {
+                description: JSON.stringify(list),
+            });
+        } catch (supabaseErr) {
+            logger.warn('Failed to persist published resources to Supabase:', supabaseErr);
         }
     }
 
@@ -124,14 +159,33 @@ class PublishedResourcesStore {
         return { success: true, likesCount: item.likes.length };
     }
 
-    public async markApplied(id: string, approved = true): Promise<boolean> {
+    public async submitApplication(id: string): Promise<boolean> {
         await this.ensureLoaded();
         const item = this.listings.get(id);
         if (!item) return false;
 
         item.applied = true;
         item.appliedAt = Date.now();
+        this.listings.set(id, item);
+        await this.persist();
+        return true;
+    }
+
+    public async markApplied(
+        id: string,
+        approved = true,
+        meta?: { reviewedBy?: string; rejectionReason?: string }
+    ): Promise<boolean> {
+        await this.ensureLoaded();
+        const item = this.listings.get(id);
+        if (!item) return false;
+
+        item.applied = true;
+        item.appliedAt = item.appliedAt || Date.now();
         item.approved = approved;
+        if (meta?.reviewedBy) item.reviewedBy = meta.reviewedBy;
+        if (meta?.rejectionReason) item.rejectionReason = meta.rejectionReason;
+        item.reviewedAt = Date.now();
         this.listings.set(id, item);
         await this.persist();
         return true;

@@ -5,6 +5,7 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { requireAdmin } from '../middleware/requireLinked.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
+import { levelSettings } from '../services/levelSettings.js';
 
 export const configCommand: Command = {
     data: new SlashCommandBuilder()
@@ -114,6 +115,18 @@ export const configCommand: Command = {
                         .addChannelTypes(ChannelType.GuildText)
                         .setRequired(true)
                 )
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('level-channel')
+                .setDescription('Set the channel where level-up and rank-up announcements are sent')
+                .addChannelOption((opt) =>
+                    opt
+                        .setName('channel')
+                        .setDescription('Channel for level announcements')
+                        .addChannelTypes(ChannelType.GuildText)
+                        .setRequired(true)
+                )
         ),
 
     async execute(interaction) {
@@ -145,6 +158,7 @@ export const configCommand: Command = {
                     ]),
                 ];
 
+                const levelChannelId = await levelSettings.getChannelId(interaction.guildId);
                 const container = ComponentsV2.infoContainer(
                     'Bot Configuration',
                     `**Server:** ${interaction.guild?.name}\n\n` +
@@ -158,6 +172,7 @@ export const configCommand: Command = {
                     `**Ticket Panel Channel:** ${ticketPanelChannelId !== 'Not set' ? `<#${ticketPanelChannelId}>` : '`Not set`'}\n` +
                     `**Default Ticket Category:** ${ticketParentCategoryId !== 'Not set' ? `\`${ticketParentCategoryId}\`` : '`Not set`'}\n` +
                     `**Ticket Transcripts:** ${archiveChannelId !== 'Not set' ? `<#${archiveChannelId}>` : '`Not set`'}\n` +
+                    `**Level Announcements:** ${levelChannelId ? `<#${levelChannelId}>` : '`Not set`'}\n` +
                     `**Ticket Staff Roles:** ${staffRoleIds.length ? staffRoleIds.map((roleId) => `<@&${roleId}>`).join(', ') : '`Not set`'}\n\n` +
                     `**Auto Register Commands:** ${config.bot.autoRegisterCommands ? '`Enabled`' : '`Disabled`'}`
                 );
@@ -302,6 +317,23 @@ export const configCommand: Command = {
                 if (!success) throw new Error('Database update failed');
                 await interaction.editReply({
                     components: [ComponentsV2.successContainer('Moderation Configuration Updated', `${label} is now <#${channel.id}>.`)],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+
+            if (subcommand === 'level-channel') {
+                const channel = interaction.options.getChannel('channel', true);
+                const success = await levelSettings.setChannelId(interaction.guildId, channel.id);
+                if (!success) throw new Error('Failed to update level settings');
+
+                await interaction.editReply({
+                    components: [
+                        ComponentsV2.successContainer(
+                            'Level Announcement Channel Set',
+                            `Level-up and rank-up announcements will now be sent to <#${channel.id}>.`
+                        ),
+                    ],
                     flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
                 return;

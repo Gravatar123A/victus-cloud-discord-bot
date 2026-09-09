@@ -102,7 +102,7 @@ export const config = {
         entitlementSyncMinutes: Math.max(1, parseInt(process.env.DISCORD_ENTITLEMENT_SYNC_MINUTES || '5', 10)),
         aiChannelId: process.env.DISCORD_AI_CHANNEL_ID || '', // Optional fallback AI support channel
         autoRegisterCommands: process.env.DISCORD_AUTO_REGISTER_COMMANDS !== 'false',
-        levelUpChannelId: process.env.DISCORD_LEVEL_UP_CHANNEL_ID || '1416377943776559204',
+        levelUpChannelId: process.env.DISCORD_LEVEL_UP_CHANNEL_ID || '1531002070130364426',
         // Uptime Kuma push monitor — the bot pings this on an interval so the
         // "Discord Bot Heartbeat" monitor stays green. Override via env.
         uptimePushUrl: process.env.UPTIME_KUMA_PUSH_URL || 'https://status.victuscloud.com/api/push/KPHJ8IOmDd',

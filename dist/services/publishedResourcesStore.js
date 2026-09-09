@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { supabase } from './supabase.js';
 import { logger } from '../utils/logger.js';
 const LOCAL_STORE_PATH = join(process.cwd(), 'data', 'published-resources.json');
 class PublishedResourcesStore {
@@ -8,6 +9,23 @@ class PublishedResourcesStore {
     async ensureLoaded() {
         if (this.loaded)
             return;
+        // 1. Load from Supabase custom embed backup
+        try {
+            const embed = await supabase.getCustomEmbed('global', '_published_resources');
+            if (embed?.description) {
+                const data = JSON.parse(embed.description);
+                for (const item of data) {
+                    if (!item.likes || !Array.isArray(item.likes)) {
+                        item.likes = [];
+                    }
+                    this.listings.set(item.id, item);
+                }
+            }
+        }
+        catch (supabaseErr) {
+            logger.debug('Failed to load published resources from Supabase:', supabaseErr);
+        }
+        // 2. Load / merge local file cache
         try {
             const raw = await readFile(LOCAL_STORE_PATH, 'utf8');
             const data = JSON.parse(raw);
@@ -15,7 +33,9 @@ class PublishedResourcesStore {
                 if (!item.likes || !Array.isArray(item.likes)) {
                     item.likes = [];
                 }
-                this.listings.set(item.id, item);
+                if (!this.listings.has(item.id)) {
+                    this.listings.set(item.id, item);
+                }
             }
         }
         catch (error) {
@@ -26,13 +46,23 @@ class PublishedResourcesStore {
         this.loaded = true;
     }
     async persist() {
+        const list = Array.from(this.listings.values());
+        // 1. Write to local disk
         try {
             await mkdir(dirname(LOCAL_STORE_PATH), { recursive: true });
-            const list = Array.from(this.listings.values());
             await writeFile(LOCAL_STORE_PATH, `${JSON.stringify(list, null, 2)}\n`, 'utf8');
         }
         catch (error) {
             logger.error('Failed to write published-resources.json:', error);
+        }
+        // 2. Persist to Supabase cloud
+        try {
+            await supabase.saveCustomEmbed('global', '_published_resources', {
+                description: JSON.stringify(list),
+            });
+        }
+        catch (supabaseErr) {
+            logger.warn('Failed to persist published resources to Supabase:', supabaseErr);
         }
     }
     generateListingId() {
@@ -99,14 +129,30 @@ class PublishedResourcesStore {
         await this.persist();
         return { success: true, likesCount: item.likes.length };
     }
-    async markApplied(id, approved = true) {
+    async submitApplication(id) {
         await this.ensureLoaded();
         const item = this.listings.get(id);
         if (!item)
             return false;
         item.applied = true;
         item.appliedAt = Date.now();
+        this.listings.set(id, item);
+        await this.persist();
+        return true;
+    }
+    async markApplied(id, approved = true, meta) {
+        await this.ensureLoaded();
+        const item = this.listings.get(id);
+        if (!item)
+            return false;
+        item.applied = true;
+        item.appliedAt = item.appliedAt || Date.now();
         item.approved = approved;
+        if (meta?.reviewedBy)
+            item.reviewedBy = meta.reviewedBy;
+        if (meta?.rejectionReason)
+            item.rejectionReason = meta.rejectionReason;
+        item.reviewedAt = Date.now();
         this.listings.set(id, item);
         await this.persist();
         return true;

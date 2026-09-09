@@ -55,6 +55,7 @@ import { manualDcLinkCommand } from './manualdclink.js';
 import { currencyCommand } from './currency.js';
 import { pricingCommand } from './pricing.js';
 import { leaderboardCommand } from './leaderboard.js';
+import { levelChannelCommand } from './levelChannel.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -116,6 +117,7 @@ const allCommands: Command[] = [
     whitelistCommand,
     communityCoinsCommand,
     levelCommand,
+    levelChannelCommand,
     leaderboardCommand,
     ...musicCommands,
 ];

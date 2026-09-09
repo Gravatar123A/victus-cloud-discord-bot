@@ -76,7 +76,7 @@ export const leaderboardCommand = {
                 return;
             }
             // Generate board container
-            const container = await leaderboardService.buildLeaderboardContainer(guildId, 'overview');
+            const container = await leaderboardService.buildLeaderboardContainer(guildId, 'overview', 1);
             // Send persistent message to the target channel
             const sentMessage = await targetChannel.send({
                 components: [container],
@@ -87,6 +87,7 @@ export const leaderboardCommand = {
                 channelId: targetChannel.id,
                 messageId: sentMessage.id,
                 view: 'overview',
+                page: 1,
                 lastUpdated: Date.now(),
             });
             await interaction.editReply({
@@ -110,6 +111,7 @@ export const leaderboardCommand = {
             await leaderboardService.setConfig(guildId, {
                 channelId: null,
                 messageId: null,
+                page: 1,
                 lastUpdated: 0,
             });
             await interaction.editReply({
@@ -138,29 +140,65 @@ export const leaderboardCommand = {
      */
     async handleButton(interaction) {
         const customId = interaction.customId;
+        if (!customId.startsWith('lb_'))
+            return;
+        // Ignore no-op page indicator button
+        if (customId.startsWith('lb_noop')) {
+            await interaction.deferUpdate().catch(() => { });
+            return;
+        }
         // Tab category switch: lb_tab:<view>:<guildId>
         if (customId.startsWith('lb_tab:')) {
             const [, view, guildId] = customId.split(':');
-            const targetCategory = view;
+            const targetCategory = (view || 'overview');
+            const targetPage = 1;
             try {
-                const container = await leaderboardService.buildLeaderboardContainer(guildId, targetCategory);
+                const container = await leaderboardService.buildLeaderboardContainer(guildId, targetCategory, targetPage);
                 await interaction.update({
                     components: [container],
                     flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
-                await leaderboardService.setConfig(guildId, { view: targetCategory });
+                await leaderboardService.setConfig(guildId, { view: targetCategory, page: targetPage });
             }
             catch (error) {
                 logger.error('Failed to handle leaderboard tab button:', error);
             }
             return;
         }
-        // Force refresh button: lb_refresh:<guildId>
+        // Page navigation: lb_page:<view>:<page>:<guildId>
+        if (customId.startsWith('lb_page:')) {
+            const [, view, pageStr, guildId] = customId.split(':');
+            const targetCategory = (view || 'overview');
+            const targetPage = Math.max(1, parseInt(pageStr, 10) || 1);
+            try {
+                const container = await leaderboardService.buildLeaderboardContainer(guildId, targetCategory, targetPage);
+                await interaction.update({
+                    components: [container],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                await leaderboardService.setConfig(guildId, { view: targetCategory, page: targetPage });
+            }
+            catch (error) {
+                logger.error('Failed to handle leaderboard page button:', error);
+            }
+            return;
+        }
+        // Force refresh button: lb_refresh:<guildId> or lb_refresh:<view>:<page>:<guildId>
         if (customId.startsWith('lb_refresh:')) {
-            const [, guildId] = customId.split(':');
+            const parts = customId.split(':');
+            let guildId = parts[1];
+            let view = undefined;
+            let page = undefined;
+            if (parts.length >= 4) {
+                view = parts[1];
+                page = parseInt(parts[2], 10) || 1;
+                guildId = parts[3];
+            }
             try {
                 const config = await leaderboardService.getConfig(guildId);
-                const container = await leaderboardService.buildLeaderboardContainer(guildId, config.view || 'overview');
+                const currentView = view || config.view || 'overview';
+                const currentPage = page || config.page || 1;
+                const container = await leaderboardService.buildLeaderboardContainer(guildId, currentView, currentPage);
                 await interaction.update({
                     components: [container],
                     flags: ComponentsV2.IS_COMPONENTS_V2,
@@ -169,6 +207,7 @@ export const leaderboardCommand = {
             catch (error) {
                 logger.error('Failed to handle leaderboard refresh button:', error);
             }
+            return;
         }
     },
 };

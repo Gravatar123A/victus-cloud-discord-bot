@@ -5,6 +5,7 @@ import { calculateLevel, getLevelProgress, getTierForLevel, progressBar } from '
 import { logger } from '../utils/logger.js';
 import { syncRankRole } from '../utils/roles.js';
 import { supabase } from './supabase.js';
+import { levelSettings } from './levelSettings.js';
 let processing = false;
 function levelCard(discordId, level, totalXp, rankedUp) {
     const current = getLevelProgress(totalXp);
@@ -79,9 +80,11 @@ async function processOne(client) {
             await supabase.updateLevelUpEvent(event.id, { dm_sent_at: new Date().toISOString() });
         }
         if (!event.announcement_sent_at) {
-            const channel = await client.channels.fetch(config.bot.levelUpChannelId).catch(() => null);
-            if (!channel || !channel.isTextBased() || channel.type === ChannelType.DM || !('send' in channel))
-                throw new Error('Level-up announcement channel is unavailable');
+            const channelId = await levelSettings.getChannelId(config.bot.supportGuildId);
+            const channel = await client.channels.fetch(channelId).catch(() => null);
+            if (!channel || !channel.isTextBased() || channel.type === ChannelType.DM || !('send' in channel)) {
+                throw new Error(`Level-up announcement channel (${channelId}) is unavailable`);
+            }
             await channel.send({ components: [levelCard(linked.discord_id, event.level, eventXp, rankedUp)], flags: ComponentsV2.IS_COMPONENTS_V2 });
             await supabase.updateLevelUpEvent(event.id, { announcement_sent_at: new Date().toISOString() });
         }

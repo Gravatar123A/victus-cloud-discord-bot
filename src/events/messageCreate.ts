@@ -19,6 +19,7 @@ import { bridgeDiscordMessageToWeb } from '../services/chatBridge.js';
 import { inspectModerationMessage } from '../services/moderation.js';
 import { memberStatsService } from '../services/memberStatsService.js';
 import { ticketTranslationService } from '../services/ticketTranslationService.js';
+import { levelSettings } from '../services/levelSettings.js';
 
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
@@ -338,6 +339,35 @@ export const messageCreateEvent: Event = {
                         components: [card],
                         flags: ComponentsV2.IS_COMPONENTS_V2,
                     }).catch(() => undefined);
+                    return;
+                }
+
+                if (commandName === 'levelchannel' || commandName === 'levelupchannel') {
+                    const isStaff = !!message.member && (
+                        message.member.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+                        message.member.permissions?.has?.(PermissionFlagsBits.ManageGuild)
+                    );
+                    if (!isStaff) {
+                        await message.reply('⛔ Only administrators can configure the level announcements channel.').catch(() => {});
+                        return;
+                    }
+
+                    const targetArg = args[0];
+                    if (!targetArg) {
+                        const currentId = await levelSettings.getChannelId(message.guildId!);
+                        await message.reply(`📢 Level announcements are currently broadcast to <#${currentId}>. Use \`!levelchannel <#channel>\` to change it.`).catch(() => {});
+                        return;
+                    }
+
+                    const channelId = targetArg.replace(/[<#>]/g, '');
+                    const channel = message.guild?.channels.cache.get(channelId);
+                    if (!channel || !channel.isTextBased()) {
+                        await message.reply('❌ Please specify a valid text channel in this server, e.g. `!levelchannel #announcements`.').catch(() => {});
+                        return;
+                    }
+
+                    await levelSettings.setChannelId(message.guildId!, channel.id);
+                    await message.reply(`✅ Level-up and rank-up announcements will now be sent to <#${channel.id}>.`).catch(() => {});
                     return;
                 }
 

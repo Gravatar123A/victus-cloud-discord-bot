@@ -247,6 +247,7 @@ export const whitelistCommand: Command = {
     },
 
     async handleButton(interaction) {
+        if (!interaction.customId.startsWith('whitelist:')) return;
         const guildId = interaction.guildId!;
         const action = interaction.customId.split(':')[1];
         const targetId = interaction.customId.split(':')[2];

@@ -5,7 +5,10 @@ import {
     TOP_10_LANGUAGES,
 } from '../dist/services/ticketTranslationService.js';
 import { memberStatsService } from '../dist/services/memberStatsService.js';
-import { leaderboardService } from '../dist/services/leaderboardService.js';
+import { leaderboardService, formatRank } from '../dist/services/leaderboardService.js';
+import { levelSettings } from '../dist/services/levelSettings.js';
+import { whitelistCommand } from '../dist/commands/whitelist.js';
+import { leaderboardCommand } from '../dist/commands/leaderboard.js';
 
 test('TOP_10_LANGUAGES contains the 10 most common world languages', () => {
     assert.equal(TOP_10_LANGUAGES.length, 10);
@@ -114,14 +117,74 @@ test('memberStatsService tracks messages and voice airtime accurately', async ()
     assert.ok(topVoice[0].minutes >= 15);
 });
 
-test('leaderboardService builds Components V2 layouts for all categories', async () => {
+test('leaderboardService builds Components V2 layouts for all categories and pages', async () => {
     const testGuild = 'test_guild_999';
 
     for (const view of ['overview', 'coins', 'xp', 'messages', 'voice']) {
-        const container = await leaderboardService.buildLeaderboardContainer(testGuild, view);
-        assert.ok(container, `Container failed for view: ${view}`);
-        const json = container.toJSON();
-        assert.ok(json.components);
-        assert.ok(json.components.length > 0);
+        // Page 1
+        const containerP1 = await leaderboardService.buildLeaderboardContainer(testGuild, view, 1);
+        assert.ok(containerP1, `Container failed for view: ${view} page 1`);
+        const jsonP1 = containerP1.toJSON();
+        assert.ok(jsonP1.components);
+        assert.ok(jsonP1.components.length >= 3); // text display + tab row + nav row
+
+        // Check button rows
+        const tabRow = jsonP1.components[1];
+        assert.equal(tabRow.components.length, 5); // overview, coins, xp, messages, voice
+
+        const navRow = jsonP1.components[2];
+        assert.equal(navRow.components.length, 4); // prev, page indicator, next, refresh
+        assert.ok(navRow.components[0].custom_id.startsWith('lb_page:'));
+        assert.ok(navRow.components[1].custom_id.startsWith('lb_noop:'));
+        assert.ok(navRow.components[2].custom_id.startsWith('lb_page:'));
+        assert.ok(navRow.components[3].custom_id.startsWith('lb_refresh:'));
+
+        // Page 2
+        const containerP2 = await leaderboardService.buildLeaderboardContainer(testGuild, view, 2);
+        assert.ok(containerP2, `Container failed for view: ${view} page 2`);
     }
 });
+
+test('formatRank formats 1-10 with medals/numbers and 11+ with numeric tag', () => {
+    assert.equal(formatRank(1), '🥇');
+    assert.equal(formatRank(2), '🥈');
+    assert.equal(formatRank(3), '🥉');
+    assert.equal(formatRank(4), '4️⃣');
+    assert.equal(formatRank(5), '5️⃣');
+    assert.equal(formatRank(6), '6️⃣');
+    assert.equal(formatRank(7), '7️⃣');
+    assert.equal(formatRank(8), '8️⃣');
+    assert.equal(formatRank(9), '9️⃣');
+    assert.equal(formatRank(10), '🔟');
+    assert.equal(formatRank(11), '`#11`');
+    assert.equal(formatRank(25), '`#25`');
+});
+
+test('whitelist button handler ignores non-whitelist buttons', async () => {
+    let replied = false;
+    let deferred = false;
+    const mockInteraction = {
+        customId: 'lb_tab:coins:1340272406492614798',
+        guildId: '1340272406492614798',
+        reply: async () => { replied = true; },
+        deferReply: async () => { deferred = true; },
+    };
+
+    // Should return immediately without touching the interaction
+    await whitelistCommand.handleButton(mockInteraction);
+    assert.equal(replied, false, 'whitelistCommand should not reply to lb_ buttons');
+    assert.equal(deferred, false, 'whitelistCommand should not defer lb_ buttons');
+});
+
+test('levelSettings returns target channel and allows updating', async () => {
+    const channelId = await levelSettings.getChannelId('1340272406492614798');
+    assert.equal(channelId, '1531002070130364426', 'Default channel must be 1531002070130364426');
+
+    // Setting channel ID updates cache
+    const testChannel = '1531002070130364426';
+    const success = await levelSettings.setChannelId('test_guild_mock', testChannel);
+    assert.ok(success);
+    const updated = await levelSettings.getChannelId('test_guild_mock');
+    assert.equal(updated, testChannel);
+});
+

@@ -4,7 +4,6 @@ import {
     ButtonStyle,
     Client,
     ContainerBuilder,
-    MessageFlags,
     TextChannel,
 } from 'discord.js';
 import { supabase } from './supabase.js';
@@ -20,11 +19,12 @@ export interface LeaderboardConfig {
     channelId: string | null;
     messageId: string | null;
     view: LeaderboardCategory;
+    page: number;
     lastUpdated: number;
 }
 
-const MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 const HR = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
+const PAGE_SIZE = 10;
 
 function fmt(n: number | null | undefined): string {
     return Number(n || 0).toLocaleString('en-US');
@@ -46,6 +46,20 @@ function resolveProfileName(p: any): string {
     );
 }
 
+export function formatRank(rank: number): string {
+    if (rank === 1) return '🥇';
+    if (rank === 2) return '🥈';
+    if (rank === 3) return '🥉';
+    if (rank === 4) return '4️⃣';
+    if (rank === 5) return '5️⃣';
+    if (rank === 6) return '6️⃣';
+    if (rank === 7) return '7️⃣';
+    if (rank === 8) return '8️⃣';
+    if (rank === 9) return '9️⃣';
+    if (rank === 10) return '🔟';
+    return `\`#${rank}\``;
+}
+
 class LeaderboardService {
     private configs = new Map<string, LeaderboardConfig>();
     private activeGuildIds = new Set<string>();
@@ -63,6 +77,7 @@ class LeaderboardService {
             channelId: null,
             messageId: null,
             view: 'overview',
+            page: 1,
             lastUpdated: 0,
         };
 
@@ -70,7 +85,7 @@ class LeaderboardService {
             const embed = await supabase.getCustomEmbed(guildId, '_leaderboard_config');
             if (embed?.description) {
                 const parsed = JSON.parse(embed.description);
-                const merged = { ...defaultConfig, ...parsed };
+                const merged: LeaderboardConfig = { ...defaultConfig, ...parsed };
                 this.configs.set(guildId, merged);
                 if (merged.channelId && merged.messageId) {
                     this.activeGuildIds.add(guildId);
@@ -111,28 +126,28 @@ class LeaderboardService {
     }
 
     /**
-     * Fetch all leaderboard data
+     * Fetch leaderboard data up to 100 entries for pagination
      */
     private async fetchAllData(guildId: string) {
-        // 1. Top Coins
+        // 1. Top Coins (up to 100 profiles)
         const { data: topCoinsRaw } = await supabase.client
             .from('profiles')
             .select('id, username, display_name, first_name, last_name, total_cp')
             .order('total_cp', { ascending: false })
-            .limit(10);
+            .limit(100);
 
-        // 2. Top XP
+        // 2. Top XP (up to 100 profiles)
         const { data: topXpRaw } = await supabase.client
             .from('profiles')
             .select('id, username, display_name, first_name, last_name, total_xp')
             .order('total_xp', { ascending: false })
-            .limit(10);
+            .limit(100);
 
-        // 3. Top Messages
-        const topMessages = await memberStatsService.getTopMessages(guildId, 10);
+        // 3. Top Messages (up to 100 active chatters)
+        const topMessages = await memberStatsService.getTopMessages(guildId, 100);
 
-        // 4. Top Voice
-        const topVoice = await memberStatsService.getTopVoice(guildId, 10);
+        // 4. Top Voice (up to 100 active voice participants)
+        const topVoice = await memberStatsService.getTopVoice(guildId, 100);
 
         return {
             coins: topCoinsRaw || [],
@@ -143,59 +158,96 @@ class LeaderboardService {
     }
 
     /**
-     * Render the Components V2 Leaderboard container
+     * Render the Components V2 Leaderboard container with Top 10 per page and interactive pagination
      */
-    async buildLeaderboardContainer(guildId: string, view: LeaderboardCategory): Promise<ContainerBuilder> {
+    async buildLeaderboardContainer(
+        guildId: string,
+        view: LeaderboardCategory = 'overview',
+        page: number = 1
+    ): Promise<ContainerBuilder> {
         const data = await this.fetchAllData(guildId);
         const container = ComponentsV2.baseContainer(0x2b2d31);
         const nowTs = Math.floor(Date.now() / 1000);
 
         let body = '';
+        let totalPages = 1;
+        let currentPage = Math.max(1, page);
 
         if (view === 'overview') {
-            // Overview view: Top 3 of every category
-            const coinsPodium =
-                data.coins
-                    .slice(0, 3)
-                    .map((p, i) => `${MEDALS[i]} **${resolveProfileName(p)}** — \`${fmt(p.total_cp)}\` Coins`)
-                    .join('\n') || '*No records yet.*';
+            const maxOverviewCount = Math.max(
+                data.coins.length,
+                data.xp.length,
+                data.messages.length,
+                data.voice.length,
+                1
+            );
+            totalPages = Math.max(1, Math.ceil(maxOverviewCount / PAGE_SIZE));
+            currentPage = Math.min(currentPage, totalPages);
+            const startIndex = (currentPage - 1) * PAGE_SIZE;
+            const endIndex = startIndex + PAGE_SIZE;
 
-            const xpPodium =
-                data.xp
-                    .slice(0, 3)
-                    .map((p, i) => {
-                        const lp = getLevelProgress(Number(p.total_xp || 0));
-                        return `${MEDALS[i]} ${lp.tier.emoji} **${resolveProfileName(p)}** — Lv **${lp.level}** (\`${fmt(p.total_xp)}\` XP)`;
-                    })
-                    .join('\n') || '*No records yet.*';
+            // 1. Coins (10 items on this page)
+            const coinsSlice = data.coins.slice(startIndex, endIndex);
+            const coinsList =
+                coinsSlice.length > 0
+                    ? coinsSlice
+                          .map((p, i) => `${formatRank(startIndex + i + 1)} **${resolveProfileName(p)}** — \`${fmt(p.total_cp)}\` Coins`)
+                          .join('\n')
+                    : '*No coins records for this page.*';
 
-            const messagesPodium =
-                data.messages
-                    .slice(0, 3)
-                    .map((m, i) => `${MEDALS[i]} <@${m.userId}> — \`${fmt(m.count)}\` msgs`)
-                    .join('\n') || '*No message activity recorded yet.*';
+            // 2. XP & Rank (10 items on this page)
+            const xpSlice = data.xp.slice(startIndex, endIndex);
+            const xpList =
+                xpSlice.length > 0
+                    ? xpSlice
+                          .map((p, i) => {
+                              const lp = getLevelProgress(Number(p.total_xp || 0));
+                              return `${formatRank(startIndex + i + 1)} ${lp.tier.emoji} **${resolveProfileName(p)}** — Lv **${lp.level}** (\`${fmt(p.total_xp)}\` XP)`;
+                          })
+                          .join('\n')
+                    : '*No XP records for this page.*';
 
-            const voicePodium =
-                data.voice
-                    .slice(0, 3)
-                    .map((v, i) => `${MEDALS[i]} <@${v.userId}> — \`${fmtMinutes(v.minutes)}\` in VC`)
-                    .join('\n') || '*No voice activity recorded yet.*';
+            // 3. Most Active Chatters (10 items on this page)
+            const messagesSlice = data.messages.slice(startIndex, endIndex);
+            const messagesList =
+                messagesSlice.length > 0
+                    ? messagesSlice
+                          .map((m, i) => `${formatRank(startIndex + i + 1)} <@${m.userId}> — \`${fmt(m.count)}\` msgs`)
+                          .join('\n')
+                    : '*No message activity for this page.*';
+
+            // 4. Voice Airtime (10 items on this page)
+            const voiceSlice = data.voice.slice(startIndex, endIndex);
+            const voiceList =
+                voiceSlice.length > 0
+                    ? voiceSlice
+                          .map((v, i) => `${formatRank(startIndex + i + 1)} <@${v.userId}> — \`${fmtMinutes(v.minutes)}\` in VC`)
+                          .join('\n')
+                    : '*No voice activity for this page.*';
 
             body =
                 `# 🏆 VICTUS CLOUD LIVE LEADERBOARD\n` +
                 `Real-time server & cloud leaderboards. **Updates automatically every 1 minute.**\n` +
                 `${HR}\n\n` +
-                `### 🪙 Top Coins (Economy)\n${coinsPodium}\n\n` +
-                `### ⚡ Top XP & Contribution Ranks\n${xpPodium}\n\n` +
-                `### 💬 Most Active Chatters\n${messagesPodium}\n\n` +
-                `### 🎙️ Top Voice Channel Airtime\n${voicePodium}\n\n` +
+                `### 🪙 Top Coins (Economy) • Ranks ${startIndex + 1}–${startIndex + (coinsSlice.length || 1)}\n${coinsList}\n\n` +
+                `### ⚡ Top XP & Contribution Ranks • Ranks ${startIndex + 1}–${startIndex + (xpSlice.length || 1)}\n${xpList}\n\n` +
+                `### 💬 Most Active Chatters • Ranks ${startIndex + 1}–${startIndex + (messagesSlice.length || 1)}\n${messagesList}\n\n` +
+                `### 🎙️ Top Voice Channel Airtime • Ranks ${startIndex + 1}–${startIndex + (voiceSlice.length || 1)}\n${voiceList}\n\n` +
                 `${HR}\n` +
-                `- 🕒 *Last updated: <t:${nowTs}:R> • Next tick: <t:${nowTs + 60}:R> • ⚡ Live Sync*`;
+                `- 📄 **Page ${currentPage} of ${totalPages}** • 🕒 *Updated: <t:${nowTs}:R> • Next tick: <t:${nowTs + 60}:R> • ⚡ Live Sync*`;
         } else if (view === 'coins') {
+            const total = Math.max(data.coins.length, 1);
+            totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+            currentPage = Math.min(currentPage, totalPages);
+            const startIndex = (currentPage - 1) * PAGE_SIZE;
+            const slice = data.coins.slice(startIndex, startIndex + PAGE_SIZE);
+
             const list =
-                data.coins
-                    .map((p, i) => `${MEDALS[i]} **${resolveProfileName(p)}** — \`${fmt(p.total_cp)}\` Coins`)
-                    .join('\n') || '*No coins data recorded yet.*';
+                slice.length > 0
+                    ? slice
+                          .map((p, i) => `${formatRank(startIndex + i + 1)} **${resolveProfileName(p)}** — \`${fmt(p.total_cp)}\` Coins`)
+                          .join('\n')
+                    : '*No coins data recorded yet.*';
 
             body =
                 `# 🪙 TOP COINS LEADERBOARD\n` +
@@ -203,15 +255,24 @@ class LeaderboardService {
                 `${HR}\n\n` +
                 `${list}\n\n` +
                 `${HR}\n` +
+                `- 📄 **Page ${currentPage} of ${totalPages}** (Showing ranks ${startIndex + 1}–${startIndex + slice.length} of ${data.coins.length})\n` +
                 `- 🕒 *Last updated: <t:${nowTs}:R> • Auto-updates every 1 minute*`;
         } else if (view === 'xp') {
+            const total = Math.max(data.xp.length, 1);
+            totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+            currentPage = Math.min(currentPage, totalPages);
+            const startIndex = (currentPage - 1) * PAGE_SIZE;
+            const slice = data.xp.slice(startIndex, startIndex + PAGE_SIZE);
+
             const list =
-                data.xp
-                    .map((p, i) => {
-                        const lp = getLevelProgress(Number(p.total_xp || 0));
-                        return `${MEDALS[i]} ${lp.tier.emoji} **${resolveProfileName(p)}** — **${lp.tier.name}** (Lv ${lp.level}) · \`${fmt(p.total_xp)}\` XP`;
-                    })
-                    .join('\n') || '*No XP data recorded yet.*';
+                slice.length > 0
+                    ? slice
+                          .map((p, i) => {
+                              const lp = getLevelProgress(Number(p.total_xp || 0));
+                              return `${formatRank(startIndex + i + 1)} ${lp.tier.emoji} **${resolveProfileName(p)}** — **${lp.tier.name}** (Lv ${lp.level}) · \`${fmt(p.total_xp)}\` XP`;
+                          })
+                          .join('\n')
+                    : '*No XP data recorded yet.*';
 
             body =
                 `# ⚡ TOP XP & TIERS LEADERBOARD\n` +
@@ -219,12 +280,21 @@ class LeaderboardService {
                 `${HR}\n\n` +
                 `${list}\n\n` +
                 `${HR}\n` +
+                `- 📄 **Page ${currentPage} of ${totalPages}** (Showing ranks ${startIndex + 1}–${startIndex + slice.length} of ${data.xp.length})\n` +
                 `- 🕒 *Last updated: <t:${nowTs}:R> • Auto-updates every 1 minute*`;
         } else if (view === 'messages') {
+            const total = Math.max(data.messages.length, 1);
+            totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+            currentPage = Math.min(currentPage, totalPages);
+            const startIndex = (currentPage - 1) * PAGE_SIZE;
+            const slice = data.messages.slice(startIndex, startIndex + PAGE_SIZE);
+
             const list =
-                data.messages
-                    .map((m, i) => `${MEDALS[i]} <@${m.userId}> — **${fmt(m.count)}** messages sent`)
-                    .join('\n') || '*No messages recorded yet.*';
+                slice.length > 0
+                    ? slice
+                          .map((m, i) => `${formatRank(startIndex + i + 1)} <@${m.userId}> — **${fmt(m.count)}** messages sent`)
+                          .join('\n')
+                    : '*No messages recorded yet.*';
 
             body =
                 `# 💬 TOP MESSAGES LEADERBOARD\n` +
@@ -232,12 +302,21 @@ class LeaderboardService {
                 `${HR}\n\n` +
                 `${list}\n\n` +
                 `${HR}\n` +
+                `- 📄 **Page ${currentPage} of ${totalPages}** (Showing ranks ${startIndex + 1}–${startIndex + slice.length} of ${data.messages.length})\n` +
                 `- 🕒 *Last updated: <t:${nowTs}:R> • Auto-updates every 1 minute*`;
         } else if (view === 'voice') {
+            const total = Math.max(data.voice.length, 1);
+            totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+            currentPage = Math.min(currentPage, totalPages);
+            const startIndex = (currentPage - 1) * PAGE_SIZE;
+            const slice = data.voice.slice(startIndex, startIndex + PAGE_SIZE);
+
             const list =
-                data.voice
-                    .map((v, i) => `${MEDALS[i]} <@${v.userId}> — **${fmtMinutes(v.minutes)}** spent in VC`)
-                    .join('\n') || '*No voice activity recorded yet.*';
+                slice.length > 0
+                    ? slice
+                          .map((v, i) => `${formatRank(startIndex + i + 1)} <@${v.userId}> — **${fmtMinutes(v.minutes)}** spent in VC`)
+                          .join('\n')
+                    : '*No voice activity recorded yet.*';
 
             body =
                 `# 🎙️ TOP VOICE AIRTIME LEADERBOARD\n` +
@@ -245,12 +324,13 @@ class LeaderboardService {
                 `${HR}\n\n` +
                 `${list}\n\n` +
                 `${HR}\n` +
+                `- 📄 **Page ${currentPage} of ${totalPages}** (Showing ranks ${startIndex + 1}–${startIndex + slice.length} of ${data.voice.length})\n` +
                 `- 🕒 *Last updated: <t:${nowTs}:R> • Auto-updates every 1 minute*`;
         }
 
         container.addTextDisplayComponents(ComponentsV2.text(body));
 
-        // Category Tab Buttons
+        // Row 1: Category Tab Buttons
         const tabRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
                 .setCustomId(`lb_tab:overview:${guildId}`)
@@ -279,16 +359,34 @@ class LeaderboardService {
                 .setEmoji('🎙️')
         );
 
-        // Control Button
-        const refreshRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        // Row 2: Page Navigation and Refresh Controls
+        const prevPage = Math.max(1, currentPage - 1);
+        const nextPage = Math.min(totalPages, currentPage + 1);
+
+        const navRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
-                .setCustomId(`lb_refresh:${guildId}`)
-                .setLabel('Refresh Live Board 🔄')
+                .setCustomId(`lb_page:${view}:${prevPage}:${guildId}`)
+                .setLabel('◀ Prev')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage <= 1),
+            new ButtonBuilder()
+                .setCustomId(`lb_noop:${view}:${currentPage}:${guildId}`)
+                .setLabel(`Page ${currentPage} / ${totalPages}`)
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(true),
+            new ButtonBuilder()
+                .setCustomId(`lb_page:${view}:${nextPage}:${guildId}`)
+                .setLabel('Next ▶')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage >= totalPages),
+            new ButtonBuilder()
+                .setCustomId(`lb_refresh:${view}:${currentPage}:${guildId}`)
+                .setLabel('Refresh 🔄')
                 .setStyle(ButtonStyle.Success)
         );
 
         container.addActionRowComponents(tabRow);
-        container.addActionRowComponents(refreshRow);
+        container.addActionRowComponents(navRow);
 
         return container;
     }
@@ -296,7 +394,12 @@ class LeaderboardService {
     /**
      * Update the persistent leaderboard message for a guild
      */
-    async updateGuildLeaderboard(client: Client, guildId: string, explicitView?: LeaderboardCategory): Promise<boolean> {
+    async updateGuildLeaderboard(
+        client: Client,
+        guildId: string,
+        explicitView?: LeaderboardCategory,
+        explicitPage?: number
+    ): Promise<boolean> {
         try {
             const config = await this.getConfig(guildId);
             if (!config.channelId) return false;
@@ -308,7 +411,8 @@ class LeaderboardService {
             }
 
             const currentView = explicitView || config.view || 'overview';
-            const container = await this.buildLeaderboardContainer(guildId, currentView);
+            const currentPage = explicitPage || config.page || 1;
+            const container = await this.buildLeaderboardContainer(guildId, currentView, currentPage);
 
             // Attempt to edit existing message
             if (config.messageId) {
@@ -321,6 +425,7 @@ class LeaderboardService {
                         });
                         await this.setConfig(guildId, {
                             view: currentView,
+                            page: currentPage,
                             lastUpdated: Date.now(),
                         });
                         return true;
@@ -340,6 +445,7 @@ class LeaderboardService {
                 channelId: channel.id,
                 messageId: newMsg.id,
                 view: currentView,
+                page: currentPage,
                 lastUpdated: Date.now(),
             });
 
