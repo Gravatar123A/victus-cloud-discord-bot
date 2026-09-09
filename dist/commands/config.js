@@ -1,0 +1,246 @@
+import { ChannelType, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { supabase } from '../services/supabase.js';
+import { ComponentsV2 } from '../embeds/componentsV2.js';
+import { requireAdmin } from '../middleware/requireLinked.js';
+import { logger } from '../utils/logger.js';
+import { config } from '../config.js';
+export const configCommand = {
+    data: new SlashCommandBuilder()
+        .setName('config')
+        .setDescription('Configure bot settings (Admin only)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .setDMPermission(false)
+        .addSubcommand((sub) => sub
+        .setName('view')
+        .setDescription('View current bot configuration'))
+        .addSubcommand((sub) => sub
+        .setName('role')
+        .setDescription('Set the role given to linked users')
+        .addRoleOption((opt) => opt
+        .setName('role')
+        .setDescription('Role to assign')
+        .setRequired(true)))
+        .addSubcommand((sub) => sub
+        .setName('logs')
+        .setDescription('Set the audit logs channel')
+        .addChannelOption((opt) => opt
+        .setName('channel')
+        .setDescription('Channel for audit logs')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)))
+        .addSubcommand((sub) => sub
+        .setName('ai-channel')
+        .setDescription('Set the channel where AI replies to normal messages')
+        .addChannelOption((opt) => opt
+        .setName('channel')
+        .setDescription('Channel for automatic AI support replies')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)))
+        .addSubcommand((sub) => sub
+        .setName('ai-disable')
+        .setDescription('Disable automatic AI replies to normal messages'))
+        .addSubcommand((sub) => sub
+        .setName('moderation-enable')
+        .setDescription('Enable AI language and conduct moderation'))
+        .addSubcommand((sub) => sub
+        .setName('moderation-disable')
+        .setDescription('Disable AI language and conduct moderation'))
+        .addSubcommand((sub) => sub
+        .setName('language-channel')
+        .setDescription('Set the channel where non-English messages are flagged')
+        .addChannelOption((opt) => opt
+        .setName('channel')
+        .setDescription('Channel where English is required')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)))
+        .addSubcommand((sub) => sub
+        .setName('languages-channel')
+        .setDescription('Set the channel for messages in other languages')
+        .addChannelOption((opt) => opt
+        .setName('channel')
+        .setDescription('Channel where other languages are allowed')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)))
+        .addSubcommand((sub) => sub
+        .setName('moderation-logs')
+        .setDescription('Set the private channel for moderation logs')
+        .addChannelOption((opt) => opt
+        .setName('channel')
+        .setDescription('Channel for AI moderation and escalation logs')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)))
+        .addSubcommand((sub) => sub
+        .setName('transcript-channel')
+        .setDescription('Set the channel where ticket transcripts are posted on close')
+        .addChannelOption((opt) => opt
+        .setName('channel')
+        .setDescription('Channel for ticket transcripts')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true))),
+    async execute(interaction) {
+        if (!interaction.guildId)
+            return;
+        const isAdmin = await requireAdmin(interaction);
+        if (!isAdmin)
+            return;
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
+        const subcommand = interaction.options.getSubcommand();
+        try {
+            if (subcommand === 'view') {
+                const settings = await supabase.getBotSettings(interaction.guildId);
+                const roleId = settings?.linked_role_id || 'Not set';
+                const logChannelId = settings?.log_channel_id || 'Not set';
+                const aiChannelId = settings?.ai_channel_id || config.bot.aiChannelId || 'Not set';
+                const moderationLanguageChannelId = settings?.moderation_language_channel_id || 'Not set';
+                const moderationOtherLanguagesChannelId = settings?.moderation_other_languages_channel_id || 'Not set';
+                const moderationLogChannelId = settings?.moderation_log_channel_id || 'Not set';
+                const ticketPanelChannelId = settings?.ticket_panel_channel_id || 'Not set';
+                const ticketParentCategoryId = settings?.ticket_parent_category_id || 'Not set';
+                const archiveChannelId = settings?.ticket_archive_channel_id || 'Not set';
+                const staffRoleIds = [
+                    ...new Set([
+                        ...(settings?.ticket_staff_role_ids || []),
+                        ...(settings?.ticket_admin_role_ids || []),
+                    ]),
+                ];
+                const container = ComponentsV2.infoContainer('Bot Configuration', `**Server:** ${interaction.guild?.name}\n\n` +
+                    `**Linked Role:** ${roleId !== 'Not set' ? `<@&${roleId}>` : '`Not set`'}\n` +
+                    `**Audit Logs:** ${logChannelId !== 'Not set' ? `<#${logChannelId}>` : '`Not set`'}\n` +
+                    `**AI Support Channel:** ${aiChannelId !== 'Not set' ? `<#${aiChannelId}>` : '`Not set`'}\n` +
+                    `**AI Moderation:** ${settings?.moderation_enabled ? '`Enabled`' : '`Disabled`'}\n` +
+                    `**English-Only Channel:** ${moderationLanguageChannelId !== 'Not set' ? `<#${moderationLanguageChannelId}>` : '`Not set`'}\n` +
+                    `**Other Languages Channel:** ${moderationOtherLanguagesChannelId !== 'Not set' ? `<#${moderationOtherLanguagesChannelId}>` : '`Not set`'}\n` +
+                    `**Moderation Logs:** ${moderationLogChannelId !== 'Not set' ? `<#${moderationLogChannelId}>` : '`Not set`'}\n` +
+                    `**Ticket Panel Channel:** ${ticketPanelChannelId !== 'Not set' ? `<#${ticketPanelChannelId}>` : '`Not set`'}\n` +
+                    `**Default Ticket Category:** ${ticketParentCategoryId !== 'Not set' ? `\`${ticketParentCategoryId}\`` : '`Not set`'}\n` +
+                    `**Ticket Transcripts:** ${archiveChannelId !== 'Not set' ? `<#${archiveChannelId}>` : '`Not set`'}\n` +
+                    `**Ticket Staff Roles:** ${staffRoleIds.length ? staffRoleIds.map((roleId) => `<@&${roleId}>`).join(', ') : '`Not set`'}\n\n` +
+                    `**Auto Register Commands:** ${config.bot.autoRegisterCommands ? '`Enabled`' : '`Disabled`'}`);
+                await interaction.editReply({
+                    components: [container],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+            if (subcommand === 'role') {
+                const role = interaction.options.getRole('role', true);
+                const success = await supabase.updateBotSettings(interaction.guildId, {
+                    linked_role_id: role.id,
+                });
+                if (!success)
+                    throw new Error('Database update failed');
+                await interaction.editReply({
+                    components: [
+                        ComponentsV2.successContainer('Configuration Updated', `Linked role has been set to <@&${role.id}>.`),
+                    ],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+            if (subcommand === 'logs') {
+                const channel = interaction.options.getChannel('channel', true);
+                const success = await supabase.updateBotSettings(interaction.guildId, {
+                    log_channel_id: channel.id,
+                });
+                if (!success)
+                    throw new Error('Database update failed');
+                await interaction.editReply({
+                    components: [
+                        ComponentsV2.successContainer('Configuration Updated', `Audit logs will now be sent to <#${channel.id}>.`),
+                    ],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+            if (subcommand === 'ai-channel') {
+                const channel = interaction.options.getChannel('channel', true);
+                const success = await supabase.updateBotSettings(interaction.guildId, {
+                    ai_channel_id: channel.id,
+                });
+                if (!success)
+                    throw new Error('Database update failed');
+                await interaction.editReply({
+                    components: [
+                        ComponentsV2.successContainer('AI Channel Enabled', `Victus AI will now reply to normal messages in <#${channel.id}>.\n\n` +
+                            'Keep this to one focused support channel so it helps users without flooding chat.'),
+                    ],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+            if (subcommand === 'transcript-channel') {
+                const channel = interaction.options.getChannel('channel', true);
+                const success = await supabase.updateBotSettings(interaction.guildId, {
+                    ticket_archive_channel_id: channel.id,
+                });
+                if (!success)
+                    throw new Error('Database update failed');
+                await interaction.editReply({
+                    components: [
+                        ComponentsV2.successContainer('Transcript Channel Set', `📄 Ticket transcripts will now be posted to <#${channel.id}> whenever a ticket is closed.`),
+                    ],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+            if (subcommand === 'ai-disable') {
+                const success = await supabase.updateBotSettings(interaction.guildId, {
+                    ai_channel_id: null,
+                });
+                if (!success)
+                    throw new Error('Database update failed');
+                await interaction.editReply({
+                    components: [
+                        ComponentsV2.successContainer('AI Channel Disabled', 'Victus AI will no longer auto-reply to normal channel messages.'),
+                    ],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+            }
+            if (subcommand === 'moderation-enable' || subcommand === 'moderation-disable') {
+                const enabled = subcommand === 'moderation-enable';
+                const success = await supabase.updateBotSettings(interaction.guildId, {
+                    moderation_enabled: enabled,
+                });
+                if (!success)
+                    throw new Error('Database update failed');
+                await interaction.editReply({
+                    components: [ComponentsV2.successContainer(enabled ? 'AI Moderation Enabled' : 'AI Moderation Disabled', enabled
+                            ? 'Language and conduct checks are now active. If no English-only channel is configured, language checks apply to all guild channels except the optional other-language channel.'
+                            : 'The bot will stop automatically flagging messages. Existing warnings remain available to moderators.')],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+            if (subcommand === 'language-channel' || subcommand === 'languages-channel' || subcommand === 'moderation-logs') {
+                const channel = interaction.options.getChannel('channel', true);
+                const key = subcommand === 'language-channel'
+                    ? 'moderation_language_channel_id'
+                    : subcommand === 'languages-channel'
+                        ? 'moderation_other_languages_channel_id'
+                        : 'moderation_log_channel_id';
+                const label = subcommand === 'language-channel'
+                    ? 'English-only channel'
+                    : subcommand === 'languages-channel'
+                        ? 'Other-languages channel'
+                        : 'Moderation log channel';
+                const success = await supabase.updateBotSettings(interaction.guildId, { [key]: channel.id });
+                if (!success)
+                    throw new Error('Database update failed');
+                await interaction.editReply({
+                    components: [ComponentsV2.successContainer('Moderation Configuration Updated', `${label} is now <#${channel.id}>.`)],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+        }
+        catch (error) {
+            logger.error('Config command error:', error);
+            await interaction.editReply({
+                components: [
+                    ComponentsV2.errorContainer('Configuration Error', 'Failed to update bot settings. Confirm the bot settings migration is applied and the service role key is valid.'),
+                ],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+        }
+    },
+};

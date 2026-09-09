@@ -1,8 +1,8 @@
 # Dependencies
 node_modules/
 
-# Build output
-dist/
+# Build output (dist committed for zero-build Pterodactyl container deployment)
+# dist/
 
 # Environment files
 .env

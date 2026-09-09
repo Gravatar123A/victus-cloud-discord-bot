@@ -1,0 +1,2344 @@
+import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
+import { config } from '../config.js';
+import { logger } from '../utils/logger.js';
+import { localSettings } from './localSettings.js';
+const DEFAULT_DM_PREFERENCES = {
+    dm_maintenance: true,
+    dm_billing: true,
+    dm_security: true,
+    dm_promotions: true,
+};
+function isCertError(error) {
+    const msg = String(error?.message || error || '');
+    return msg.includes('unable to verify the first certificate') || msg.includes('certificate') || msg.includes('CERT_') || msg.includes('self signed');
+}
+function normalizeBaseUrl(url) {
+    return url.replace(/\/$/, '');
+}
+function getResourceRecord(resource) {
+    return {
+        ...(resource || {}),
+        ...(resource?.attributes || {}),
+    };
+}
+function asArray(value) {
+    if (Array.isArray(value))
+        return value;
+    if (value && typeof value === 'object')
+        return [value];
+    return [];
+}
+function toNumber(value) {
+    if (typeof value === 'number' && Number.isFinite(value))
+        return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value.replace(/[^0-9.-]+/g, ''));
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+function pickAmount(resource) {
+    const record = getResourceRecord(resource);
+    for (const key of ['amount', 'balance', 'credits', 'credit', 'value', 'total', 'available']) {
+        const amount = toNumber(record[key]);
+        if (amount !== null)
+            return amount;
+    }
+    return null;
+}
+function pickCurrency(resource) {
+    const record = getResourceRecord(resource);
+    const currency = record.currency;
+    if (typeof currency === 'string' && currency.trim())
+        return currency.toUpperCase();
+    if (currency && typeof currency === 'object') {
+        const currencyRecord = getResourceRecord(currency);
+        for (const key of ['code', 'name', 'currency']) {
+            const value = currencyRecord[key];
+            if (typeof value === 'string' && value.trim())
+                return value.toUpperCase();
+        }
+    }
+    for (const key of ['currency_code', 'code']) {
+        const value = record[key];
+        if (typeof value === 'string' && value.trim())
+            return value.toUpperCase();
+    }
+    return 'USD';
+}
+async function describeFunctionError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const context = error?.context
+        || error?.response;
+    if (context && typeof context.clone === 'function') {
+        const response = context;
+        const responseText = await response.clone().text().catch(() => '');
+        const parts = [`${message} (status ${response.status})`];
+        if (responseText.trim()) {
+            try {
+                parts.push(JSON.stringify(JSON.parse(responseText)));
+            }
+            catch {
+                parts.push(responseText.slice(0, 500));
+            }
+        }
+        return parts.join(': ');
+    }
+    const status = context?.status;
+    return status ? `${message} (status ${status})` : message;
+}
+class SupabaseService {
+    paymenterSyncLocks = new Map();
+    paymenterReconciliationRunning = false;
+    client;
+    constructor() {
+        // Create client with service role key and auth bypass
+        this.client = createClient(config.supabase.url, config.supabase.serviceKey, {
+            auth: {
+                autoRefreshToken: false,
+                persistSession: false,
+            },
+            db: {
+                schema: 'public',
+            },
+            realtime: {
+                params: {
+                    eventsPerSecond: 10,
+                },
+                transport: ws,
+            },
+        });
+    }
+    /**
+     * Subscribe to real-time changes on linked accounts
+     */
+    subscribeToLinks(callback) {
+        logger.debug('🔌 Initializing Realtime connection to discord_linked_accounts...');
+        const channel = this.client
+            .channel('any-channel-name') // Channel name can be anything
+            .on('postgres_changes', {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'discord_linked_accounts',
+        }, (payload) => {
+            logger.info('🚀 Realtime: Received INSERT event');
+            callback(payload);
+        });
+        channel.subscribe((status, error) => {
+            if (status === 'SUBSCRIBED') {
+                logger.info('✅ Realtime: Successfully subscribed to database changes!');
+            }
+            else if (status === 'CHANNEL_ERROR') {
+                logger.error('❌ Realtime Channel Error:', error?.message || 'Unknown error');
+            }
+            else if (status === 'TIMED_OUT') {
+                logger.warn('⚠️ Realtime: Connection timed out. Ensure "supabase_realtime" publication includes "discord_linked_accounts".');
+            }
+            else {
+                logger.debug(`📡 Realtime Status Update: ${status}`);
+            }
+        });
+        return channel;
+    }
+    /**
+     * Subscribe to ticket + ticket_message inserts to drive the Discord bridge:
+     * new website tickets -> Discord channels, and website messages -> Discord.
+     */
+    subscribeToTicketBridge(onTicketInsert, onMessageInsert) {
+        const channel = this.client
+            .channel('ticket-bridge')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tickets' }, (payload) => onTicketInsert(payload.new))
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'ticket_messages' }, (payload) => onMessageInsert(payload.new));
+        channel.subscribe((status, error) => {
+            if (status === 'SUBSCRIBED') {
+                logger.info('✅ Realtime: Ticket bridge subscribed.');
+            }
+            else if (status === 'CHANNEL_ERROR') {
+                logger.error('❌ Realtime ticket bridge error:', error?.message || 'Unknown error');
+            }
+            else if (status === 'TIMED_OUT') {
+                logger.warn('⚠️ Ticket bridge timed out. Ensure "supabase_realtime" includes "tickets" and "ticket_messages".');
+            }
+        });
+        return channel;
+    }
+    /**
+     * Point a website ticket at its freshly created Discord channel.
+     */
+    async setTicketChannel(ticketId, channelId) {
+        const { error } = await this.client
+            .from('tickets')
+            .update({ channel_id: channelId, updated_at: new Date().toISOString() })
+            .eq('id', ticketId);
+        if (error) {
+            logger.error('Failed to set ticket channel:', error);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Atomically claim a website message for relaying to Discord. Returns true
+     * only for the caller that wins the race (bridged_at was null), so the
+     * realtime relay and the catch-up never double-post.
+     */
+    async claimMessageForBridge(messageId) {
+        const { data, error } = await this.client
+            .from('ticket_messages')
+            .update({ bridged_at: new Date().toISOString() })
+            .eq('id', messageId)
+            .is('bridged_at', null)
+            .select('id');
+        if (error) {
+            logger.error('Failed to claim message for bridge:', error);
+            return false;
+        }
+        return Array.isArray(data) && data.length > 0;
+    }
+    /**
+     * Website messages on a ticket that have not yet been relayed to Discord.
+     */
+    async getUnbridgedMessages(ticketId) {
+        const { data, error } = await this.client
+            .from('ticket_messages')
+            .select('*')
+            .eq('ticket_id', ticketId)
+            .is('bridged_at', null)
+            .order('created_at', { ascending: true });
+        if (error) {
+            logger.error('Failed to load unbridged messages:', error);
+            return [];
+        }
+        return data || [];
+    }
+    // ============================================
+    // Account Linking
+    // ============================================
+    /**
+     * Get linked account by Discord ID
+     */
+    async getLinkedAccount(discordId) {
+        try {
+            const { data, error } = await this.client
+                .from('discord_linked_accounts')
+                .select('*')
+                .eq('discord_id', discordId)
+                .single();
+            if (error && error.code !== 'PGRST116') {
+                if (isCertError(error)) {
+                    logger.warn('Supabase TLS cert error on getLinkedAccount - check ca-certificates. Returning null to avoid Command Error.');
+                }
+                else {
+                    logger.error('Failed to get linked account:', error);
+                }
+            }
+            return data;
+        }
+        catch (err) {
+            if (isCertError(err)) {
+                logger.warn('Supabase getLinkedAccount cert failure - returning null (secure fallback).');
+                return null;
+            }
+            logger.error('Failed to get linked account (exception):', err);
+            return null;
+        }
+    }
+    /**
+     * Get linked account by Victus Cloud user ID
+     */
+    async getLinkedAccountByUserId(userId) {
+        const { data, error } = await this.client
+            .from('discord_linked_accounts')
+            .select('*')
+            .eq('user_id', userId)
+            .single();
+        if (error && error.code !== 'PGRST116') {
+            logger.error('Failed to get linked account by user ID:', error);
+        }
+        return data;
+    }
+    /**
+     * Create a link token for account verification
+     */
+    async createLinkToken(discordId, discordUsername, token, expiresAt) {
+        // First, invalidate any existing tokens for this Discord ID
+        await this.client
+            .from('discord_link_tokens')
+            .delete()
+            .eq('discord_id', discordId);
+        const { data, error } = await this.client
+            .from('discord_link_tokens')
+            .insert({
+            discord_id: discordId,
+            discord_username: discordUsername,
+            token,
+            expires_at: expiresAt.toISOString(),
+        })
+            .select()
+            .single();
+        if (error) {
+            logger.error('Failed to create link token:', error);
+            return null;
+        }
+        return data;
+    }
+    /**
+     * Verify and consume a link token
+     */
+    async verifyLinkToken(token, userId) {
+        // Get the token
+        const { data: tokenData, error: tokenError } = await this.client
+            .from('discord_link_tokens')
+            .select('*')
+            .eq('token', token)
+            .eq('used', false)
+            .single();
+        if (tokenError || !tokenData) {
+            logger.warn('Invalid or used link token');
+            return false;
+        }
+        // Check if expired
+        if (new Date(tokenData.expires_at) < new Date()) {
+            logger.warn('Link token expired');
+            return false;
+        }
+        // Create the link
+        const { error: linkError } = await this.client
+            .from('discord_linked_accounts')
+            .insert({
+            user_id: userId,
+            discord_id: tokenData.discord_id,
+            discord_username: tokenData.discord_username,
+        });
+        if (linkError) {
+            logger.error('Failed to create account link:', linkError);
+            return false;
+        }
+        // Mark token as used
+        await this.client
+            .from('discord_link_tokens')
+            .update({ used: true })
+            .eq('id', tokenData.id);
+        logger.info(`Account linked: Discord ${tokenData.discord_id} -> User ${userId}`);
+        return true;
+    }
+    /**
+     * Unlink a Discord account
+     */
+    async unlinkAccount(discordId) {
+        const { error } = await this.client
+            .from('discord_linked_accounts')
+            .delete()
+            .eq('discord_id', discordId);
+        if (error) {
+            logger.error('Failed to unlink account:', error);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Get all linked accounts (for startup role sync)
+     */
+    async getAllLinkedAccounts() {
+        const { data, error } = await this.client
+            .from('discord_linked_accounts')
+            .select('discord_id, user_id');
+        if (error) {
+            logger.error('Failed to get all linked accounts:', error);
+            return [];
+        }
+        return data || [];
+    }
+    // ============================================
+    // Bot Settings
+    // ============================================
+    /**
+     * Get bot settings for a guild
+     */
+    async getBotSettings(guildId) {
+        const { data, error } = await this.client
+            .from('bot_settings')
+            .select('*')
+            .eq('guild_id', guildId)
+            .single();
+        if (error && error.code !== 'PGRST116') {
+            logger.error(`Failed to get bot settings for ${guildId}:`, error);
+        }
+        const fallbackAiChannelId = await localSettings.getAiChannelId(guildId);
+        if (!fallbackAiChannelId)
+            return data;
+        return {
+            ...(data || { guild_id: guildId }),
+            ai_channel_id: data?.ai_channel_id || fallbackAiChannelId,
+        };
+    }
+    /**
+     * Update bot settings
+     */
+    async updateBotSettings(guildId, settings) {
+        const { error } = await this.client
+            .from('bot_settings')
+            .upsert({
+            guild_id: guildId,
+            ...settings,
+            updated_at: new Date().toISOString()
+        });
+        if (error) {
+            const missingAiColumn = 'ai_channel_id' in settings && (error.code === '42703' ||
+                error.code === 'PGRST204' ||
+                String(error.message || '').includes('ai_channel_id'));
+            if (missingAiColumn) {
+                logger.warn('bot_settings.ai_channel_id is missing in Supabase; using local file fallback. Apply the migration when possible.');
+                return localSettings.setAiChannelId(guildId, settings.ai_channel_id ?? null);
+            }
+            logger.error(`Failed to update bot settings for ${guildId}:`, error);
+            return false;
+        }
+        if ('ai_channel_id' in settings) {
+            await localSettings.setAiChannelId(guildId, settings.ai_channel_id ?? null);
+        }
+        return true;
+    }
+    // ============================================
+    // User Profile
+    // ============================================
+    /**
+     * Get user profile by user ID
+     */
+    async getUserProfile(userId) {
+        const { data, error } = await this.client
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .single();
+        if (error) {
+            logger.error('Failed to get user profile:', error);
+            return null;
+        }
+        return data;
+    }
+    async getUserProfiles(userIds) {
+        const ids = [...new Set(userIds.filter(Boolean))];
+        if (ids.length === 0)
+            return [];
+        const profiles = [];
+        for (let offset = 0; offset < ids.length; offset += 200) {
+            const { data, error } = await this.client
+                .from('profiles')
+                .select('*')
+                .in('id', ids.slice(offset, offset + 200));
+            if (error) {
+                logger.error('Failed to get user profiles for entitlement role sync:', error);
+                throw error;
+            }
+            profiles.push(...(data || []));
+        }
+        return profiles;
+    }
+    // ── VCCRS / CP economy ────────────────────────────────────────────────
+    /** Top profiles by CP (for the leaderboard). */
+    async getCpLeaderboard(limit = 10, offset = 0) {
+        const { data, error } = await this.client
+            .from('profiles')
+            .select('*')
+            .order('total_cp', { ascending: false, nullsFirst: false })
+            .range(offset, offset + limit - 1);
+        if (error) {
+            logger.error('getCpLeaderboard failed:', error);
+            return [];
+        }
+        return data || [];
+    }
+    /** The user's 1-based CP rank (how many profiles have more CP, +1). */
+    async getCpRank(userId) {
+        const profile = await this.getUserProfile(userId);
+        if (!profile)
+            return null;
+        const myCp = Number(profile.total_cp ?? 0);
+        const { count, error } = await this.client
+            .from('profiles')
+            .select('id', { count: 'exact', head: true })
+            .gt('total_cp', myCp);
+        if (error) {
+            logger.error('getCpRank failed:', error);
+            return null;
+        }
+        return (count ?? 0) + 1;
+    }
+    /** Recent CP ledger entries for a user. */
+    async getCpTransactions(userId, limit = 6, offset = 0) {
+        const { data, error } = await this.client
+            .from('cp_transactions')
+            .select('action_type, cp_earned, created_at')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+        if (error) {
+            logger.error('getCpTransactions failed:', error);
+            return [];
+        }
+        return data || [];
+    }
+    /**
+     * Award XP to a linked user, mirroring how the website grants upload XP:
+     * bump profiles.total_xp via the increment_xp RPC and write a row to the XP
+     * ledger (cp_transactions). action_type drives the friendly label shown in
+     * the wallet's "Recent Activity (XP)" panel. Returns true on success.
+     */
+    async grantXp(userId, amount, actionType, metadata = {}) {
+        if (!userId || !Number.isFinite(amount) || amount <= 0)
+            return false;
+        const { error: rpcError } = await this.client.rpc('award_xp', {
+            p_user_id: userId,
+            p_amount: Math.floor(amount),
+            p_source: actionType,
+        });
+        if (rpcError) {
+            logger.error('grantXp increment_xp failed:', rpcError);
+            return false;
+        }
+        const { error: ledgerError } = await this.client
+            .from('cp_transactions')
+            .insert({ user_id: userId, action_type: actionType, cp_earned: Math.floor(amount), metadata });
+        if (ledgerError) {
+            // XP already credited; ledger row is cosmetic, so don't fail hard.
+            logger.warn(`grantXp ledger insert failed: ${ledgerError.message}`);
+        }
+        return true;
+    }
+    async claimLevelUpEvent() {
+        const { data, error } = await this.client.rpc('claim_level_up_event');
+        if (error)
+            throw new Error(`claim_level_up_event failed: ${error.message}`);
+        return Array.isArray(data) ? (data[0] ?? null) : data;
+    }
+    async applyLevelXpReward(eventId, amount) {
+        const { data, error } = await this.client.rpc('apply_level_xp_reward', {
+            p_event_id: eventId,
+            p_amount: Math.floor(amount),
+        });
+        if (error)
+            throw new Error(`apply_level_xp_reward failed: ${error.message}`);
+        return data;
+    }
+    async updateLevelUpEvent(eventId, fields) {
+        const { error } = await this.client
+            .from('level_up_events')
+            .update({ ...fields, updated_at: new Date().toISOString() })
+            .eq('id', eventId);
+        if (error)
+            throw new Error(`level_up_events update failed: ${error.message}`);
+    }
+    /** Total CP ledger entries for a user (for pagination). */
+    async getCpTransactionCount(userId) {
+        const { count, error } = await this.client
+            .from('cp_transactions')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', userId);
+        if (error)
+            return 0;
+        return count ?? 0;
+    }
+    // ── Economy money-movement RPCs (all atomic, server-side) ─────────────
+    async econRpc(fn, params) {
+        const { data, error } = await this.client.rpc(fn, params);
+        if (error) {
+            logger.error(`${fn} failed:`, error);
+            return { ok: false, error: error.message || 'Database error' };
+        }
+        return data;
+    }
+    econTransferCp(fromUserId, toUserId, amount, reason) {
+        return this.econRpc('econ_transfer_cp', { p_from: fromUserId, p_to: toUserId, p_amount: amount, p_reason: reason ?? null });
+    }
+    econBank(userId, op, amount) {
+        return this.econRpc('econ_bank', { p_user: userId, p_op: op, p_amount: amount });
+    }
+    econSpendCp(userId, amount, reason, meta) {
+        return Promise.resolve({ ok: false, error: 'Coin-to-credit conversions are disabled.' });
+    }
+    econGrantCp(userId, amount, kind = 'convert_in', reason, meta) {
+        return Promise.resolve({ ok: false, error: 'Credit-to-coin conversions are disabled.' });
+    }
+    econAdminAdjustCp(adminUserId, userId, delta, reason) {
+        return this.econRpc('econ_admin_adjust_cp', { p_admin: adminUserId, p_user: userId, p_delta: delta, p_reason: reason ?? null });
+    }
+    econAdminSetFrozen(adminUserId, userId, frozen) {
+        return this.econRpc('econ_admin_set_frozen', { p_admin: adminUserId, p_user: userId, p_frozen: frozen });
+    }
+    async getEconomyRates() {
+        return [];
+    }
+    async getEconomyLedger(userId, limit = 8, offset = 0) {
+        const { data, error } = await this.client
+            .from('economy_ledger')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+        if (error) {
+            logger.error('getEconomyLedger failed:', error);
+            return [];
+        }
+        return data || [];
+    }
+    /**
+     * Check if user is admin
+     */
+    async isUserAdmin(userIdOrDiscordId) {
+        let userId = userIdOrDiscordId;
+        if (!userIdOrDiscordId.includes('-')) {
+            const linked = await this.getLinkedAccount(userIdOrDiscordId).catch(() => null);
+            if (!linked)
+                return false;
+            userId = linked.user_id;
+        }
+        const profile = await this.getUserProfile(userId);
+        return profile?.is_admin ?? false;
+    }
+    async resolveBillingCreditTarget(target) {
+        const cleaned = target.trim().replace(/^<@!?/, '').replace(/>$/, '');
+        if (cleaned.includes('@')) {
+            return { email: cleaned.toLowerCase(), label: cleaned.toLowerCase() };
+        }
+        const linked = await this.getLinkedAccount(cleaned).catch(() => null);
+        if (linked) {
+            const profile = await this.getUserProfile(linked.user_id).catch(() => null);
+            if (profile?.email) {
+                return { email: profile.email.toLowerCase(), label: `${profile.email} (Discord ${cleaned})` };
+            }
+        }
+        const { data: profile, error } = await this.client
+            .from('profiles')
+            .select('id, email')
+            .eq('id', cleaned)
+            .maybeSingle();
+        if (!error && profile?.email) {
+            return { email: String(profile.email).toLowerCase(), label: String(profile.email).toLowerCase() };
+        }
+        return { user_id: cleaned, label: `Paymenter user #${cleaned}` };
+    }
+    sumCreditRows(rows) {
+        return rows.reduce((acc, c) => {
+            const a = pickAmount(c);
+            const cur = String(pickCurrency(c) || 'USD').toUpperCase();
+            if (a !== null)
+                acc[cur] = (acc[cur] || 0) + a;
+            return acc;
+        }, {});
+    }
+    /**
+     * Live Paymenter balances split by currency: coins (VICTUS_COINS_CURRENCY)
+     * and credits (VICTUS_COINS_PAYMENT_CURRENCY). This is the source of truth
+     * for a user's Coins balance.
+     *
+     * Routes through the admin-paymenter edge function (credits.balance) so the
+     * bot no longer needs the direct Paymenter API creds configured. Falls back
+     * to the direct API only if those creds are present; otherwise returns
+     * { found:false } and callers degrade to profiles.total_cp.
+     */
+    async getPaymenterBalances(email) {
+        if (!email)
+            return { coins: 0, credits: 0, found: false };
+        // The internal COINS route is the authoritative view. The generic admin
+        // API can expose summed/legacy credit rows while the mutation route
+        // operates on the active COINS row, which makes an absolute sync unsafe.
+        const internalCoins = await this.getPaymenterInternalCoins(email);
+        try {
+            const { data, error } = await this.client.functions.invoke('admin-paymenter', {
+                body: { endpoint: 'credits.balance', email },
+            });
+            if (error) {
+                logger.warn(`getPaymenterBalances edge function failed: ${await describeFunctionError(error)}`);
+            }
+            else if (data && data.found) {
+                return {
+                    coins: internalCoins ?? (Number(data.coins) || 0),
+                    credits: Number(data.credits) || 0,
+                    found: true,
+                };
+            }
+            else if (data && data.found === false) {
+                return { coins: internalCoins ?? 0, credits: 0, found: false };
+            }
+        }
+        catch (e) {
+            logger.warn(`getPaymenterBalances edge invoke error: ${e.message}`);
+        }
+        if (internalCoins !== null)
+            return { coins: internalCoins, credits: 0, found: true };
+        // Fall back to the direct Paymenter API only when it is configured.
+        if (config.paymenter.url && config.paymenter.apiKey) {
+            return this.getPaymenterBalancesDirect(email);
+        }
+        return { coins: 0, credits: 0, found: false };
+    }
+    async getPaymenterInternalCoins(email) {
+        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || '').replace(/\/$/, '');
+        const internalToken = this.paymenterInternalToken();
+        if (!email || !paymenterUrl || !internalToken)
+            return null;
+        try {
+            const response = await fetch(`${paymenterUrl}/api/victus/coins?email=${encodeURIComponent(email)}`, {
+                headers: { 'Authorization': `Bearer ${internalToken}`, 'Accept': 'application/json' },
+            });
+            if (!response.ok)
+                return null;
+            const data = await response.json();
+            if (!data?.found)
+                return null;
+            return this.paymenterCoinBalance(data);
+        }
+        catch (error) {
+            logger.debug(`Paymenter internal balance lookup failed for ${email}: ${error.message}`);
+            return null;
+        }
+    }
+    /**
+     * Direct-to-Paymenter balance lookup (fallback path for getPaymenterBalances
+     * when the edge function is unavailable). Requires PAYMENTER_URL + API key.
+     */
+    async getPaymenterBalancesDirect(email) {
+        const coinsCur = (process.env.VICTUS_COINS_CURRENCY || 'COINS').toUpperCase();
+        const creditCur = (process.env.VICTUS_COINS_PAYMENT_CURRENCY || 'USD').toUpperCase();
+        const out = (totals, found) => ({ coins: totals[coinsCur] || 0, credits: totals[creditCur] || 0, found });
+        if (!email)
+            return out({}, false);
+        const enc = encodeURIComponent(email);
+        let userId = null;
+        for (const path of [
+            `/api/v1/admin/users?filter[email]=${enc}&include=credits&per_page=5`,
+            `/api/admin/users?filter[email]=${enc}&include=credits&per_page=5`,
+        ]) {
+            const payload = await this.paymenterDirect(path);
+            const user = asArray(payload?.data ?? payload).find((u) => String(getResourceRecord(u).email || '').toLowerCase() === email.toLowerCase());
+            if (!user)
+                continue;
+            userId = getResourceRecord(user).id ?? user.id;
+            const inc = asArray(payload?.included).filter((it) => ['credit', 'credits'].includes(String(it.type || '').toLowerCase()));
+            const totals = this.sumCreditRows(inc);
+            if (Object.keys(totals).length)
+                return out(totals, true);
+            break;
+        }
+        if (!userId)
+            return out({}, false);
+        for (const path of [
+            `/api/v1/admin/credits?filter[user_id]=${encodeURIComponent(String(userId))}&per_page=100`,
+            `/api/admin/credits?filter[user_id]=${encodeURIComponent(String(userId))}&per_page=100`,
+        ]) {
+            const payload = await this.paymenterDirect(path);
+            const totals = this.sumCreditRows(asArray(payload?.data ?? payload));
+            if (Object.keys(totals).length)
+                return out(totals, true);
+        }
+        return out({}, true);
+    }
+    /**
+     * Mirror a user's economy wallet to Paymenter using the supported internal
+     * grant/spend routes. Paymenter deliberately rejects unreferenced COINS
+     * increases through the generic admin credit endpoint.
+     */
+    async setPaymenterCoins(target, amount) {
+        const profile = !target.email && target.user_id ? await this.getUserProfile(target.user_id).catch(() => null) : null;
+        const email = String(target.email || profile?.email || '').trim().toLowerCase();
+        if (!email) {
+            logger.warn('setPaymenterCoins skipped: target has no email');
+            return false;
+        }
+        const previous = this.paymenterSyncLocks.get(email) || Promise.resolve(true);
+        const next = previous.catch(() => false).then(() => this.setPaymenterCoinsNow(email, amount));
+        this.paymenterSyncLocks.set(email, next);
+        try {
+            return await next;
+        }
+        finally {
+            if (this.paymenterSyncLocks.get(email) === next)
+                this.paymenterSyncLocks.delete(email);
+        }
+    }
+    async setPaymenterCoinsNow(email, amount) {
+        const desired = Math.max(0, Math.round(amount));
+        const internalCurrent = await this.getPaymenterInternalCoins(email);
+        const live = internalCurrent === null ? await this.getPaymenterBalances(email) : null;
+        const current = Math.max(0, Math.round(internalCurrent ?? (live?.found ? live.coins : 0)));
+        if (current === desired)
+            return true;
+        if (internalCurrent === null && live && !live.found) {
+            logger.debug(`setPaymenterCoins skipped for ${email}: no Paymenter account`);
+            return false;
+        }
+        let after = current;
+        let part = 0;
+        try {
+            while (after !== desired) {
+                const delta = desired - after;
+                const step = Math.sign(delta) * Math.min(1000, Math.abs(delta));
+                after = await this.mutatePaymenterCoins(email, step, 'admin_adjust', `economy_sync:${email}:${current}:${desired}:part-${part}`, `Economy wallet synchronization (${current} → ${desired} COINS)`);
+                part++;
+                if (part > 10000)
+                    throw new Error('Paymenter synchronization exceeded the safety limit');
+            }
+        }
+        catch (error) {
+            logger.warn(`setPaymenterCoins failed for ${email}: ${error.message}`);
+            after = null;
+        }
+        if (after === desired)
+            return true;
+        const verifiedInternal = await this.getPaymenterInternalCoins(email);
+        const verified = verifiedInternal === null
+            ? await this.getPaymenterBalances(email).catch(() => ({ coins: 0, credits: 0, found: false }))
+            : null;
+        const verifiedCoins = verifiedInternal ?? verified?.coins ?? 0;
+        if ((verifiedInternal !== null || verified?.found) && Math.round(verifiedCoins) === desired)
+            return true;
+        logger.warn(`setPaymenterCoins verification failed for ${email}: expected ${desired}, got ${after ?? verifiedCoins}`);
+        return false;
+    }
+    paymenterInternalToken() {
+        return process.env.VICTUS_INTERNAL_API_TOKEN
+            || process.env.PAYMENTER_INTERNAL_API_TOKEN
+            || process.env.PTERODACTYL_INTERNAL_API_TOKEN
+            || '';
+    }
+    paymenterCoinBalance(data) {
+        for (const value of [data?.coins, data?.balance, data?.attributes?.balance]) {
+            const parsed = Number(value);
+            if (Number.isFinite(parsed))
+                return Math.round(parsed);
+        }
+        return null;
+    }
+    async mutatePaymenterCoins(email, delta, source, reference, description) {
+        if (!delta) {
+            const balance = await this.getPaymenterBalances(email);
+            return Math.round(balance.coins);
+        }
+        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
+        const internalToken = this.paymenterInternalToken();
+        if (!paymenterUrl || !internalToken) {
+            throw new Error('Paymenter internal coin API is not configured');
+        }
+        const endpoint = delta > 0 ? 'grant' : 'spend';
+        let lastError = 'Paymenter coin mutation failed';
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                const response = await fetch(`${paymenterUrl}/api/victus/coins/${endpoint}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${internalToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email,
+                        amount: Math.abs(Math.round(delta)),
+                        source,
+                        reference: reference.slice(0, 191),
+                        description,
+                    }),
+                });
+                const text = await response.text();
+                let data = {};
+                try {
+                    data = text ? JSON.parse(text) : {};
+                }
+                catch {
+                    data = { raw: text };
+                }
+                if (response.ok) {
+                    const balance = this.paymenterCoinBalance(data);
+                    if (balance !== null)
+                        return balance;
+                    throw new Error('Paymenter returned no COINS balance');
+                }
+                lastError = String(data?.error || data?.message || text || `HTTP ${response.status}`).slice(0, 300);
+                if (response.status < 500 && response.status !== 429)
+                    break;
+            }
+            catch (error) {
+                lastError = error.message;
+            }
+            await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+        }
+        throw new Error(lastError);
+    }
+    async mirrorProfileCoinsFromPaymenter(userId, balance, context) {
+        await this.setProfileCoins(userId, balance);
+        logger.info(`Mirrored ${balance} COINS to economy wallet for ${userId} (${context})`);
+    }
+    /** Directly set the Supabase coins mirror (profiles.total_cp). */
+    async setProfileCoins(userId, amount) {
+        const { error } = await this.client.from('profiles').update({ total_cp: Math.max(0, Math.round(amount)) }).eq('id', userId);
+        if (error)
+            logger.warn(`setProfileCoins failed: ${error.message}`);
+    }
+    /** Pull all profile wallets into Paymenter in a rate-limited repair pass. */
+    async reconcilePaymenterCoins(reason = 'periodic') {
+        if (this.paymenterReconciliationRunning)
+            return { total: 0, synced: 0, failed: 0 };
+        this.paymenterReconciliationRunning = true;
+        try {
+            const profiles = [];
+            for (let offset = 0;; offset += 200) {
+                const { data, error } = await this.client
+                    .from('profiles')
+                    .select('id,email,total_cp')
+                    .not('email', 'is', null)
+                    .range(offset, offset + 199);
+                if (error) {
+                    logger.error(`Paymenter reconciliation query failed (${reason}):`, error);
+                    return { total: profiles.length, synced: 0, failed: profiles.length };
+                }
+                const page = (data || []);
+                profiles.push(...page.filter((profile) => profile.email));
+                if (page.length < 200)
+                    break;
+            }
+            let synced = 0;
+            let failed = 0;
+            for (let offset = 0; offset < profiles.length; offset += 3) {
+                const batch = profiles.slice(offset, offset + 3);
+                const results = await Promise.all(batch.map((profile) => this.setPaymenterCoins({ email: profile.email }, Number(profile.total_cp ?? 0))));
+                synced += results.filter(Boolean).length;
+                failed += results.filter((result) => !result).length;
+                await new Promise((resolve) => setTimeout(resolve, 150));
+            }
+            logger.info(`Paymenter reconciliation (${reason}): ${synced}/${profiles.length} wallets synchronized${failed ? `, ${failed} failed` : ''}`);
+            return { total: profiles.length, synced, failed };
+        }
+        finally {
+            this.paymenterReconciliationRunning = false;
+        }
+    }
+    async adjustPaymenterCredits(input) {
+        if ((process.env.PAYMENTER_AUDIT_MODE === 'true' || process.env.PAYMENTER_BALANCE_FREEZE === 'true') && (input.mode === 'add' || input.mode === 'set')) {
+            throw new Error('Paymenter balance increases are temporarily disabled while balances are audited');
+        }
+        const { data, error } = await this.client.functions.invoke('admin-paymenter', {
+            body: {
+                endpoint: 'credits.adjust',
+                ...input,
+            },
+        });
+        if (error) {
+            const message = await describeFunctionError(error);
+            logger.error(`Paymenter credit adjustment failed: ${message}`);
+            throw new Error(message);
+        }
+        return data;
+    }
+    // ============================================
+    // Discord Invite Coins (escrow ledger)
+    // ============================================
+    /** Grant invite COINS and mirror the resulting absolute balance to Supabase. */
+    async grantInviteCoins(inviterUserId, amount, reference) {
+        if (!inviterUserId || !Number.isFinite(amount) || amount <= 0)
+            return false;
+        const profile = await this.getUserProfile(inviterUserId);
+        if (!profile?.email) {
+            logger.warn(`grantInviteCoins: no profile/email for user ${inviterUserId}; leaving credit pending`);
+            return false;
+        }
+        const email = String(profile.email).toLowerCase();
+        const amt = Math.round(amount);
+        const ref = reference || `invite:${inviterUserId}:${Date.now()}`;
+        try {
+            const balance = await this.mutatePaymenterCoins(email, amt, 'discord_invite', String(ref), 'Discord invite reward');
+            await this.mirrorProfileCoinsFromPaymenter(inviterUserId, balance, 'discord invite');
+            logger.info(`grantInviteCoins: +${amt} COINS to ${email} (user ${inviterUserId}) via victus grant`);
+            return true;
+        }
+        catch (e) {
+            logger.error(`grantInviteCoins failed for ${inviterUserId}: ${e.message}`);
+            return false;
+        }
+    }
+    /**
+     * Grant resource share reward COINS to a user via Paymenter API or legacy adjust fallback.
+     */
+    async grantResourceShareCoins(userIdOrDiscordId, amount = 40, reference) {
+        if (!userIdOrDiscordId || !Number.isFinite(amount) || amount <= 0)
+            return false;
+        let profile = await this.getUserProfile(userIdOrDiscordId).catch(() => null);
+        let victusUserId = userIdOrDiscordId;
+        if (!profile) {
+            const linked = await this.getLinkedAccount(userIdOrDiscordId).catch(() => null);
+            if (linked?.user_id) {
+                victusUserId = linked.user_id;
+                profile = await this.getUserProfile(linked.user_id).catch(() => null);
+            }
+        }
+        if (!profile?.email) {
+            logger.warn(`grantResourceShareCoins: no profile/email for user ${userIdOrDiscordId}`);
+            return false;
+        }
+        const email = String(profile.email).toLowerCase();
+        const amt = Math.round(amount);
+        const ref = reference || `resource_share:${userIdOrDiscordId}:${Date.now()}`;
+        if (profile?.id) {
+            victusUserId = profile.id;
+        }
+        try {
+            const balance = await this.mutatePaymenterCoins(email, amt, 'admin_adjust', String(ref), `Resource share approval reward (${amt} COINS)`);
+            await this.mirrorProfileCoinsFromPaymenter(victusUserId, balance, 'resource share');
+            logger.info(`grantResourceShareCoins: +${amt} COINS to ${email} (user ${userIdOrDiscordId})`);
+            return true;
+        }
+        catch (e) {
+            logger.error(`grantResourceShareCoins failed for ${userIdOrDiscordId}: ${e.message}`);
+            return false;
+        }
+    }
+    /**
+     * Grant resource like reward COINS (20 coins) to the resource author via Paymenter API.
+     * Mirrors the resulting balance to Supabase.
+     */
+    async grantResourceLikeCoins(userIdOrDiscordId, amount = 20, reference) {
+        if (!userIdOrDiscordId || !Number.isFinite(amount) || amount <= 0) {
+            return { success: false, error: 'invalid_params' };
+        }
+        let profile = await this.getUserProfile(userIdOrDiscordId).catch(() => null);
+        let victusUserId = userIdOrDiscordId;
+        if (!profile) {
+            const linked = await this.getLinkedAccount(userIdOrDiscordId).catch(() => null);
+            if (linked?.user_id) {
+                victusUserId = linked.user_id;
+                profile = await this.getUserProfile(linked.user_id).catch(() => null);
+            }
+        }
+        if (!profile?.email) {
+            logger.warn(`grantResourceLikeCoins: no profile/email for user ${userIdOrDiscordId}`);
+            return { success: false, error: 'not_linked' };
+        }
+        const email = String(profile.email).toLowerCase();
+        const amt = Math.round(amount);
+        const ref = reference || `resource_like:${userIdOrDiscordId}:${Date.now()}`;
+        try {
+            const balance = await this.mutatePaymenterCoins(email, amt, 'admin_adjust', String(ref), `Resource Like reward (+${amt} COINS)`);
+            await this.mirrorProfileCoinsFromPaymenter(victusUserId, balance, 'resource like');
+            logger.info(`grantResourceLikeCoins: +${amt} COINS to ${email} (user ${userIdOrDiscordId})`);
+            return { success: true, email };
+        }
+        catch (e) {
+            logger.error(`grantResourceLikeCoins failed for ${userIdOrDiscordId}: ${e.message}`);
+            return { success: false, email, error: e.message };
+        }
+    }
+    /** Grant a level-up reward and mirror Paymenter's resulting balance to Supabase. */
+    async grantLevelCoins(userId, level, eventId, amount) {
+        if (!userId || !Number.isFinite(amount) || amount <= 0)
+            return false;
+        const profile = await this.getUserProfile(userId);
+        if (!profile?.email) {
+            logger.warn(`grantLevelCoins: no profile/email for user ${userId}`);
+            return false;
+        }
+        const email = String(profile.email).toLowerCase();
+        const amt = Math.round(amount);
+        const ref = `level_up:${eventId || level}:${userId}`;
+        try {
+            const balance = await this.mutatePaymenterCoins(email, amt, 'discord_level', ref, `Level ${level} reward`);
+            await this.mirrorProfileCoinsFromPaymenter(userId, balance, `level ${level}`);
+            logger.info(`grantLevelCoins: +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
+            return true;
+        }
+        catch (e) {
+            logger.error(`grantLevelCoins failed for ${userId}: ${e.message}`);
+            return false;
+        }
+    }
+    // ============================================
+    // Discord Link 100 COINS reward (join + /link, revoke on leave)
+    // ============================================
+    /**
+     * Grant 100 COINS for linking Discord via /link. Idempotent: only grants once
+     * per discord_linked_accounts row (coins_granted flag). Uses the canonical
+     * victus/coins/grant rail so the credit is Paymenter-authoritative and appears
+     * in the panel's Coin History as source=discord_link.
+     */
+    async grantDiscordLinkCoins(linked) {
+        if (!config.economy.discordLink.enabled)
+            return false;
+        const amount = Math.round(config.economy.discordLink.amount);
+        if (!linked.user_id || !linked.discord_id || amount <= 0)
+            return false;
+        // Idempotency: skip if already granted (tracked in discord_linked_accounts).
+        // Use select('*') so the query doesn't fail if the migration hasn't been applied yet;
+        // we then check the fields via optional chaining.
+        const { data: row, error: rowErr } = await this.client
+            .from('discord_linked_accounts')
+            .select('*')
+            .eq('user_id', linked.user_id)
+            .eq('discord_id', linked.discord_id)
+            .maybeSingle();
+        if (rowErr) {
+            logger.warn(`grantDiscordLinkCoins: failed to read reward flag for ${linked.discord_id}: ${rowErr.message}`);
+        }
+        else if (row?.coins_granted) {
+            logger.debug(`grantDiscordLinkCoins: already granted for ${linked.discord_id}, skipping`);
+            return true;
+        }
+        if (row?.coins_revoked) {
+            logger.info(`grantDiscordLinkCoins: ${linked.discord_id} previously revoked (left server), not re-granting until re-link`);
+            return false;
+        }
+        const profile = await this.getUserProfile(linked.user_id);
+        if (!profile?.email) {
+            logger.warn(`grantDiscordLinkCoins: no profile/email for user ${linked.user_id}`);
+            return false;
+        }
+        const email = String(profile.email).toLowerCase();
+        const reference = `discord_link:${linked.discord_id}`;
+        try {
+            const balance = await this.mutatePaymenterCoins(email, amount, 'discord_invite', reference, 'Linked Discord account via /link');
+            await this.mirrorProfileCoinsFromPaymenter(linked.user_id, balance, 'Discord link reward');
+            await this.client.from('discord_linked_accounts').update({
+                coins_granted: true,
+                coins_granted_at: new Date().toISOString(),
+                coins_amount: amount,
+                coins_revoked: false,
+                coins_revoked_at: null,
+                coins_last_error: null,
+            }).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id);
+            logger.info(`grantDiscordLinkCoins: +${amount} COINS to ${email} (discord ${linked.discord_id})`);
+            return true;
+        }
+        catch (e) {
+            await this.client.from('discord_linked_accounts').update({ coins_last_error: String(e.message).slice(0, 500) }).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => { }, () => { });
+            logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${e.message}`);
+            return false;
+        }
+    }
+    /**
+     * Revoke 100 COINS when a linked user leaves the Discord guild.
+     * Only revokes once; uses spend via Paymenter (mode=remove). The panel records
+     * a negative credit_transactions row (source=discord_link_revoke).
+     */
+    async revokeDiscordLinkCoins(discordId) {
+        if (!config.economy.discordLink.enabled)
+            return false;
+        const amount = Math.round(config.economy.discordLink.amount);
+        const { data: row, error } = await this.client
+            .from('discord_linked_accounts')
+            .select('*')
+            .eq('discord_id', discordId)
+            .maybeSingle();
+        if (error || !row) {
+            logger.debug(`revokeDiscordLinkCoins: no linked row for ${discordId}, skipping`);
+            return false;
+        }
+        if (!row.coins_granted || row.coins_revoked) {
+            logger.debug(`revokeDiscordLinkCoins: ${discordId} not granted or already revoked, skipping`);
+            return false;
+        }
+        const profile = await this.getUserProfile(row.user_id);
+        if (!profile?.email) {
+            logger.warn(`revokeDiscordLinkCoins: no profile/email for ${row.user_id}`);
+            return false;
+        }
+        const email = String(profile.email).toLowerCase();
+        try {
+            const balance = await this.mutatePaymenterCoins(email, -amount, 'discord_invite', `discord_link_revoke:${discordId}`, 'Left Discord server — link reward deducted');
+            await this.mirrorProfileCoinsFromPaymenter(row.user_id, balance, 'Discord link revocation');
+            await this.client.from('discord_linked_accounts').update({ coins_revoked: true, coins_revoked_at: new Date().toISOString() }).eq('discord_id', discordId).then(() => { }, (e) => logger.debug(`revoke mark failed: ${e.message}`));
+            logger.info(`revokeDiscordLinkCoins: -${amount} COINS from ${email} (discord ${discordId} left)`);
+            return true;
+        }
+        catch (e) {
+            logger.error(`revokeDiscordLinkCoins failed for ${discordId}: ${e.message}`);
+            return false;
+        }
+    }
+    /**
+     * Insert a pending (or unattributed) invite credit. UNIQUE(invitee_discord_id)
+     * + ignoreDuplicates makes this idempotent: a re-invite / rejoin is a no-op
+     * and returns null. Returns the created row on a fresh insert.
+     */
+    async createInviteCredit(row) {
+        const { data, error } = await this.client
+            .from('discord_invite_credits')
+            .upsert(row, { onConflict: 'invitee_discord_id', ignoreDuplicates: true })
+            .select()
+            .maybeSingle();
+        if (error) {
+            logger.error('createInviteCredit failed:', error);
+            return null;
+        }
+        return data ?? null;
+    }
+    /** Look up a single invite credit by the invited person's Discord ID. */
+    async getInviteCreditByInvitee(inviteeDiscordId) {
+        const { data, error } = await this.client
+            .from('discord_invite_credits')
+            .select('*')
+            .eq('invitee_discord_id', inviteeDiscordId)
+            .maybeSingle();
+        if (error) {
+            logger.error('getInviteCreditByInvitee failed:', error);
+            return null;
+        }
+        return data ?? null;
+    }
+    /** Patch an invite credit (auto-stamps updated_at). */
+    async updateInviteCredit(id, patch) {
+        const { error } = await this.client
+            .from('discord_invite_credits')
+            .update({ ...patch, updated_at: new Date().toISOString() })
+            .eq('id', id);
+        if (error) {
+            logger.error('updateInviteCredit failed:', error);
+            return false;
+        }
+        return true;
+    }
+    /** Pending credits whose qualify_at has passed — the scheduler's work queue. */
+    async getDueInviteCredits(limit = 50) {
+        const { data, error } = await this.client
+            .from('discord_invite_credits')
+            .select('*')
+            .eq('status', 'pending')
+            .lte('qualify_at', new Date().toISOString())
+            .order('qualify_at', { ascending: true })
+            .limit(limit);
+        if (error) {
+            logger.error('getDueInviteCredits failed:', error);
+            return [];
+        }
+        return data || [];
+    }
+    /** Count an inviter's pending+confirmed credits since `sinceIso` (rate cap). */
+    async countRecentInviterCredits(inviterDiscordId, sinceIso) {
+        const { count, error } = await this.client
+            .from('discord_invite_credits')
+            .select('id', { count: 'exact', head: true })
+            .eq('inviter_discord_id', inviterDiscordId)
+            .in('status', ['pending', 'confirmed'])
+            .gte('joined_at', sinceIso);
+        if (error) {
+            logger.error('countRecentInviterCredits failed:', error);
+            return 0;
+        }
+        return count ?? 0;
+    }
+    /**
+     * Get detailed user activity history (simplified for now)
+     */
+    async getUserHistory(userId) {
+        // This will eventually pull from a separate activity_logs or transactions table
+        // For now, we'll return an empty array if no specific table exists
+        const { data, error } = await this.client
+            .from('audit_logs')
+            .select('*')
+            .or(`admin_id.eq.${userId},target_id.eq.${userId}`)
+            .order('created_at', { ascending: false })
+            .limit(10);
+        if (error) {
+            logger.error('Failed to get user history:', error);
+            return [];
+        }
+        return data || [];
+    }
+    // ============================================
+    // Pterodactyl API Proxy
+    // ============================================
+    /**
+     * Call Pterodactyl API through edge function
+     */
+    async pterodactylApi(endpoint, method = 'GET', body) {
+        let lastError = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            const { data, error } = await this.client.functions.invoke('admin-pterodactyl', {
+                body: { endpoint, method, body },
+            });
+            if (!error)
+                return data;
+            lastError = error;
+            const detail = await describeFunctionError(error);
+            const rateLimited = /\b429\b|too many attempts|rate.?limit/i.test(detail);
+            if (!rateLimited || attempt === 3) {
+                logger.error(`Pterodactyl API call failed (${endpoint}): ${detail}`);
+                throw error;
+            }
+            const delayMs = attempt * 2_000;
+            logger.warn(`Pterodactyl API rate limited (${endpoint}); retrying in ${delayMs / 1000}s`);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+        throw lastError;
+    }
+    /**
+     * Get all servers
+     */
+    async getServers() {
+        try {
+            const result = await this.pterodactylApi('servers');
+            return result?.data || [];
+        }
+        catch (error) {
+            logger.error('Failed to get servers:', error);
+            return [];
+        }
+    }
+    /**
+     * Get servers for a specific user (by email)
+     */
+    async getUserServers(userEmail) {
+        if (!userEmail)
+            return [];
+        const servers = await this.getServers();
+        const users = await this.getPterodactylUsers();
+        const email = userEmail.toLowerCase();
+        const matchedUsers = users.filter((user) => {
+            const record = getResourceRecord(user);
+            return String(record.email || '').toLowerCase() === email;
+        });
+        const userIds = new Set(matchedUsers.map((user) => String(getResourceRecord(user).id ?? user.id)));
+        return servers.filter((server) => {
+            const record = getResourceRecord(server);
+            const serverUser = record.user ?? record.owner_id ?? record.user_id;
+            const serverEmail = String(record.user_email || record.email || record.owner_email || '').toLowerCase();
+            return (serverEmail && serverEmail === email) || userIds.has(String(serverUser));
+        });
+    }
+    /**
+     * Get Pterodactyl users
+     */
+    async getPterodactylUsers() {
+        try {
+            const result = await this.pterodactylApi('users');
+            return result?.data || [];
+        }
+        catch (error) {
+            logger.error('Failed to get Pterodactyl users:', error);
+            return [];
+        }
+    }
+    /**
+     * Get Paymenter credits for a Victus profile by email.
+     */
+    async getCreditBalance(profile) {
+        const profileAmount = toNumber(profile?.paymenter_credits) ??
+            toNumber(profile?.credits) ??
+            toNumber(profile?.credit) ??
+            toNumber(profile?.balance);
+        if (!profile?.email) {
+            return {
+                amount: profileAmount ?? 0,
+                currency: 'USD',
+                found: profileAmount !== null,
+                source: profileAmount !== null ? 'profile' : 'none',
+            };
+        }
+        const paymenterBalance = await this.getPaymenterCreditsByEmail(profile.email);
+        if (paymenterBalance.found)
+            return paymenterBalance;
+        return {
+            amount: profileAmount ?? 0,
+            currency: 'USD',
+            found: profileAmount !== null,
+            source: profileAmount !== null ? 'profile' : 'none',
+        };
+    }
+    async paymenterDirect(path) {
+        if (!config.paymenter.url || !config.paymenter.apiKey)
+            return null;
+        const response = await fetch(`${normalizeBaseUrl(config.paymenter.url)}${path}`, {
+            headers: {
+                Authorization: `Bearer ${config.paymenter.apiKey}`,
+                Accept: 'application/vnd.api+json, application/json',
+                'Content-Type': 'application/json',
+            },
+        });
+        if (!response.ok) {
+            logger.warn(`Paymenter direct request failed ${response.status}: ${path}`);
+            return null;
+        }
+        return response.json();
+    }
+    /**
+     * Billing credit balance (the payment/USD figure) for a Victus email.
+     * Sources from the admin-paymenter edge function via getPaymenterBalances so
+     * /account + the AI no longer depend on direct Paymenter creds being set.
+     */
+    async getPaymenterCreditsByEmail(email) {
+        const creditCur = (process.env.VICTUS_COINS_PAYMENT_CURRENCY || 'USD').toUpperCase();
+        const balances = await this.getPaymenterBalances(email);
+        if (!balances.found) {
+            return { amount: 0, currency: creditCur, found: false, source: 'none' };
+        }
+        return { amount: balances.credits, currency: creditCur, found: true, source: 'paymenter' };
+    }
+    /**
+     * Get nodes
+     */
+    async getNodes() {
+        try {
+            const result = await this.pterodactylApi('nodes');
+            return result?.data || [];
+        }
+        catch (error) {
+            logger.error('Failed to get nodes:', error);
+            return [];
+        }
+    }
+    // ============================================
+    // Paymenter API Proxy
+    // ============================================
+    /**
+     * Call Paymenter API through edge function
+     */
+    async paymenterApi(endpoint, method = 'GET', body) {
+        const { data, error } = await this.client.functions.invoke('admin-paymenter', {
+            body: { endpoint, method, body },
+        });
+        if (error) {
+            logger.error(`Paymenter API call failed (${endpoint}): ${await describeFunctionError(error)}`);
+            throw error;
+        }
+        return data;
+    }
+    /**
+     * Get all orders
+     */
+    async getOrders() {
+        const result = await this.paymenterApi('orders');
+        return result?.data || [];
+    }
+    /**
+     * Get all invoices
+     */
+    async getInvoices() {
+        const result = await this.paymenterApi('invoices');
+        return result?.data || [];
+    }
+    async getPaymenterServices() {
+        const result = await this.paymenterApi('services');
+        return result?.data || [];
+    }
+    /**
+     * Get the billing services (Paymenter) belonging to a user, by email.
+     * Returns a normalized shape: { name, status, price, renewsAt }.
+     */
+    async getUserServices(email) {
+        if (!email)
+            return [];
+        try {
+            const billingUser = await this.getBillingUserByEmail(email);
+            if (!billingUser)
+                return [];
+            const userId = String(getResourceRecord(billingUser).id ?? '');
+            if (!userId)
+                return [];
+            const [servicesRes, productsRes] = await Promise.all([
+                this.paymenterApi('services').catch(() => null),
+                this.paymenterApi('products').catch(() => null),
+            ]);
+            const services = servicesRes?.data || [];
+            const products = productsRes?.data || [];
+            const productName = {};
+            for (const p of products) {
+                const r = getResourceRecord(p);
+                if (r?.id != null)
+                    productName[String(r.id)] = r.name || r.title || `Product #${r.id}`;
+            }
+            return services
+                .map((s) => getResourceRecord(s))
+                .filter((r) => String(r?.user_id ?? r?.client_id ?? '') === userId)
+                .map((r) => ({
+                name: r.name || productName[String(r.product_id)] || `Service #${r.id}`,
+                status: String(r.status ?? 'unknown'),
+                price: r.price != null ? String(r.price) : '',
+                renewsAt: r.expires_at || r.due_date || r.renews_at || undefined,
+            }));
+        }
+        catch (error) {
+            logger.error('Failed to get user services:', error);
+            return [];
+        }
+    }
+    /**
+     * Get billing users
+     */
+    async getBillingUsers() {
+        const result = await this.paymenterApi('users');
+        return result?.data || [];
+    }
+    async getBillingUserByEmail(email) {
+        if (!email)
+            return null;
+        try {
+            const users = await this.getBillingUsers();
+            return users.find((user) => {
+                const record = getResourceRecord(user);
+                return String(record.email || '').toLowerCase() === email.toLowerCase();
+            }) || null;
+        }
+        catch (error) {
+            logger.error('Failed to lookup billing user:', error);
+            return null;
+        }
+    }
+    // ============================================
+    // Audit Logging
+    // ============================================
+    /**
+     * Log an audit event
+     */
+    async logAudit(adminId, adminEmail, action, targetType, targetId, details = {}) {
+        const { error } = await this.client
+            .from('audit_logs')
+            .insert({
+            admin_id: adminId,
+            admin_email: adminEmail,
+            action,
+            target_type: targetType,
+            target_id: targetId,
+            details,
+        });
+        if (error) {
+            logger.error('Failed to log audit event:', error);
+        }
+    }
+    // ============================================
+    // Ticket Categories
+    // ============================================
+    /**
+     * Get all enabled ticket categories for a guild
+     */
+    async getTicketCategories(guildId) {
+        const { data, error } = await this.client
+            .from('ticket_categories')
+            .select('*')
+            .eq('guild_id', guildId)
+            .eq('enabled', true)
+            .order('position', { ascending: true });
+        if (error) {
+            logger.error('Failed to get ticket categories:', error);
+            return [];
+        }
+        return data || [];
+    }
+    /**
+     * Get all ticket categories (including disabled) for admin
+     */
+    async getAllTicketCategories(guildId) {
+        const { data, error } = await this.client
+            .from('ticket_categories')
+            .select('*')
+            .eq('guild_id', guildId)
+            .order('position', { ascending: true });
+        if (error) {
+            logger.error('Failed to get all ticket categories:', error);
+            return [];
+        }
+        return data || [];
+    }
+    /**
+     * Create a ticket category
+     */
+    async createTicketCategory(category) {
+        const { data, error } = await this.client
+            .from('ticket_categories')
+            .insert(category)
+            .select()
+            .single();
+        if (error) {
+            logger.error('Failed to create ticket category:', error);
+            return null;
+        }
+        return data;
+    }
+    /**
+     * Update a ticket category
+     */
+    async updateTicketCategory(id, updates) {
+        const { error } = await this.client
+            .from('ticket_categories')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('id', id);
+        if (error) {
+            logger.error('Failed to update ticket category:', error);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Delete a ticket category
+     */
+    async deleteTicketCategory(id) {
+        const { error } = await this.client
+            .from('ticket_categories')
+            .delete()
+            .eq('id', id);
+        if (error) {
+            logger.error('Failed to delete ticket category:', error);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Get category by ID
+     */
+    async getTicketCategory(id) {
+        const { data, error } = await this.client
+            .from('ticket_categories')
+            .select('*')
+            .eq('id', id)
+            .single();
+        if (error && error.code !== 'PGRST116') {
+            logger.error('Failed to get ticket category:', error);
+        }
+        return data;
+    }
+    // ============================================
+    // Tickets
+    // ============================================
+    /**
+     * Create a new ticket
+     */
+    async createTicket(ticketData) {
+        const { data, error } = await this.client
+            .from('tickets')
+            .insert(ticketData)
+            .select('*, category:ticket_categories(*)')
+            .single();
+        if (error) {
+            logger.error('Failed to create ticket:', error);
+            return null;
+        }
+        return data;
+    }
+    /**
+     * Get ticket by ID
+     */
+    async getTicket(id) {
+        const { data, error } = await this.client
+            .from('tickets')
+            .select('*, category:ticket_categories(*)')
+            .eq('id', id)
+            .single();
+        if (error && error.code !== 'PGRST116') {
+            logger.error('Failed to get ticket:', error);
+        }
+        return data;
+    }
+    /**
+     * Get ticket by channel ID
+     */
+    async getTicketByChannel(channelId) {
+        const { data, error } = await this.client
+            .from('tickets')
+            .select('*, category:ticket_categories(*)')
+            .eq('channel_id', channelId)
+            .single();
+        if (error && error.code !== 'PGRST116') {
+            logger.error('Failed to get ticket by channel:', error);
+        }
+        return data;
+    }
+    /**
+     * Update ticket
+     */
+    async updateTicket(id, updates) {
+        const { error } = await this.client
+            .from('tickets')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('id', id);
+        if (error) {
+            logger.error('Failed to update ticket:', error);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Get open tickets by user
+     */
+    async getOpenTicketsByUser(discordId) {
+        const { data, error } = await this.client
+            .from('tickets')
+            .select('*, category:ticket_categories(*)')
+            .eq('discord_id', discordId)
+            .neq('status', 'closed')
+            .order('created_at', { ascending: false });
+        if (error) {
+            logger.error('Failed to get user tickets:', error);
+            return [];
+        }
+        return data || [];
+    }
+    /**
+     * Get all tickets for a guild (admin)
+     */
+    async getGuildTickets(guildId, status) {
+        let query = this.client
+            .from('tickets')
+            .select('*, category:ticket_categories(*)')
+            .eq('guild_id', guildId)
+            .order('created_at', { ascending: false })
+            .limit(50);
+        if (status) {
+            query = query.eq('status', status);
+        }
+        const { data, error } = await query;
+        if (error) {
+            logger.error('Failed to get guild tickets:', error);
+            return [];
+        }
+        return data || [];
+    }
+    /**
+     * Get next ticket number for a guild
+     */
+    async getNextTicketNumber(guildId) {
+        const { data, error } = await this.client
+            .from('tickets')
+            .select('ticket_number')
+            .eq('guild_id', guildId)
+            .order('ticket_number', { ascending: false })
+            .limit(1)
+            .single();
+        if (error || !data) {
+            return 1;
+        }
+        return (data.ticket_number || 0) + 1;
+    }
+    // ============================================
+    // Ticket Messages
+    // ============================================
+    /**
+     * Log a ticket message
+     */
+    async logTicketMessage(message) {
+        const { error } = await this.client
+            .from('ticket_messages')
+            .insert(message);
+        if (error) {
+            logger.error('Failed to log ticket message:', error);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Get ticket messages (for AI context)
+     */
+    async getTicketMessages(ticketId, limit = 50) {
+        const { data, error } = await this.client
+            .from('ticket_messages')
+            .select('*')
+            .eq('ticket_id', ticketId)
+            .order('created_at', { ascending: true })
+            .limit(limit);
+        if (error) {
+            logger.error('Failed to get ticket messages:', error);
+            return [];
+        }
+        return data || [];
+    }
+    // ============================================
+    // User Preferences
+    // ============================================
+    /**
+     * Get user preferences
+     */
+    async getUserPreferences(discordId) {
+        const { data, error } = await this.client
+            .from('user_preferences')
+            .select('*')
+            .eq('discord_id', discordId)
+            .single();
+        if (error && error.code !== 'PGRST116') {
+            logger.error('Failed to get user preferences:', error);
+        }
+        return data;
+    }
+    /**
+     * Create or update user preferences
+     */
+    async upsertUserPreferences(discordId, userId, prefs) {
+        const existing = await this.getUserPreferences(discordId);
+        const { error } = await this.client
+            .from('user_preferences')
+            .upsert({
+            discord_id: discordId,
+            user_id: userId,
+            ...(existing ? {} : DEFAULT_DM_PREFERENCES),
+            ...prefs,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: 'discord_id' });
+        if (error) {
+            logger.error('Failed to upsert user preferences:', error);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Get all users opted in for a DM category
+     */
+    async getUsersOptedInForDM(category) {
+        const column = `dm_${category}`;
+        const { data: linkedAccounts, error: linkedError } = await this.client
+            .from('discord_linked_accounts')
+            .select('discord_id');
+        if (linkedError) {
+            logger.error(`Failed to get linked accounts for ${category} DMs:`, linkedError);
+            return [];
+        }
+        const { data: optedOut, error } = await this.client
+            .from('user_preferences')
+            .select('discord_id')
+            .eq(column, false);
+        if (error) {
+            logger.error(`Failed to get users opted in for ${category}:`, error);
+            return [];
+        }
+        const optedOutIds = new Set((optedOut || []).map(u => u.discord_id));
+        return (linkedAccounts || [])
+            .map(account => account.discord_id)
+            .filter(discordId => discordId && !optedOutIds.has(discordId));
+    }
+    // ============================================
+    // Discord Announcements
+    // ============================================
+    /**
+     * Create a new announcement
+     */
+    async createDiscordAnnouncement(announcement) {
+        const { data, error } = await this.client
+            .from('discord_announcements')
+            .insert({ ...announcement, status: 'draft' })
+            .select()
+            .single();
+        if (error) {
+            logger.error('Failed to create announcement:', error);
+            return null;
+        }
+        return data;
+    }
+    /**
+     * Get announcement by ID
+     */
+    async getDiscordAnnouncement(id) {
+        const { data, error } = await this.client
+            .from('discord_announcements')
+            .select('*')
+            .eq('id', id)
+            .single();
+        if (error && error.code !== 'PGRST116') {
+            logger.error('Failed to get announcement:', error);
+        }
+        return data;
+    }
+    /**
+     * Update announcement
+     */
+    async updateDiscordAnnouncement(id, updates) {
+        const { error } = await this.client
+            .from('discord_announcements')
+            .update(updates)
+            .eq('id', id);
+        if (error) {
+            logger.error('Failed to update announcement:', error);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Get recent announcements for a guild
+     */
+    async getGuildAnnouncements(guildId, limit = 10) {
+        const { data, error } = await this.client
+            .from('discord_announcements')
+            .select('*')
+            .eq('guild_id', guildId)
+            .order('created_at', { ascending: false })
+            .limit(limit);
+        if (error) {
+            logger.error('Failed to get guild announcements:', error);
+            return [];
+        }
+        return data || [];
+    }
+    /**
+     * Increment announcement counters
+     */
+    async incrementAnnouncementCounters(id, sent, failed) {
+        const current = await this.getDiscordAnnouncement(id);
+        if (!current)
+            return false;
+        return this.updateDiscordAnnouncement(id, {
+            sent_count: (current.sent_count || 0) + sent,
+            failed_count: (current.failed_count || 0) + failed,
+        });
+    }
+    // ============================================
+    // Admin Discord DM Queue
+    // ============================================
+    async getPendingDiscordDms(limit = 10) {
+        const { data, error } = await this.client
+            .from('discord_dm_queue')
+            .select('*')
+            .eq('status', 'pending')
+            .order('created_at', { ascending: true })
+            .limit(limit);
+        if (error) {
+            logger.error('Failed to get pending Discord DMs:', error);
+            return [];
+        }
+        return data || [];
+    }
+    async claimDiscordDm(id) {
+        const { data, error } = await this.client
+            .from('discord_dm_queue')
+            .update({ status: 'sending', error_message: null })
+            .eq('id', id)
+            .eq('status', 'pending')
+            .select('*')
+            .maybeSingle();
+        if (error) {
+            logger.error('Failed to claim Discord DM:', error);
+            return null;
+        }
+        return data;
+    }
+    async markDiscordDmSent(id) {
+        const { error } = await this.client
+            .from('discord_dm_queue')
+            .update({
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+            error_message: null,
+        })
+            .eq('id', id);
+        if (error) {
+            logger.error('Failed to mark Discord DM sent:', error);
+            return false;
+        }
+        return true;
+    }
+    async markDiscordDmFailed(id, errorMessage) {
+        const { error } = await this.client
+            .from('discord_dm_queue')
+            .update({
+            status: 'failed',
+            error_message: errorMessage.slice(0, 500),
+        })
+            .eq('id', id);
+        if (error) {
+            logger.error('Failed to mark Discord DM failed:', error);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Queue a new Discord DM notification (used by billing webhook and other services)
+     */
+    async queueDiscordDm(params) {
+        const { data, error } = await this.client
+            .from('discord_dm_queue')
+            .insert({
+            discord_id: params.discord_id,
+            notification_type: params.notification_type || null,
+            subject: params.subject,
+            message: params.message,
+            metadata: params.metadata || null,
+            status: 'pending',
+        })
+            .select()
+            .single();
+        if (error) {
+            logger.error('Failed to queue Discord DM:', error);
+            return null;
+        }
+        return data;
+    }
+    // ============================================
+    // Custom Embeds
+    // ============================================
+    async getCustomEmbed(guildId, name) {
+        const { data, error } = await this.client
+            .from('custom_embeds')
+            .select('*')
+            .eq('guild_id', guildId)
+            .eq('name', name)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (error) {
+            logger.error(`Failed to get custom embed ${name} for ${guildId}:`, error);
+            return null;
+        }
+        return data;
+    }
+    async saveCustomEmbed(guildId, name, embed) {
+        const existing = await this.getCustomEmbed(guildId, name);
+        if (existing) {
+            const { error } = await this.client
+                .from('custom_embeds')
+                .update({
+                ...embed,
+                updated_at: new Date().toISOString()
+            })
+                .eq('id', existing.id);
+            if (error) {
+                logger.error(`Failed to update custom embed ${name} for ${guildId}:`, error);
+                return false;
+            }
+        }
+        else {
+            const { error } = await this.client
+                .from('custom_embeds')
+                .insert({
+                guild_id: guildId,
+                name: name,
+                ...embed,
+                updated_at: new Date().toISOString()
+            });
+            if (error) {
+                logger.error(`Failed to insert custom embed ${name} for ${guildId}:`, error);
+                return false;
+            }
+        }
+        return true;
+    }
+    async deleteCustomEmbed(guildId, name) {
+        const { error } = await this.client
+            .from('custom_embeds')
+            .delete()
+            .eq('guild_id', guildId)
+            .eq('name', name);
+        if (error) {
+            logger.error(`Failed to delete custom embed ${name} for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+    async listCustomEmbeds(guildId) {
+        const { data, error } = await this.client
+            .from('custom_embeds')
+            .select('*')
+            .eq('guild_id', guildId)
+            .order('name', { ascending: true });
+        if (error) {
+            logger.error(`Failed to list custom embeds for ${guildId}:`, error);
+            return [];
+        }
+        return data || [];
+    }
+    async getEmbedSettings(guildId) {
+        const { data, error } = await this.client
+            .from('embed_settings')
+            .select('*')
+            .eq('guild_id', guildId)
+            .maybeSingle();
+        if (error) {
+            logger.error(`Failed to get embed settings for ${guildId}:`, error);
+            return null;
+        }
+        return data;
+    }
+    async updateEmbedSettings(guildId, settings) {
+        const { error } = await this.client
+            .from('embed_settings')
+            .upsert({
+            guild_id: guildId,
+            ...settings,
+            updated_at: new Date().toISOString()
+        });
+        if (error) {
+            logger.error(`Failed to update embed settings for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+    // ============================================
+    // Suggestions
+    // ============================================
+    async createSuggestion(guildId, channelId, messageId, userId, authorTag, title, content) {
+        const { data, error } = await this.client
+            .from('suggestions')
+            .insert({
+            guild_id: guildId,
+            channel_id: channelId,
+            message_id: messageId,
+            user_id: userId,
+            author_tag: authorTag,
+            title: title,
+            content: content,
+            status: 'pending'
+        })
+            .select()
+            .single();
+        if (error) {
+            logger.error('Failed to create suggestion:', error);
+            return null;
+        }
+        return data;
+    }
+    async getSuggestion(id) {
+        const { data, error } = await this.client
+            .from('suggestions')
+            .select('*')
+            .eq('id', id)
+            .maybeSingle();
+        if (error) {
+            logger.error(`Failed to get suggestion #${id}:`, error);
+            return null;
+        }
+        return data;
+    }
+    async getSuggestionByMessage(messageId) {
+        const { data, error } = await this.client
+            .from('suggestions')
+            .select('*')
+            .eq('message_id', messageId)
+            .maybeSingle();
+        if (error) {
+            logger.error(`Failed to get suggestion for message ${messageId}:`, error);
+            return null;
+        }
+        return data;
+    }
+    async updateSuggestionStatus(id, status) {
+        const { error } = await this.client
+            .from('suggestions')
+            .update({ status: status, updated_at: new Date().toISOString() })
+            .eq('id', id);
+        if (error) {
+            logger.error(`Failed to update suggestion status for #${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+    async toggleSuggestionLock(id) {
+        const suggestion = await this.getSuggestion(id);
+        if (!suggestion)
+            return false;
+        const { error } = await this.client
+            .from('suggestions')
+            .update({ locked: !suggestion.locked, updated_at: new Date().toISOString() })
+            .eq('id', id);
+        if (error) {
+            logger.error(`Failed to toggle suggestion lock for #${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+    async deleteSuggestion(id) {
+        const { error } = await this.client
+            .from('suggestions')
+            .delete()
+            .eq('id', id);
+        if (error) {
+            logger.error(`Failed to delete suggestion #${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+    async addSuggestionVote(suggestionId, userId, username, voteType) {
+        const { error } = await this.client
+            .from('suggestion_votes')
+            .upsert({
+            suggestion_id: suggestionId,
+            user_id: userId,
+            username: username,
+            vote_type: voteType,
+            created_at: new Date().toISOString()
+        }, { onConflict: 'suggestion_id,user_id' });
+        if (error) {
+            logger.error(`Failed to add suggestion vote for #${suggestionId} by ${userId}:`, error);
+            return false;
+        }
+        return true;
+    }
+    async removeSuggestionVote(suggestionId, userId) {
+        const { error } = await this.client
+            .from('suggestion_votes')
+            .delete()
+            .eq('suggestion_id', suggestionId)
+            .eq('user_id', userId);
+        if (error) {
+            logger.error(`Failed to remove suggestion vote for #${suggestionId} by ${userId}:`, error);
+            return false;
+        }
+        return true;
+    }
+    async getSuggestionVoteCounts(suggestionId) {
+        const { data, error } = await this.client
+            .from('suggestion_votes')
+            .select('vote_type')
+            .eq('suggestion_id', suggestionId);
+        if (error) {
+            logger.error(`Failed to get suggestion vote counts for #${suggestionId}:`, error);
+            return { up: 0, down: 0 };
+        }
+        const counts = { up: 0, down: 0 };
+        data?.forEach((v) => {
+            if (v.vote_type === 'up')
+                counts.up++;
+            else if (v.vote_type === 'down')
+                counts.down++;
+        });
+        return counts;
+    }
+    async getSuggestionVotes(suggestionId) {
+        const { data, error } = await this.client
+            .from('suggestion_votes')
+            .select('*')
+            .eq('suggestion_id', suggestionId)
+            .order('created_at', { ascending: false });
+        if (error) {
+            logger.error(`Failed to get suggestion votes for #${suggestionId}:`, error);
+            return [];
+        }
+        return data || [];
+    }
+    // ============================================
+    // Giveaways
+    // ============================================
+    async createGiveaway(guildId, channelId, messageId, prize, duration, winnersCount, endsAt, hostId, requirements, bonusEntries) {
+        const { data, error } = await this.client
+            .from('giveaways')
+            .insert({
+            guild_id: guildId,
+            channel_id: channelId,
+            message_id: messageId,
+            prize: prize,
+            duration: duration,
+            winners_count: winnersCount,
+            ends_at: endsAt.toISOString(),
+            host_id: hostId,
+            requirements: requirements,
+            bonus_entries: bonusEntries,
+            status: 'active',
+            participants: [],
+            winners: []
+        })
+            .select()
+            .single();
+        if (error) {
+            logger.error('Failed to create giveaway:', error);
+            return null;
+        }
+        return data;
+    }
+    async getGiveaway(idOrMessageId) {
+        const { data, error } = await this.client
+            .from('giveaways')
+            .select('*')
+            .or(`id.eq.${idOrMessageId},message_id.eq.${idOrMessageId}`)
+            .maybeSingle();
+        if (error) {
+            logger.error(`Failed to get giveaway ${idOrMessageId}:`, error);
+            return null;
+        }
+        return data;
+    }
+    async updateGiveaway(id, updates) {
+        const { error } = await this.client
+            .from('giveaways')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('id', id);
+        if (error) {
+            logger.error(`Failed to update giveaway ${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+    async listGiveaways(guildId, activeOnly = false) {
+        let query = this.client
+            .from('giveaways')
+            .select('*')
+            .eq('guild_id', guildId);
+        if (activeOnly) {
+            query = query.eq('status', 'active');
+        }
+        const { data, error } = await query.order('created_at', { ascending: false });
+        if (error) {
+            logger.error(`Failed to list giveaways for ${guildId}:`, error);
+            return [];
+        }
+        return data || [];
+    }
+    async deleteGiveaway(id) {
+        const { error } = await this.client
+            .from('giveaways')
+            .delete()
+            .eq('id', id);
+        if (error) {
+            logger.error(`Failed to delete giveaway ${id}:`, error);
+            return false;
+        }
+        return true;
+    }
+    // ============================================
+    // Custom Commands
+    // ============================================
+    async createCustomCommand(guildId, cmd) {
+        const { error } = await this.client
+            .from('custom_commands')
+            .upsert({
+            guild_id: guildId,
+            name: cmd.name,
+            ...cmd,
+            updated_at: new Date().toISOString()
+        });
+        if (error) {
+            logger.error(`Failed to create custom command ${cmd.name} for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+    async deleteCustomCommand(guildId, name) {
+        const { error } = await this.client
+            .from('custom_commands')
+            .delete()
+            .eq('guild_id', guildId)
+            .eq('name', name);
+        if (error) {
+            logger.error(`Failed to delete custom command ${name} for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+    async listCustomCommands(guildId) {
+        const { data, error } = await this.client
+            .from('custom_commands')
+            .select('*')
+            .eq('guild_id', guildId)
+            .order('name', { ascending: true });
+        if (error) {
+            logger.error(`Failed to list custom commands for ${guildId}:`, error);
+            return [];
+        }
+        return data || [];
+    }
+    async getCustomCommand(guildId, name) {
+        const { data, error } = await this.client
+            .from('custom_commands')
+            .select('*')
+            .eq('guild_id', guildId);
+        if (error) {
+            logger.error(`Failed to get custom command ${name} for ${guildId}:`, error);
+            return null;
+        }
+        if (!data)
+            return null;
+        const command = data.find(c => c.name.toLowerCase() === name.toLowerCase() ||
+            (Array.isArray(c.aliases) && c.aliases.some((a) => a.toLowerCase() === name.toLowerCase())));
+        return command || null;
+    }
+    async updateCustomCommand(guildId, name, updates) {
+        const { error } = await this.client
+            .from('custom_commands')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('guild_id', guildId)
+            .eq('name', name);
+        if (error) {
+            logger.error(`Failed to update custom command ${name} for ${guildId}:`, error);
+            return false;
+        }
+        return true;
+    }
+}
+export const supabase = new SupabaseService();

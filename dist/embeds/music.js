@@ -1,0 +1,296 @@
+/**
+ * Music UI for the Victus Cloud bot — Clean, professional standard Discord Embeds
+ * for the Lavalink music feature (Now Playing, queue, "added" confirmations)
+ * plus the custom buttons control row.
+ */
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, ContainerBuilder, TextDisplayBuilder, SeparatorBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder, } from 'discord.js';
+import { config } from '../config.js';
+import { logger } from '../utils/logger.js';
+const SOURCE_ICON = {
+    youtube: '▶️',
+    soundcloud: '🟠',
+    bandcamp: '🔵',
+    twitch: '🟣',
+    vimeo: '🎬',
+    spotify: '🟢',
+    deezer: '🟣',
+    applemusic: '🍎',
+    http: '🔗',
+};
+export function sourceIcon(source) {
+    return SOURCE_ICON[(source || '').toLowerCase()] || '🎵';
+}
+/** Escape Discord markdown so track titles can't break the layout. */
+export function escapeMd(value) {
+    return String(value ?? '').replace(/([\\\`*_~|>\[\]()])/g, '\\$1').slice(0, 230);
+}
+/** Format a millisecond duration as `m:ss` / `h:mm:ss`. */
+export function formatDuration(ms) {
+    if (!ms || ms <= 0 || !Number.isFinite(ms))
+        return '0:00';
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+function trackInfo(t) {
+    return t.info;
+}
+function requesterId(t) {
+    const r = t.requester;
+    return r?.id ?? null;
+}
+export function generateProgressBar(pos, duration, length = 18) {
+    if (duration <= 0)
+        return '▬'.repeat(length);
+    const progress = Math.min(pos / duration, 1);
+    const index = Math.round(progress * (length - 1));
+    return '▬'.repeat(index) + '🔵' + '▬'.repeat(length - 1 - index);
+}
+/** Idle control panel shown by /music when nothing is playing. */
+export function musicIdleContainer() {
+    return new ContainerBuilder()
+        .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# 🎵 MUSIC SYSTEM • SESSION STANDBY\n` +
+        `# Ready to Play\n\n` +
+        `There is no active music session playing in this server right now.\n\n` +
+        `› Use \`/play <song or link>\` to start playing.\n` +
+        `› Supports: \`YouTube\`, \`Spotify\`, \`SoundCloud\`, \`Bandcamp\`, and direct stream URLs.`));
+}
+/** The public "Now Playing" panel with live transport controls. */
+export async function nowPlayingContainer(player, guild) {
+    const track = player.queue.current;
+    if (!track) {
+        const container = new ContainerBuilder()
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# 🎵 NOW PLAYING • INACTIVE SESSION\n` +
+            `# Nothing is playing right now.`));
+        return { embeds: [], components: [container], files: [] };
+    }
+    const info = trackInfo(track);
+    const duration = info?.duration ?? 0;
+    const pos = Math.min(player.position ?? 0, duration);
+    const reqId = requesterId(track);
+    const live = !!info?.isStream;
+    // Canvas is an optional enhancement. Some Pterodactyl images cannot load the
+    // platform-specific @napi-rs/canvas binding, so never import it at module load
+    // time or a music dependency failure will take the whole Discord bot offline.
+    let cardBuffer = Buffer.alloc(0);
+    try {
+        const [{ Bloom }, { createCanvas, loadImage }] = await Promise.all([
+            import('musicard'),
+            import('@napi-rs/canvas'),
+        ]);
+        cardBuffer = await Bloom({
+            trackName: info?.title || 'Unknown Title',
+            artistName: info?.author || 'Unknown Artist',
+            albumArt: info?.artworkUrl || config.branding.logo,
+            fallbackArt: config.branding.logo,
+            isExplicit: false,
+            timeAdjust: {
+                timeStart: formatDuration(pos),
+                timeEnd: live ? 'LIVE' : formatDuration(duration)
+            },
+            progressBar: live ? 100 : (duration > 0 ? (pos / duration) * 100 : 0),
+            backgroundColor: '#07070a',
+            styleConfig: {
+                trackStyle: {
+                    textColor: '#ffffff',
+                    textGlow: true,
+                },
+                artistStyle: {
+                    textColor: '#a5b4fc',
+                    textGlow: false,
+                },
+                timeStyle: {
+                    textColor: '#cbd5e1',
+                },
+                progressBarStyle: {
+                    barColor: '#6366f1',
+                    barColorDuo: true
+                }
+            }
+        });
+    }
+    catch (err) {
+        logger.warn('Music card renderer unavailable; using the text music panel instead:', err);
+    }
+    const files = [];
+    const container = new ContainerBuilder();
+    const nextTrack = player.queue.tracks[0];
+    const nextUpStr = nextTrack
+        ? `⏭️ **Next up:** [${escapeMd(nextTrack.info?.title)}](${nextTrack.info?.uri})`
+        : `⏭️ **Next up:** _Queue end_`;
+    if (cardBuffer.length > 0) {
+        let finalBuffer = cardBuffer;
+        try {
+            const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+            const loopName = player.repeatMode === 'off' ? 'Off' : player.repeatMode === 'track' ? 'Track' : 'Queue';
+            const sourceName = info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown';
+            let reqName = 'System';
+            if (reqId && guild) {
+                const member = guild.members.cache.get(reqId);
+                reqName = member?.displayName || member?.user?.username || 'Unknown';
+            }
+            const img = await loadImage(cardBuffer);
+            const canvas = createCanvas(img.width, img.height + 70);
+            const ctx = canvas.getContext('2d');
+            // Fill canvas background
+            ctx.fillStyle = '#07070a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // Draw original musicard
+            ctx.drawImage(img, 0, 0);
+            // Add separator line
+            ctx.strokeStyle = '#1e1e24';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(30, img.height);
+            ctx.lineTo(canvas.width - 30, img.height);
+            ctx.stroke();
+            // Draw text info
+            ctx.font = '22px sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            const textStr = `Requester: ${reqName}   •   Volume: ${player.volume}%   •   Loop: ${loopName}   •   Source: ${sourceName}`;
+            ctx.fillText(textStr, canvas.width / 2, img.height + 35);
+            finalBuffer = canvas.toBuffer('image/png');
+        }
+        catch (err) {
+            logger.error('Failed to extend musicard with metadata:', err);
+        }
+        files.push(new AttachmentBuilder(finalBuffer, { name: 'musicard.png' }));
+        container.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://musicard.png')));
+        container.addTextDisplayComponents(new TextDisplayBuilder().setContent(nextUpStr));
+    }
+    else {
+        const art = info?.artworkUrl;
+        if (art && typeof art === 'string' && art.startsWith('http')) {
+            container.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(art)));
+        }
+        container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# 🎵 MUSIC SYSTEM • NOW PLAYING\n` +
+            `# [${escapeMd(info?.title)}](${info?.uri})\n\n` +
+            `› **Artist:** \`${escapeMd(info?.author || 'Unknown Artist')}\`\n` +
+            `› **Requester:** ${reqId ? `<@${reqId}>` : 'System'}\n` +
+            `› **Source:** ${sourceIcon(info?.sourceName)} ${info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown'}\n` +
+            `› **Duration:** \`${formatDuration(pos)} / ${formatDuration(duration)}\`\n` +
+            `› **Progress:** ${generateProgressBar(pos, duration)}\n\n` +
+            `${nextUpStr}`));
+    }
+    const playPauseEmoji = player.paused ? '▶️' : '⏸️';
+    const loopEmoji = player.repeatMode === 'off' ? '🔁' : player.repeatMode === 'track' ? '🔂' : '🔁';
+    const loopStyle = player.repeatMode === 'off' ? ButtonStyle.Secondary : ButtonStyle.Primary;
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:pause').setEmoji(playPauseEmoji).setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:loop').setEmoji(loopEmoji).setStyle(loopStyle), new ButtonBuilder().setCustomId('music:open_controls').setEmoji('🎛️').setLabel('Controls').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:stop').setEmoji('❌').setStyle(ButtonStyle.Danger));
+    container.addActionRowComponents(row);
+    return {
+        embeds: [],
+        components: [container],
+        files
+    };
+}
+export function musicControlsContainer(player) {
+    const track = player.queue.current;
+    if (!track) {
+        const container = new ContainerBuilder()
+            .setAccentColor(0x6366f1)
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# 🎵 MUSIC SYSTEM • CONTROLS\n` +
+            `# Inactive Session\n\n` +
+            `There is no music playing right now.`));
+        return { embeds: [], components: [container] };
+    }
+    const info = track.info;
+    const isPaused = player.paused;
+    const loopMode = player.repeatMode;
+    const vol = player.volume;
+    const container = new ContainerBuilder()
+        .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# 🎛️ MUSIC SYSTEM • CONTROL PANEL\n` +
+        `# Audio Dashboard\n\n` +
+        `### Active Track\n` +
+        `› **Title:** [${escapeMd(info.title)}](${info.uri})\n` +
+        `› **Artist:** \`${escapeMd(info.author || 'Unknown Artist')}\`\n\n` +
+        `### Audio Settings\n` +
+        `› **State:** ${isPaused ? '⏸️ Paused' : '▶️ Playing'}\n` +
+        `› **Volume:** \`${vol}%\` • **Loop:** \`${loopMode.toUpperCase()}\`\n` +
+        `› **Queue Length:** \`${player.queue.tracks.length} tracks\`\n\n` +
+        `### Interactive Transport Controls\n` +
+        `Use the button rows below to govern playback, adjust settings, and manage your libraries.`));
+    const playbackRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:previous').setEmoji('⏮️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:pause').setEmoji(player.paused ? '▶️' : '⏸️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:stop').setEmoji('❌').setStyle(ButtonStyle.Danger));
+    const musicRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:queue').setEmoji('📊').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:filters').setEmoji('🎛️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:add').setEmoji('➕').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:search').setEmoji('🔍').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:lyrics').setEmoji('🎵').setStyle(ButtonStyle.Secondary));
+    const controlsRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:like').setEmoji('🤍').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:volume').setEmoji('🔊').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:eq').setEmoji('🎚️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:preset').setEmoji('🟣').setStyle(ButtonStyle.Secondary));
+    const libraryRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:library_playlists').setEmoji('📁').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:history').setEmoji('🕒').setStyle(ButtonStyle.Secondary));
+    container.addActionRowComponents(playbackRow);
+    container.addActionRowComponents(musicRow);
+    container.addActionRowComponents(controlsRow);
+    container.addActionRowComponents(libraryRow);
+    return {
+        embeds: [],
+        components: [container]
+    };
+}
+/** Confirmation shown when a track (or playlist) is queued. */
+export function addedContainer(tracks, playlistName, position) {
+    const container = new ContainerBuilder();
+    if (playlistName && tracks.length > 1) {
+        const totalMs = tracks.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
+        container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# 🎵 MUSIC SYSTEM • QUEUE UPDATE\n` +
+            `# ✅ Playlist Added\n\n` +
+            `› **Playlist:** \`${escapeMd(playlistName)}\`\n` +
+            `› **Tracks:** \`${tracks.length}\`\n` +
+            `› **Total Duration:** \`${formatDuration(totalMs)}\`\n` +
+            `› **Queue Position:** \`#${position}\``));
+        return container;
+    }
+    const t = tracks[0];
+    const info = trackInfo(t);
+    const reqId = requesterId(t);
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# 🎵 MUSIC SYSTEM • QUEUE UPDATE\n` +
+        `# ✅ Track Added\n\n` +
+        `**[${escapeMd(info?.title)}](${info?.uri})**\n` +
+        `› **Artist:** \`${escapeMd(info?.author || 'Unknown Artist')}\`\n` +
+        `› **Duration:** \`${formatDuration(info?.duration)}\`\n` +
+        `› **Queue Position:** \`#${position}\`${reqId ? `\n› **Requested By:** <@${reqId}>` : ''}`));
+    const art = info?.artworkUrl;
+    if (art && typeof art === 'string' && art.startsWith('http')) {
+        container.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(art)));
+    }
+    return container;
+}
+const QUEUE_PAGE_SIZE = 10;
+/** Full queue listing, paginated. */
+export function queueContainer(player, page = 0) {
+    const current = player.queue.current;
+    const upcoming = player.queue.tracks;
+    const container = new ContainerBuilder();
+    let description = `-# 🎵 MUSIC SYSTEM • TRACK QUEUE\n# Live Playlist Queue\n\n`;
+    if (current) {
+        const info = trackInfo(current);
+        const reqId = requesterId(current);
+        description += `### 🔊 Now Playing\n` +
+            `**[${escapeMd(info?.title)}](${info?.uri})**\n` +
+            `› Artist: \`${escapeMd(info?.author || 'Unknown')}\` • Request: ${reqId ? `<@${reqId}>` : 'System'}\n\n`;
+    }
+    let pages = 1;
+    let safePage = 0;
+    let totalMs = 0;
+    if (!upcoming.length) {
+        description += `### ⏭️ Upcoming Playlist\n_No upcoming tracks in queue. Add tracks using \`/play\`._`;
+    }
+    else {
+        pages = Math.max(1, Math.ceil(upcoming.length / QUEUE_PAGE_SIZE));
+        safePage = Math.max(0, Math.min(page, pages - 1));
+        const start = safePage * QUEUE_PAGE_SIZE;
+        const slice = upcoming.slice(start, start + QUEUE_PAGE_SIZE);
+        totalMs = upcoming.reduce((sum, t) => sum + (trackInfo(t)?.duration || 0), 0);
+        description += `### ⏭️ Upcoming Playlist (${upcoming.length} tracks)\n`;
+        slice.forEach((t, i) => {
+            const info = trackInfo(t);
+            const reqId = requesterId(t);
+            description += `\`${start + i + 1}.\` **[${escapeMd(info?.title)}](${info?.uri})**\n` +
+                ` - \`${formatDuration(info?.duration)}\` • Requester: ${reqId ? `<@${reqId}>` : 'System'}\n`;
+        });
+    }
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(description));
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# Page ${safePage + 1}/${pages} • Total duration: ${formatDuration(totalMs)} • Volume: ${player.volume}%`));
+    return container;
+}

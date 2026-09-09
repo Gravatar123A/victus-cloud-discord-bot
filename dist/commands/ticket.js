@@ -1,0 +1,1657 @@
+/**
+ * Victus Cloud — Ticket System Command
+ * Full Components V2 implementation with account linking enforcement
+ */
+import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ContainerBuilder, ChannelType, PermissionFlagsBits, MessageFlags, AttachmentBuilder, } from 'discord.js';
+import { supabase } from '../services/supabase.js';
+import { config } from '../config.js';
+import { ComponentsV2 } from '../embeds/componentsV2.js';
+import { getLinkedAccount } from '../middleware/requireLinked.js';
+import { requireAdmin } from '../middleware/requireLinked.js';
+import { logger } from '../utils/logger.js';
+import { groqAi } from '../services/groqAi.js';
+import { formatAiMessage } from '../utils/aiMessages.js';
+import { ticketTranslationService, TOP_10_LANGUAGES } from '../services/ticketTranslationService.js';
+// ============================================
+// Custom IDs for components
+// ============================================
+const CUSTOM_IDS = {
+    // Buttons
+    CREATE_TICKET: 'ticket_create',
+    LINK_ACCOUNT: 'ticket_link_account',
+    CANCEL: 'ticket_cancel',
+    CONFIRM: 'ticket_confirm',
+    EDIT: 'ticket_edit',
+    CLOSE: 'ticket_close',
+    LOCK: 'ticket_lock',
+    UNLOCK: 'ticket_unlock',
+    CLAIM: 'ticket_claim',
+    LINK_SERVER: 'ticket_link_server',
+    LINK_INVOICE: 'ticket_link_invoice',
+    AI_HELP: 'ticket_ai_help',
+    // Select menus
+    CATEGORY_SELECT: 'ticket_category_select',
+    SERVER_SELECT: 'ticket_server_select',
+    INVOICE_SELECT: 'ticket_invoice_select',
+    // Modals
+    TICKET_FORM: 'ticket_form',
+    CATEGORY_ADD: 'ticket_category_add_modal',
+};
+// Pending ticket data (in-memory cache for ticket creation flow)
+const pendingTickets = new Map();
+function normalizeIds(value) {
+    if (!value)
+        return [];
+    const items = Array.isArray(value) ? value : String(value).split(/[\s,]+/);
+    return Array.from(new Set(items
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)));
+}
+function combinedStaffRoleIds(settings, category) {
+    return normalizeIds([
+        ...normalizeIds(settings?.ticket_staff_role_ids),
+        ...normalizeIds(settings?.ticket_admin_role_ids),
+        ...normalizeIds(category?.staff_roles),
+    ]);
+}
+function adminRoleIds(settings) {
+    return normalizeIds(settings?.ticket_admin_role_ids);
+}
+function memberHasAnyRole(member, roleIds) {
+    if (!member || roleIds.length === 0)
+        return false;
+    if (member.roles?.cache?.has)
+        return roleIds.some((roleId) => member.roles.cache.has(roleId));
+    if (Array.isArray(member.roles))
+        return roleIds.some((roleId) => member.roles.includes(roleId));
+    return false;
+}
+function memberHasTicketStaffAccess(interaction, settings, category) {
+    const member = interaction.member;
+    if (!member)
+        return false;
+    if (member.permissions?.has?.(PermissionFlagsBits.Administrator) || member.permissions?.has?.(PermissionFlagsBits.ManageChannels)) {
+        return true;
+    }
+    return memberHasAnyRole(member, combinedStaffRoleIds(settings, category));
+}
+function canCloseTicket(interaction, ticket, settings) {
+    if (ticket.discord_id === interaction.user.id && settings?.ticket_allow_user_close !== false)
+        return true;
+    return memberHasTicketStaffAccess(interaction, settings, ticket.category);
+}
+async function denyTicketAction(interaction, message = 'You do not have permission to manage this ticket.') {
+    await interaction.reply({
+        content: message,
+        ephemeral: true,
+    }).catch(() => undefined);
+}
+export const ticketCommand = {
+    data: new SlashCommandBuilder()
+        .setName('ticket')
+        .setDescription('Ticket system management')
+        .addSubcommand(sub => sub
+        .setName('panel')
+        .setDescription('Spawn a ticket creation panel (Admin only)'))
+        .addSubcommand(sub => sub
+        .setName('categories')
+        .setDescription('Manage ticket categories (Admin only)'))
+        .addSubcommand(sub => sub
+        .setName('translate')
+        .setDescription('Manage live multi-language translation for this ticket')
+        .addStringOption(opt => opt
+        .setName('action')
+        .setDescription('Action to perform')
+        .setRequired(true)
+        .addChoices({ name: 'Toggle On/Off', value: 'toggle' }, { name: 'Enable Translation', value: 'enable' }, { name: 'Disable Translation', value: 'disable' }, { name: 'Set Language', value: 'set' }))
+        .addStringOption(opt => opt
+        .setName('language')
+        .setDescription('Language to set (if setting)')
+        .setRequired(false)
+        .addChoices(...TOP_10_LANGUAGES.map(l => ({ name: `${l.emoji} ${l.name}`, value: l.code })))))
+        .addSubcommandGroup(group => group
+        .setName('category')
+        .setDescription('Category management')
+        .addSubcommand(sub => sub
+        .setName('add')
+        .setDescription('Add a new ticket category')
+        .addStringOption(opt => opt
+        .setName('name')
+        .setDescription('Category name')
+        .setRequired(true))
+        .addStringOption(opt => opt
+        .setName('emoji')
+        .setDescription('Category emoji')
+        .setRequired(false))
+        .addStringOption(opt => opt
+        .setName('description')
+        .setDescription('Category description')
+        .setRequired(false)))
+        .addSubcommand(sub => sub
+        .setName('edit')
+        .setDescription('Edit an existing ticket category')
+        .addStringOption(opt => opt
+        .setName('category')
+        .setDescription('Category to edit')
+        .setRequired(true)
+        .setAutocomplete(true))
+        .addStringOption(opt => opt
+        .setName('name')
+        .setDescription('New name')
+        .setRequired(false))
+        .addStringOption(opt => opt
+        .setName('emoji')
+        .setDescription('New emoji')
+        .setRequired(false))
+        .addStringOption(opt => opt
+        .setName('description')
+        .setDescription('New description')
+        .setRequired(false))
+        .addStringOption(opt => opt
+        .setName('parent_id')
+        .setDescription('Discord Category ID where tickets should be created')
+        .setRequired(false)))
+        .addSubcommand(sub => sub
+        .setName('remove')
+        .setDescription('Remove a ticket category')
+        .addStringOption(opt => opt
+        .setName('category')
+        .setDescription('Category to remove')
+        .setRequired(true)
+        .setAutocomplete(true)))
+        .addSubcommand(sub => sub
+        .setName('questions')
+        .setDescription('Manage custom questions for a category')
+        .addStringOption(opt => opt
+        .setName('category')
+        .setDescription('Category to manage')
+        .setRequired(true)
+        .setAutocomplete(true))
+        .addStringOption(opt => opt
+        .setName('action')
+        .setDescription('Action to perform')
+        .setRequired(true)
+        .addChoices({ name: 'Add Question', value: 'add' }, { name: 'Remove Question', value: 'remove' }, { name: 'List Questions', value: 'list' })))),
+    adminOnly: true,
+    cooldown: 5,
+    async autocomplete(interaction) {
+        const focusedOption = interaction.options.getFocused(true);
+        if (focusedOption.name === 'category') {
+            const categories = await supabase.getAllTicketCategories(interaction.guildId);
+            const filtered = categories
+                .filter(c => c.name.toLowerCase().includes(focusedOption.value.toLowerCase()))
+                .slice(0, 25);
+            await interaction.respond(filtered.map(c => ({
+                name: `${c.emoji} ${c.name}`,
+                value: c.id,
+            })));
+        }
+    },
+    async execute(interaction) {
+        logger.info(`⚡ [Execute] /ticket command started by ${interaction.user.tag}`);
+        try {
+            const subcommandGroup = interaction.options.getSubcommandGroup(false);
+            const subcommand = interaction.options.getSubcommand();
+            logger.info(`👉 [Execute] Subcommand: ${subcommandGroup ? subcommandGroup + ' ' : ''}${subcommand}`);
+            // Ticket Translation can be managed by staff or ticket creator
+            if (subcommand === 'translate') {
+                await handleTicketTranslateCommand(interaction);
+                return;
+            }
+            // Admin check for all other subcommands
+            const isAdmin = await requireAdmin(interaction);
+            if (!isAdmin) {
+                logger.warn(`🚫 [Execute] Access denied for ${interaction.user.tag}`);
+                return;
+            }
+            logger.info(`⌛ [Execute] Deferring reply...`);
+            await interaction.deferReply({
+                flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2
+            });
+            if (subcommandGroup === 'category') {
+                switch (subcommand) {
+                    case 'edit':
+                        await handleCategoryEdit(interaction);
+                        break;
+                    case 'questions':
+                        await handleCategoryQuestions(interaction);
+                        break;
+                    case 'remove':
+                        await handleCategoryRemove(interaction);
+                        break;
+                    case 'add':
+                        await handleCategoryAdd(interaction);
+                        break;
+                    default:
+                        await interaction.editReply({ content: '❌ Unknown category subcommand' });
+                }
+            }
+            else {
+                switch (subcommand) {
+                    case 'panel':
+                        await handlePanelSpawn(interaction);
+                        break;
+                    case 'categories':
+                        await handleCategoriesList(interaction);
+                        break;
+                    default:
+                        await interaction.editReply({ content: '❌ Unknown subcommand' });
+                }
+            }
+            logger.info(`✅ [Execute] Command completed successfully`);
+        }
+        catch (error) {
+            logger.error(`❌ [Execute] Critical crash:`, error);
+            const errorContainer = ComponentsV2.errorContainer('Command Error', `An unexpected error occurred: ${error.message || 'Unknown error'}`);
+            try {
+                if (interaction.deferred || interaction.replied) {
+                    await interaction.editReply({
+                        components: [errorContainer],
+                        flags: ComponentsV2.IS_COMPONENTS_V2
+                    });
+                }
+                else {
+                    await interaction.reply({
+                        components: [errorContainer],
+                        flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral
+                    });
+                }
+            }
+            catch (replyErr) {
+                logger.error(`Failed to send error reply:`, replyErr);
+            }
+        }
+    },
+    // ============================================
+    // Button Handlers
+    // ============================================
+    async handleButton(interaction) {
+        const customId = interaction.customId;
+        try {
+            // Create Ticket button
+            if (customId === CUSTOM_IDS.CREATE_TICKET) {
+                await handleCreateTicketButton(interaction);
+                return;
+            }
+            // Link Account button
+            if (customId === CUSTOM_IDS.LINK_ACCOUNT) {
+                // Redirect to link command
+                const container = ComponentsV2.infoContainer('Link Your Account', 'Use the `/link` command to connect your Discord to Victus Cloud.\n\n' +
+                    'Once linked, you can create support tickets!');
+                await interaction.reply({
+                    components: [container],
+                    flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            // Cancel button
+            if (customId === CUSTOM_IDS.CANCEL) {
+                pendingTickets.delete(interaction.user.id);
+                const container = ComponentsV2.infoContainer('Cancelled', 'Ticket creation has been cancelled.');
+                await interaction.update({
+                    components: [container],
+                });
+                return;
+            }
+            // Confirm/Submit button
+            if (customId === CUSTOM_IDS.CONFIRM) {
+                await handleConfirmTicket(interaction);
+                return;
+            }
+            // Ticket control buttons (in ticket channel)
+            if (customId.startsWith('ticket_close_')) {
+                await handleCloseTicket(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_lock_')) {
+                await handleLockTicket(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_unlock_')) {
+                await handleUnlockTicket(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_claim_')) {
+                await handleClaimTicket(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_ai_')) {
+                await handleAIHelp(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_addmember_')) {
+                await handleAddMemberButton(interaction);
+                return;
+            }
+            // Custom Question Add button
+            if (customId.startsWith('ticket_question_add_')) {
+                const categoryId = customId.split('_')[3];
+                await handleShowQuestionAddModal(interaction, categoryId);
+                return;
+            }
+            // Ticket Translation Toggle & Reset buttons
+            if (customId.startsWith('ticket_trans_toggle:')) {
+                await handleTranslationToggle(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_trans_reset:')) {
+                await handleTranslationReset(interaction);
+                return;
+            }
+        }
+        catch (error) {
+            logger.error('Button handler error:', error);
+            const container = ComponentsV2.errorContainer('Error', 'Failed to process your request.');
+            try {
+                await interaction.reply({
+                    components: [container],
+                    flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+                });
+            }
+            catch {
+                // Already replied
+            }
+        }
+    },
+    // ============================================
+    // Select Menu Handlers
+    // ============================================
+    async handleSelectMenu(interaction) {
+        const customId = interaction.customId;
+        try {
+            if (customId === CUSTOM_IDS.CATEGORY_SELECT) {
+                logger.info(`🎯 [SelectMenu] Category selection detected`);
+                await handleCategorySelect(interaction);
+                return;
+            }
+            // Custom Question Remove select menu
+            if (customId.startsWith('ticket_question_remove_')) {
+                const categoryId = customId.split('_')[3];
+                const index = parseInt(interaction.values[0]);
+                await handleRemoveQuestion(interaction, categoryId, index);
+                return;
+            }
+            // Ticket Language Select Menu
+            if (customId.startsWith('ticket_lang_select:')) {
+                await handleLanguageSelect(interaction);
+                return;
+            }
+        }
+        catch (error) {
+            logger.error('Select menu handler error:', error);
+        }
+    },
+    // ============================================
+    // Modal Handlers
+    // ============================================
+    async handleModal(interaction) {
+        const customId = interaction.customId;
+        try {
+            if (customId.startsWith(CUSTOM_IDS.TICKET_FORM)) {
+                await handleTicketFormSubmit(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_addmember_modal_')) {
+                await handleAddMemberModal(interaction);
+                return;
+            }
+            // Custom Question Add modal submit
+            if (customId.startsWith('ticket_question_modal_')) {
+                const categoryId = customId.split('_')[3];
+                await handleAddQuestionSubmit(interaction, categoryId);
+                return;
+            }
+        }
+        catch (error) {
+            logger.error('Modal handler error:', error);
+            const container = ComponentsV2.errorContainer('Error', 'Failed to submit your ticket form.');
+            await interaction.reply({
+                components: [container],
+                flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+            });
+        }
+    },
+};
+// ============================================
+// Panel Management
+// ============================================
+async function handlePanelSpawn(interaction) {
+    const guildId = interaction.guildId;
+    const categories = await supabase.getTicketCategories(guildId);
+    const settings = await supabase.getBotSettings(guildId).catch(() => null);
+    if (categories.length === 0) {
+        const container = ComponentsV2.warningContainer('No Categories', 'You need to create ticket categories first.\n\n' +
+            'Use `/ticket category add` to create categories.');
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+    // Create the premium ticket panel
+    const panel = createTicketPanel(categories);
+    const configuredChannelId = settings?.ticket_panel_channel_id;
+    const targetChannel = configuredChannelId
+        ? await interaction.guild.channels.fetch(configuredChannelId).catch(() => null)
+        : interaction.channel;
+    if (!targetChannel || !targetChannel.isTextBased?.()) {
+        const container = ComponentsV2.errorContainer('Invalid Panel Channel', 'The configured ticket panel channel ID is missing or is not a text channel.');
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+    // Send to configured channel (not ephemeral)
+    await targetChannel.send({
+        components: [panel],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+    const container = ComponentsV2.successContainer('Panel Created', `The premium ticket panel has been spawned in <#${targetChannel.id}>.`);
+    await interaction.editReply({
+        components: [container],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+}
+function createTicketPanel(categories) {
+    const sections = categories
+        .map(c => `### ${c.emoji} ${c.name} Ticket:\n\n${c.description || 'No description available.'}`)
+        .join('\n\n');
+    const list = categories
+        .map(c => `» ${c.emoji} **${c.name}** - Create a ${c.name} ticket`)
+        .join('\n');
+    const container = new ContainerBuilder()
+        .setAccentColor(ComponentsV2.Accents.purple)
+        .addTextDisplayComponents(ComponentsV2.text(`# Victus Cloud™ ➤ IT Solutions Support\n\n` +
+        `Need help? Open a ticket below\n\n` +
+        `**V** Please select the category that best fits your needs from the options below. Our team will assist you as soon as possible.\n\n` +
+        `${sections}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `### ⭐ Available Categories\n` +
+        `${list}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `-# 🆔 You'll be asked internal questions when creating a ticket`));
+    // Add select menu
+    const select = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+        .setCustomId(CUSTOM_IDS.CATEGORY_SELECT)
+        .setPlaceholder('Select a ticket type...')
+        .addOptions(categories.map(c => ({
+        label: c.name,
+        emoji: c.emoji,
+        value: c.id,
+        description: c.description?.substring(0, 100) || 'Click to open ticket'
+    }))));
+    container.addActionRowComponents(select);
+    return container;
+}
+// ============================================
+// Category Management
+// ============================================
+async function handleCategoriesList(interaction) {
+    const guildId = interaction.guildId;
+    const categories = await supabase.getAllTicketCategories(guildId);
+    if (categories.length === 0) {
+        const container = ComponentsV2.infoContainer('No Categories', 'No ticket categories have been created yet.\n\n' +
+            'Use `/ticket category add` to create one.');
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+    const categoryList = categories
+        .map((c, i) => `**${i + 1}.** ${c.emoji} ${c.name} ${c.enabled ? '🟢' : '🔴'}\n` +
+        `-# ${c.description || 'No description'} | Priority: ${c.priority_default}`)
+        .join('\n\n');
+    const container = new ContainerBuilder()
+        .setAccentColor(ComponentsV2.Accents.info)
+        .addTextDisplayComponents(ComponentsV2.text(`# 📋 Ticket Categories\n\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `${categoryList}\n` +
+        `━━━━━━━━━━━━━━━━━━\n\n` +
+        `-# Use \`/ticket category add\` or \`/ticket category remove\` to manage.`));
+    await interaction.editReply({
+        components: [container],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+}
+async function handleCategoryAdd(interaction) {
+    const guildId = interaction.guildId;
+    const name = interaction.options.getString('name', true);
+    const emoji = interaction.options.getString('emoji') || '🎫';
+    const description = interaction.options.getString('description') || null;
+    // Get current position
+    const existing = await supabase.getAllTicketCategories(guildId);
+    const position = existing.length;
+    const category = await supabase.createTicketCategory({
+        guild_id: guildId,
+        name,
+        emoji,
+        description,
+        position,
+    });
+    if (!category) {
+        const container = ComponentsV2.errorContainer('Error', 'Failed to create category. Please try again.');
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+    const container = ComponentsV2.successContainer('Category Created', `${emoji} **${name}** has been added to ticket categories.`);
+    await interaction.editReply({
+        components: [container],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+}
+async function handleCategoryRemove(interaction) {
+    const categoryId = interaction.options.getString('category', true);
+    const success = await supabase.deleteTicketCategory(categoryId);
+    if (!success) {
+        const container = ComponentsV2.errorContainer('Error', 'Failed to remove category. Please try again.');
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+    const container = ComponentsV2.successContainer('Category Removed', 'The category has been removed.');
+    await interaction.editReply({
+        components: [container],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+}
+// ============================================
+// Ticket Creation Flow
+// ============================================
+async function handleCreateTicketButton(interaction) {
+    // Step 1: Check if account is linked
+    const linked = await getLinkedAccount(interaction.user.id);
+    if (!linked) {
+        // Show link account prompt
+        const container = new ContainerBuilder()
+            .setAccentColor(ComponentsV2.Accents.warning)
+            .addTextDisplayComponents(ComponentsV2.text(`# 🔗 Account Not Linked\n\n` +
+            `You need to link your Discord account to Victus Cloud before creating a ticket.\n\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `### 📝 How to Link\n` +
+            `1. Use the \`/link\` command\n` +
+            `2. Click the verification link\n` +
+            `3. Log in to your Victus Cloud account\n` +
+            `4. Return here to create your ticket\n` +
+            `━━━━━━━━━━━━━━━━━━`));
+        const buttons = new ActionRowBuilder().addComponents(new ButtonBuilder()
+            .setCustomId(CUSTOM_IDS.LINK_ACCOUNT)
+            .setLabel('Link Account')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('🔗'), new ButtonBuilder()
+            .setCustomId(CUSTOM_IDS.CANCEL)
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('❌'));
+        container.addActionRowComponents(buttons);
+        await interaction.reply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    // Step 2: Show category selection
+    const categories = await supabase.getTicketCategories(interaction.guildId);
+    if (categories.length === 0) {
+        const container = ComponentsV2.errorContainer('No Categories', 'No ticket categories are available. Please contact an administrator.');
+        await interaction.reply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const container = new ContainerBuilder()
+        .setAccentColor(ComponentsV2.Accents.info)
+        .addTextDisplayComponents(ComponentsV2.text(`# 🎫 Create Support Ticket\n\n` +
+        `Select the category that best describes your issue.\n\n` +
+        `━━━━━━━━━━━━━━━━━━`));
+    const selectMenu = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+        .setCustomId(CUSTOM_IDS.CATEGORY_SELECT)
+        .setPlaceholder('Select a category...')
+        .addOptions(categories.map(c => new StringSelectMenuOptionBuilder()
+        .setLabel(c.name)
+        .setDescription(c.description || 'No description')
+        .setValue(c.id)
+        .setEmoji(c.emoji))));
+    const cancelButton = new ActionRowBuilder().addComponents(new ButtonBuilder()
+        .setCustomId(CUSTOM_IDS.CANCEL)
+        .setLabel('Cancel')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('❌'));
+    container.addActionRowComponents(selectMenu);
+    container.addActionRowComponents(cancelButton);
+    await interaction.reply({
+        components: [container],
+        flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+    });
+}
+async function handleCategorySelect(interaction) {
+    const categoryId = interaction.values[0];
+    logger.info(`🔍 [CategorySelect] ID: ${categoryId} by ${interaction.user.tag}`);
+    const category = await supabase.getTicketCategory(categoryId);
+    if (!category) {
+        const container = ComponentsV2.errorContainer('Error', 'Category not found. Please try again.');
+        await interaction.update({
+            components: [container],
+        });
+        return;
+    }
+    // Store pending ticket data
+    pendingTickets.set(interaction.user.id, {
+        categoryId: category.id,
+        categoryName: category.name,
+        categoryEmoji: category.emoji,
+        priorityDefault: category.priority_default,
+        customQuestions: category.custom_questions || [],
+    });
+    // NOTE: a modal must be shown within Discord's 3s ack window and cannot
+    // follow a defer, so we must NOT do extra DB work here. The previous email
+    // pre-fill (getLinkedAccount + getUserProfile) added two slow calls that
+    // pushed past 3s on a cold API -> "interaction failed". Leave the email
+    // blank; the form collects it.
+    const email = '';
+    // Open the ticket form modal
+    logger.info(`✨ [CategorySelect] Opening modal for ${category.name}`);
+    const modal = new ModalBuilder()
+        .setCustomId(`${CUSTOM_IDS.TICKET_FORM}_${categoryId}`)
+        .setTitle(`New Ticket: ${category.name}`);
+    // Email field (pre-filled)
+    const emailInput = new TextInputBuilder()
+        .setCustomId('email')
+        .setLabel('Email Address')
+        .setStyle(TextInputStyle.Short)
+        .setValue(email)
+        .setPlaceholder('your@email.com')
+        .setRequired(true)
+        .setMaxLength(100);
+    // Subject field
+    const subjectInput = new TextInputBuilder()
+        .setCustomId('subject')
+        .setLabel('Issue Subject')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('Brief description of your issue')
+        .setRequired(true)
+        .setMaxLength(100);
+    // Description field
+    const descriptionInput = new TextInputBuilder()
+        .setCustomId('description')
+        .setLabel('Issue Description')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Provide as much detail as possible about your issue...')
+        .setRequired(true)
+        .setMaxLength(1000);
+    modal.addComponents(new ActionRowBuilder().addComponents(emailInput), new ActionRowBuilder().addComponents(subjectInput), new ActionRowBuilder().addComponents(descriptionInput));
+    // Add up to 2 custom questions (Discord modal limit is 5 components)
+    const customQuestions = (category.custom_questions || []).slice(0, 2);
+    for (const q of customQuestions) {
+        const customInput = new TextInputBuilder()
+            .setCustomId(`custom_${q.id}`)
+            .setLabel(q.label)
+            .setStyle(q.style === 'paragraph' ? TextInputStyle.Paragraph : TextInputStyle.Short)
+            .setPlaceholder(q.placeholder || '')
+            .setRequired(q.required || false)
+            .setMaxLength(q.max_length || 500);
+        modal.addComponents(new ActionRowBuilder().addComponents(customInput));
+    }
+    try {
+        await interaction.showModal(modal);
+        logger.info(`✅ [CategorySelect] Modal shown successfully`);
+    }
+    catch (err) {
+        logger.error(`❌ [CategorySelect] Failed to show modal: ${err.message}`);
+    }
+}
+async function handleTicketFormSubmit(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
+    const pending = pendingTickets.get(interaction.user.id);
+    if (!pending) {
+        const container = ComponentsV2.errorContainer('Session Expired', 'Your ticket session has expired. Please start again.');
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+    // Get form values
+    const email = interaction.fields.getTextInputValue('email');
+    const subject = interaction.fields.getTextInputValue('subject');
+    const description = interaction.fields.getTextInputValue('description');
+    // Get custom answers
+    const customAnswers = {};
+    for (const q of pending.customQuestions) {
+        try {
+            const value = interaction.fields.getTextInputValue(`custom_${q.id}`);
+            if (value)
+                customAnswers[q.id] = value;
+        }
+        catch {
+            // Field not found
+        }
+    }
+    // Show confirmation
+    const confirmContainer = createConfirmationContainer({
+        categoryName: pending.categoryName,
+        categoryEmoji: pending.categoryEmoji,
+        email,
+        subject,
+        description,
+        customAnswers,
+        customQuestions: pending.customQuestions,
+    });
+    await interaction.editReply({
+        components: [confirmContainer],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+    // Store full data for confirmation
+    pendingTickets.set(interaction.user.id, {
+        ...pending,
+        email,
+        subject,
+        description,
+        customAnswers,
+    });
+}
+function createConfirmationContainer(data) {
+    let customFields = '';
+    if (data.customAnswers && Object.keys(data.customAnswers).length > 0) {
+        for (const q of data.customQuestions) {
+            if (data.customAnswers[q.id]) {
+                customFields += `\n» **${q.label}:** ${data.customAnswers[q.id].substring(0, 50)}${data.customAnswers[q.id].length > 50 ? '...' : ''}`;
+            }
+        }
+    }
+    const container = new ContainerBuilder()
+        .setAccentColor(ComponentsV2.Accents.info)
+        .addTextDisplayComponents(ComponentsV2.text(`# 📋 Confirm Ticket\n\n` +
+        `Please review your ticket before submitting.\n\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `### 📌 Ticket Details\n` +
+        `» **Category:** ${data.categoryEmoji} ${data.categoryName}\n` +
+        `» **Email:** ${data.email}\n` +
+        `» **Subject:** ${data.subject}\n` +
+        `${customFields}\n` +
+        `\n### 📝 Description\n` +
+        `${data.description.substring(0, 200)}${data.description.length > 200 ? '...' : ''}\n` +
+        `━━━━━━━━━━━━━━━━━━`));
+    const buttons = new ActionRowBuilder().addComponents(new ButtonBuilder()
+        .setCustomId(CUSTOM_IDS.CONFIRM)
+        .setLabel('Submit Ticket')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('✅'), new ButtonBuilder()
+        .setCustomId(CUSTOM_IDS.CANCEL)
+        .setLabel('Cancel')
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('❌'));
+    container.addActionRowComponents(buttons);
+    return container;
+}
+async function handleConfirmTicket(interaction) {
+    await interaction.deferUpdate();
+    const pending = pendingTickets.get(interaction.user.id);
+    if (!pending || !pending.subject) {
+        const container = ComponentsV2.errorContainer('Session Expired', 'Your ticket session has expired. Please start again.');
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+    // Allow ticket creation even when the account isn't linked — we remind the
+    // user to /link inside the ticket instead of blocking support entirely.
+    const linked = await getLinkedAccount(interaction.user.id);
+    // Create ticket channel
+    const guild = interaction.guild;
+    const ticketNumber = await supabase.getNextTicketNumber(guild.id);
+    const channelName = `ticket-${ticketNumber}`;
+    // Get category for routing and staff roles
+    const category = await supabase.getTicketCategory(pending.categoryId);
+    const settings = await supabase.getBotSettings(guild.id).catch(() => null);
+    // Find or create the parent category
+    let parentId = category?.discord_category_id || settings?.ticket_parent_category_id || null;
+    if (parentId) {
+        const parentChannel = await guild.channels.fetch(parentId).catch(() => null);
+        if (!parentChannel || parentChannel.type !== ChannelType.GuildCategory) {
+            parentId = null;
+        }
+    }
+    // If no parentId is set, fall back to "Tickets" category
+    if (!parentId) {
+        let ticketsCategory = guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === 'tickets');
+        if (!ticketsCategory) {
+            ticketsCategory = await guild.channels.create({
+                name: 'Tickets',
+                type: ChannelType.GuildCategory,
+            });
+        }
+        parentId = ticketsCategory.id;
+    }
+    const globalAdminRoleIds = adminRoleIds(settings)
+        .filter((roleId) => guild.roles.cache.has(roleId));
+    const globalStaffRoleIds = combinedStaffRoleIds(settings, category)
+        .filter((roleId) => guild.roles.cache.has(roleId) && !globalAdminRoleIds.includes(roleId));
+    // Create the ticket channel
+    const ticketChannel = await guild.channels.create({
+        name: channelName,
+        type: ChannelType.GuildText,
+        parent: parentId,
+        permissionOverwrites: [
+            {
+                id: guild.id,
+                deny: [PermissionFlagsBits.ViewChannel],
+            },
+            {
+                id: interaction.user.id,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.AttachFiles,
+                ],
+            },
+            ...globalStaffRoleIds.map((roleId) => ({
+                id: roleId,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.AttachFiles,
+                ],
+            })),
+            ...globalAdminRoleIds.map((roleId) => ({
+                id: roleId,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.AttachFiles,
+                    PermissionFlagsBits.ManageMessages,
+                    PermissionFlagsBits.ManageChannels,
+                ],
+            })),
+        ],
+    });
+    // Save ticket to database
+    const ticket = await supabase.createTicket({
+        guild_id: guild.id,
+        channel_id: ticketChannel.id,
+        user_id: linked?.userId ?? null,
+        discord_id: interaction.user.id,
+        category_id: pending.categoryId,
+        subject: pending.subject,
+        description: pending.description,
+        email: pending.email,
+        priority: pending.priorityDefault,
+        custom_answers: pending.customAnswers || {},
+    });
+    if (!ticket) {
+        await ticketChannel.delete().catch(() => { });
+        const container = ComponentsV2.errorContainer('Error', 'Failed to create ticket. Please try again.');
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+        return;
+    }
+    // Ping the staff/admin roles + the owner, then post the control panel that
+    // includes the user's entered details and a /link reminder if needed.
+    const staffPing = [...globalStaffRoleIds, ...globalAdminRoleIds]
+        .map((id) => `<@&${id}>`)
+        .join(' ');
+    const controlPanel = createTicketControlPanel(ticket, interaction.user, linked);
+    await ticketChannel.send({
+        components: [controlPanel],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+        allowedMentions: { parse: ['roles', 'users'] },
+    });
+    // Components V2 messages can't carry a `content` field, so ping staff + the
+    // owner in a separate plain message.
+    const ticketPing = `${staffPing} <@${interaction.user.id}>`.trim();
+    if (ticketPing) {
+        await ticketChannel.send({
+            content: ticketPing,
+            allowedMentions: { parse: ['roles', 'users'] },
+        }).catch(() => undefined);
+    }
+    // Spawn Language Selection & Live Translation card
+    const translationCard = ticketTranslationService.buildLanguageSelector(ticket.id, interaction.user.id);
+    await ticketChannel.send({
+        components: [translationCard],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    }).catch(() => undefined);
+    // Clean up pending data
+    pendingTickets.delete(interaction.user.id);
+    // Send confirmation
+    const container = ComponentsV2.successContainer('Ticket Created!', `Your ticket has been created: <#${ticketChannel.id}>\n\n` +
+        `**Ticket #${ticket.ticket_number}** — ${pending.categoryEmoji} ${pending.categoryName}`);
+    await interaction.editReply({
+        components: [container],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+    logger.info(`Ticket #${ticket.ticket_number} created by ${interaction.user.tag}`);
+}
+// ============================================
+// Add member to ticket
+// ============================================
+async function handleAddMemberButton(interaction) {
+    const ticketId = interaction.customId.split('_')[2];
+    const modal = new ModalBuilder()
+        .setCustomId(`ticket_addmember_modal_${ticketId}`)
+        .setTitle('Add a member to this ticket');
+    const input = new TextInputBuilder()
+        .setCustomId('user')
+        .setLabel('User ID or @mention')
+        .setPlaceholder('e.g. 123456789012345678')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    await interaction.showModal(modal);
+}
+async function handleAddMemberModal(interaction) {
+    await interaction.deferReply({ flags: 1 << 6 }); // ephemeral
+    const raw = String(interaction.fields.getTextInputValue('user') || '').trim();
+    const userId = (raw.match(/\d{15,20}/) || [])[0];
+    if (!userId) {
+        await interaction.editReply({ content: '❌ Could not read a user ID. Paste their Discord user ID or mention.' });
+        return;
+    }
+    const channel = interaction.channel;
+    const member = await interaction.guild?.members.fetch(userId).catch(() => null);
+    if (!member) {
+        await interaction.editReply({ content: '❌ That user is not in this server.' });
+        return;
+    }
+    try {
+        await channel.permissionOverwrites.edit(userId, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+            AttachFiles: true,
+        });
+        await interaction.editReply({ content: `✅ Added <@${userId}> to this ticket.` });
+        await channel.send({
+            content: `➕ <@${userId}> was added to the ticket by <@${interaction.user.id}>.`,
+            allowedMentions: { users: [userId] },
+        }).catch(() => undefined);
+    }
+    catch {
+        await interaction.editReply({ content: '❌ Failed to add the member (do I have Manage Channels here?).' });
+    }
+}
+// ============================================
+// Ticket Control Panel
+// ============================================
+export function createTicketControlPanel(ticket, user, linked) {
+    // Robust against website-originated tickets which may not carry every field.
+    const status = String(ticket.status || 'open');
+    const priority = String(ticket.priority || 'medium');
+    const statusEmoji = status === 'open' ? '🟢' : status === 'claimed' ? '🟡' : '🔴';
+    const priorityEmoji = {
+        low: '🟢',
+        medium: '🟡',
+        high: '🟠',
+        urgent: '🔴',
+    }[priority] || '⚪';
+    const categoryEmoji = ticket.category?.emoji || '🗂️';
+    const categoryName = ticket.category?.name || 'General';
+    const createdAt = ticket.created_at ? new Date(ticket.created_at) : new Date();
+    const createdAgo = getTimeAgo(createdAt);
+    const ownerMention = ticket.discord_id
+        ? `<@${ticket.discord_id}>`
+        : (linked?.discord_id ? `<@${linked.discord_id}>` : (ticket.email || 'Website user'));
+    const customAnswers = ticket.custom_answers && typeof ticket.custom_answers === 'object'
+        ? Object.entries(ticket.custom_answers)
+            .filter(([k, v]) => v && !['source', 'page_url', 'guest_id', 'user_agent', 'name', 'support_group'].includes(k))
+            .map(([k, v]) => `» **${k}:** ${String(v).slice(0, 300)}`)
+            .join('\n')
+        : '';
+    const container = new ContainerBuilder()
+        .setAccentColor(ComponentsV2.Accents.purple)
+        .addTextDisplayComponents(ComponentsV2.text(`# 🎟️ Support Ticket\n\n` +
+        `Ticket #${ticket.ticket_number} • ${categoryEmoji} ${categoryName}\n\n` +
+        `Please wait for a staff member to assist you. Use the buttons below to manage your ticket.\n\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `### 📊 Ticket Info\n` +
+        `» **Owner:** ${ownerMention}\n` +
+        `» **Category:** ${categoryEmoji} ${categoryName}\n` +
+        `» **Status:** ${statusEmoji} ${status.charAt(0).toUpperCase() + status.slice(1)}\n` +
+        `» **Priority:** ${priorityEmoji} ${priority.charAt(0).toUpperCase() + priority.slice(1)}\n` +
+        `» **Created:** ${createdAgo}\n` +
+        (ticket.claimed_by ? `» **Assigned:** <@${ticket.claimed_by}>\n` : '') +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `### 📝 Issue Details\n` +
+        `» **Subject:** ${ticket.subject || '—'}\n` +
+        `» **Details:**\n${String(ticket.description || '—').slice(0, 1400)}\n` +
+        (customAnswers ? customAnswers + '\n' : '') +
+        (linked ? '' : `\n⚠️ **Not linked yet?** Run \`/link\` to connect your Victus Cloud account so staff can see your services.\n`) +
+        `━━━━━━━━━━━━━━━━━━`));
+    // Note: Thumbnails added via embed thumbnail, not ContainerBuilder
+    // Control buttons
+    const isLocked = ticket.status === 'locked';
+    const isClaimed = !!ticket.claimed_by;
+    const buttons = new ActionRowBuilder().addComponents(new ButtonBuilder()
+        .setCustomId(`ticket_close_${ticket.id}`)
+        .setLabel('Close')
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('❌'), new ButtonBuilder()
+        .setCustomId(`ticket_lock_${ticket.id}`)
+        .setLabel('Lock')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('🔒')
+        .setDisabled(isLocked), new ButtonBuilder()
+        .setCustomId(`ticket_unlock_${ticket.id}`)
+        .setLabel('Unlock')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('🔓')
+        .setDisabled(!isLocked), new ButtonBuilder()
+        .setCustomId(`ticket_claim_${ticket.id}`)
+        .setLabel(isClaimed ? 'Claimed' : 'Claim')
+        .setStyle(isClaimed ? ButtonStyle.Success : ButtonStyle.Primary)
+        .setEmoji('👤')
+        .setDisabled(isClaimed));
+    // Second row with AI and linking
+    const buttons2 = new ActionRowBuilder().addComponents(new ButtonBuilder()
+        .setCustomId(`ticket_ai_${ticket.id}`)
+        .setLabel('Ask AI')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('✨'), new ButtonBuilder()
+        .setCustomId(`ticket_addmember_${ticket.id}`)
+        .setLabel('Add Member')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('➕'), new ButtonBuilder()
+        .setLabel('Victus Cloud')
+        .setStyle(ButtonStyle.Link)
+        .setURL(config.branding.website)
+        .setEmoji('🖥️'));
+    container.addActionRowComponents(buttons);
+    container.addActionRowComponents(buttons2);
+    return container;
+}
+// ============================================
+// Ticket Control Handlers
+// ============================================
+async function sendTicketArchiveSummary(interaction, ticket, settings) {
+    const archiveChannelId = settings?.ticket_archive_channel_id || settings?.log_channel_id;
+    if (!archiveChannelId)
+        return;
+    const transcriptChannel = await interaction.guild?.channels.fetch(archiveChannelId).catch(() => null);
+    if (!transcriptChannel?.isTextBased?.())
+        return;
+    // Build a full transcript from the live Discord channel history (newest →
+    // oldest, paged), then render it chronologically.
+    const lines = [];
+    try {
+        const source = interaction.channel;
+        const collected = [];
+        let beforeId;
+        for (let page = 0; page < 5; page++) { // up to ~500 messages
+            const batch = await source?.messages?.fetch({ limit: 100, before: beforeId }).catch(() => null);
+            if (!batch || batch.size === 0)
+                break;
+            collected.push(...batch.values());
+            beforeId = batch.last()?.id;
+            if (batch.size < 100)
+                break;
+        }
+        collected.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+        for (const m of collected) {
+            const ts = new Date(m.createdTimestamp).toISOString().replace('T', ' ').slice(0, 19);
+            const author = m.author?.bot
+                ? `${m.author.username} [BOT]`
+                : (m.member?.displayName || m.author?.username || 'Unknown');
+            let body = (m.content || '').trim();
+            if (!body && m.components?.length)
+                body = '[panel / buttons]';
+            else if (!body && m.embeds?.length)
+                body = '[embed]';
+            lines.push(`[${ts} UTC] ${author}: ${body}`);
+            for (const att of m.attachments?.values?.() || [])
+                lines.push(`        ↳ ${att.url}`);
+        }
+    }
+    catch {
+        // Fall back to the header only if history can't be read.
+    }
+    const ownerLine = ticket.discord_id ? `@${ticket.discord_id}` : (ticket.email || 'Website user');
+    const header = [
+        'Victus Cloud — Ticket Transcript',
+        `Ticket #${ticket.ticket_number}`,
+        `Subject:   ${ticket.subject || '—'}`,
+        `Category:  ${ticket.category?.name || 'General'}`,
+        `Owner:     ${ownerLine}`,
+        `Closed by: ${interaction.user?.tag || interaction.user?.id || 'unknown'}`,
+        `Opened:    ${ticket.created_at || '—'}`,
+        `Closed:    ${new Date().toISOString()}`,
+        `Messages:  ${lines.length}`,
+        '='.repeat(64),
+        '',
+    ].join('\n');
+    const file = new AttachmentBuilder(Buffer.from(header + lines.join('\n') + '\n', 'utf8'), {
+        name: `transcript-ticket-${ticket.ticket_number}.txt`,
+    });
+    const unix = Math.floor(Date.now() / 1000);
+    await transcriptChannel.send({
+        content: `## 🧾 Ticket Transcript — #${ticket.ticket_number}\n` +
+            `🎟️ **Category:** ${ticket.category?.emoji || '🗂️'} ${ticket.category?.name || 'General'}\n` +
+            `📝 **Subject:** ${ticket.subject || '—'}\n` +
+            `👤 **Owner:** ${ticket.discord_id ? `<@${ticket.discord_id}>` : ownerLine}\n` +
+            `🛡️ **Closed by:** <@${interaction.user.id}>  •  🕒 <t:${unix}:F>\n` +
+            `💬 **Messages:** ${lines.length}`,
+        files: [file],
+        allowedMentions: { parse: [] },
+    }).catch(() => undefined);
+}
+async function handleCloseTicket(interaction) {
+    const ticketId = interaction.customId.split('_')[2];
+    const ticket = await supabase.getTicket(ticketId);
+    if (!ticket) {
+        await interaction.reply({
+            content: '❌ Ticket not found.',
+            ephemeral: true,
+        });
+        return;
+    }
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    if (!canCloseTicket(interaction, ticket, settings)) {
+        await denyTicketAction(interaction, 'Only the ticket owner or configured staff roles can close this ticket.');
+        return;
+    }
+    // Update ticket status
+    await supabase.updateTicket(ticketId, {
+        status: 'closed',
+        closed_at: new Date().toISOString(),
+    });
+    await sendTicketArchiveSummary(interaction, ticket, settings);
+    // Send closing message
+    const container = ComponentsV2.successContainer('Ticket Closed', `This ticket has been closed by <@${interaction.user.id}>.\n\n` +
+        `The channel will be deleted in 10 seconds.`);
+    await interaction.update({
+        components: [container],
+    });
+    // Delete channel after delay
+    setTimeout(async () => {
+        try {
+            await interaction.channel.delete();
+        }
+        catch {
+            // Channel already deleted
+        }
+    }, 10000);
+    logger.info(`Ticket #${ticket.ticket_number} closed by ${interaction.user.tag}`);
+}
+async function handleLockTicket(interaction) {
+    const ticketId = interaction.customId.split('_')[2];
+    const ticket = await supabase.getTicket(ticketId);
+    if (!ticket) {
+        await interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+        return;
+    }
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    if (!memberHasTicketStaffAccess(interaction, settings, ticket.category)) {
+        await denyTicketAction(interaction, 'Only configured staff roles can lock tickets.');
+        return;
+    }
+    // Lock the channel
+    await interaction.channel.permissionOverwrites.edit(ticket.discord_id, {
+        SendMessages: false,
+    });
+    await supabase.updateTicket(ticketId, { status: 'locked' });
+    // Update control panel
+    const updatedTicket = await supabase.getTicket(ticketId);
+    const controlPanel = createTicketControlPanel(updatedTicket, interaction.user);
+    await interaction.update({
+        components: [controlPanel],
+    });
+    logger.info(`Ticket #${ticket.ticket_number} locked by ${interaction.user.tag}`);
+}
+async function handleUnlockTicket(interaction) {
+    const ticketId = interaction.customId.split('_')[2];
+    const ticket = await supabase.getTicket(ticketId);
+    if (!ticket) {
+        await interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+        return;
+    }
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    if (!memberHasTicketStaffAccess(interaction, settings, ticket.category)) {
+        await denyTicketAction(interaction, 'Only configured staff roles can unlock tickets.');
+        return;
+    }
+    // Unlock the channel
+    await interaction.channel.permissionOverwrites.edit(ticket.discord_id, {
+        SendMessages: true,
+    });
+    await supabase.updateTicket(ticketId, { status: ticket.claimed_by ? 'claimed' : 'open' });
+    // Update control panel
+    const updatedTicket = await supabase.getTicket(ticketId);
+    const controlPanel = createTicketControlPanel(updatedTicket, interaction.user);
+    await interaction.update({
+        components: [controlPanel],
+    });
+    logger.info(`Ticket #${ticket.ticket_number} unlocked by ${interaction.user.tag}`);
+}
+async function handleClaimTicket(interaction) {
+    const ticketId = interaction.customId.split('_')[2];
+    const ticket = await supabase.getTicket(ticketId);
+    if (!ticket) {
+        await interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+        return;
+    }
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    if (!memberHasTicketStaffAccess(interaction, settings, ticket.category)) {
+        await denyTicketAction(interaction, 'Only configured staff roles can claim tickets.');
+        return;
+    }
+    await supabase.updateTicket(ticketId, {
+        status: 'claimed',
+        claimed_by: interaction.user.id,
+        claimed_by_name: interaction.user.tag,
+    });
+    // Update control panel
+    const updatedTicket = await supabase.getTicket(ticketId);
+    const controlPanel = createTicketControlPanel(updatedTicket, interaction.user);
+    await interaction.update({
+        components: [controlPanel],
+    });
+    // Notify in channel
+    await interaction.channel.send({
+        content: `👤 **${interaction.user.tag}** has claimed this ticket.`,
+    });
+    logger.info(`Ticket #${ticket.ticket_number} claimed by ${interaction.user.tag}`);
+}
+async function handleAIHelp(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const ticketId = interaction.customId.split('_')[2];
+    const ticket = await supabase.getTicket(ticketId);
+    if (!ticket) {
+        await interaction.editReply({ content: '❌ Ticket not found.' });
+        return;
+    }
+    if (!config.ai.enabled) {
+        await interaction.editReply({
+            content: 'AI support is not currently enabled. A staff member will assist you shortly.',
+        });
+        return;
+    }
+    try {
+        const messages = await supabase.getTicketMessages(ticketId);
+        const suggestion = await groqAi.suggestForTicket({
+            subject: ticket.subject,
+            category: ticket.category?.name,
+            description: ticket.description,
+            messages,
+        });
+        await interaction.editReply({
+            content: formatAiMessage(suggestion),
+        });
+    }
+    catch (error) {
+        logger.error('Ticket AI suggestion failed:', error);
+        await interaction.editReply({
+            content: 'The Groq assistant could not review this ticket right now. Staff can still continue manually.',
+        });
+    }
+    if (Date.now() < 0) {
+        // Get ticket messages for context
+        const messages = await supabase.getTicketMessages(ticketId);
+        // Generate AI suggestion (simplified - would use OpenAI in production)
+        const container = ComponentsV2.infoContainer('🤖 AI Suggestion', `Based on your ticket in the **${ticket.category?.name}** category:\n\n` +
+            `**Issue:** ${ticket.subject}\n\n` +
+            `**Suggestion:** A staff member will review your ticket shortly. ` +
+            `In the meantime, please ensure you've provided all relevant details ` +
+            `including any error messages or steps to reproduce the issue.`);
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+    }
+}
+// ============================================
+// Utility Functions
+// ============================================
+function getTimeAgo(date) {
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (seconds < 60)
+        return 'Just now';
+    if (seconds < 3600)
+        return `${Math.floor(seconds / 60)} minutes ago`;
+    if (seconds < 86400)
+        return `${Math.floor(seconds / 3600)} hours ago`;
+    return `${Math.floor(seconds / 86400)} days ago`;
+}
+// ============================================
+// Enhanced Category Management
+// ============================================
+async function handleCategoryEdit(interaction) {
+    const guildId = interaction.guildId;
+    const categoryId = interaction.options.getString('category', true);
+    const name = interaction.options.getString('name');
+    const emoji = interaction.options.getString('emoji');
+    const description = interaction.options.getString('description');
+    const parentId = interaction.options.getString('parent_id');
+    const updates = {};
+    if (name)
+        updates.name = name;
+    if (emoji)
+        updates.emoji = emoji;
+    if (description)
+        updates.description = description;
+    if (parentId !== null)
+        updates.discord_category_id = parentId;
+    if (Object.keys(updates).length === 0) {
+        await interaction.editReply({ content: '❌ No changes specified.' });
+        return;
+    }
+    const success = await supabase.updateTicketCategory(categoryId, updates);
+    if (success) {
+        const container = ComponentsV2.successContainer('Category Updated', `Successfully updated the ticket category.`);
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+    }
+    else {
+        await interaction.editReply({ content: '❌ Failed to update category.' });
+    }
+}
+async function handleCategoryQuestions(interaction) {
+    const categoryId = interaction.options.getString('category', true);
+    const action = interaction.options.getString('action', true);
+    const category = await supabase.getTicketCategory(categoryId);
+    if (!category) {
+        await interaction.editReply({ content: '❌ Category not found.' });
+        return;
+    }
+    if (action === 'list') {
+        const questions = category.custom_questions || [];
+        if (questions.length === 0) {
+            await interaction.editReply({ content: 'ℹ️ This category has no custom questions.' });
+            return;
+        }
+        const questionList = questions.map((q, i) => `**${i + 1}.** ${q.label} (${q.required ? 'Required' : 'Optional'})\n` +
+            `-# Style: ${q.style} | Placeholder: ${q.placeholder || 'None'}`).join('\n\n');
+        const container = new ContainerBuilder()
+            .setAccentColor(ComponentsV2.Accents.info)
+            .addTextDisplayComponents(ComponentsV2.text(`# ❓ Custom Questions: ${category.emoji} ${category.name}\n\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `${questionList}\n` +
+            `━━━━━━━━━━━━━━━━━━\n\n` +
+            `-# Use \`/ticket category questions action:remove\` to delete a question.`));
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+    }
+    else if (action === 'add') {
+        const container = ComponentsV2.infoContainer('Add Custom Question', `Click the button below to add a custom question to **${category.emoji} ${category.name}**.`);
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder()
+            .setCustomId(`ticket_question_add_${categoryId}`)
+            .setLabel('Open Question Form')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('➕'));
+        await interaction.editReply({
+            components: [container, row],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+    }
+    else if (action === 'remove') {
+        const questions = category.custom_questions || [];
+        if (questions.length === 0) {
+            await interaction.editReply({ content: 'ℹ️ This category has no custom questions to remove.' });
+            return;
+        }
+        const select = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+            .setCustomId(`ticket_question_remove_${categoryId}`)
+            .setPlaceholder('Select a question to remove...')
+            .addOptions(questions.map((q, i) => ({
+            label: q.label.substring(0, 100),
+            description: `Position: ${i + 1}`,
+            value: i.toString(),
+        }))));
+        await interaction.editReply({
+            content: `Select a question to remove from **${category.emoji} ${category.name}**:`,
+            components: [select],
+        });
+    }
+}
+async function handleRemoveQuestion(interaction, categoryId, index) {
+    const category = await supabase.getTicketCategory(categoryId);
+    if (!category) {
+        await interaction.reply({ content: '❌ Category not found.', ephemeral: true });
+        return;
+    }
+    const questions = category.custom_questions || [];
+    questions.splice(index, 1);
+    const success = await supabase.updateTicketCategory(categoryId, { custom_questions: questions });
+    if (success) {
+        await interaction.update({
+            content: '✅ Question removed successfully.',
+            components: [],
+        });
+    }
+    else {
+        await interaction.reply({ content: '❌ Failed to remove question.', ephemeral: true });
+    }
+}
+async function handleShowQuestionAddModal(interaction, categoryId) {
+    const modal = new ModalBuilder()
+        .setCustomId(`ticket_question_modal_${categoryId}`)
+        .setTitle('Add Custom Question');
+    const labelInput = new TextInputBuilder()
+        .setCustomId('label')
+        .setLabel('Question Label')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. Website URL, Account ID, etc.')
+        .setRequired(true)
+        .setMaxLength(45);
+    const placeholderInput = new TextInputBuilder()
+        .setCustomId('placeholder')
+        .setLabel('Placeholder Text')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('Instruction for the user...')
+        .setRequired(false)
+        .setMaxLength(100);
+    const styleInput = new TextInputBuilder()
+        .setCustomId('style')
+        .setLabel('Style (short or paragraph)')
+        .setStyle(TextInputStyle.Short)
+        .setValue('short')
+        .setRequired(true);
+    const requiredInput = new TextInputBuilder()
+        .setCustomId('required')
+        .setLabel('Required? (yes or no)')
+        .setStyle(TextInputStyle.Short)
+        .setValue('yes')
+        .setRequired(true);
+    modal.addComponents(new ActionRowBuilder().addComponents(labelInput), new ActionRowBuilder().addComponents(placeholderInput), new ActionRowBuilder().addComponents(styleInput), new ActionRowBuilder().addComponents(requiredInput));
+    await interaction.showModal(modal);
+}
+async function handleAddQuestionSubmit(interaction, categoryId) {
+    const label = interaction.fields.getTextInputValue('label');
+    const placeholder = interaction.fields.getTextInputValue('placeholder');
+    const styleStr = interaction.fields.getTextInputValue('style').toLowerCase();
+    const requiredStr = interaction.fields.getTextInputValue('required').toLowerCase();
+    const category = await supabase.getTicketCategory(categoryId);
+    if (!category) {
+        await interaction.reply({ content: '❌ Category not found.', ephemeral: true });
+        return;
+    }
+    const questions = category.custom_questions || [];
+    // Discord Modal Limit check: max 5 questions total (3 standard + 2 custom)
+    if (questions.length >= 2) {
+        await interaction.reply({
+            content: '⚠️ Max 2 custom questions allowed per category (due to Discord modal limits).',
+            ephemeral: true
+        });
+        return;
+    }
+    questions.push({
+        id: Math.random().toString(36).substring(7),
+        label,
+        placeholder: placeholder || undefined,
+        style: styleStr === 'paragraph' ? 'paragraph' : 'short',
+        required: requiredStr !== 'no',
+    });
+    const success = await supabase.updateTicketCategory(categoryId, { custom_questions: questions });
+    if (success) {
+        await interaction.reply({
+            content: `✅ Added question: **${label}** to **${category.name}**.`,
+            ephemeral: true
+        });
+    }
+    else {
+        await interaction.reply({ content: '❌ Failed to add question.', ephemeral: true });
+    }
+}
+// ============================================
+// Multi-Language Translation Handlers
+// ============================================
+async function handleTicketTranslateCommand(interaction) {
+    const channelId = interaction.channelId;
+    const ticket = await supabase.getTicketByChannel(channelId).catch(() => null);
+    if (!ticket) {
+        await interaction.reply({
+            content: '⚠️ This command can only be used inside an active ticket channel.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
+    const isStaff = memberHasTicketStaffAccess(interaction, settings, ticket.category);
+    const isOwner = interaction.user.id === ticket.discord_id;
+    if (!isStaff && !isOwner) {
+        await interaction.reply({
+            content: '⛔ Only staff members or the ticket creator can manage ticket translation.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const action = interaction.options.getString('action', true);
+    const langCode = interaction.options.getString('language');
+    if (action === 'set') {
+        if (!langCode) {
+            await interaction.reply({
+                content: '⚠️ Please select a language when using the `set` action.',
+                flags: MessageFlags.Ephemeral,
+            });
+            return;
+        }
+        const updated = await ticketTranslationService.setLanguage(channelId, ticket.id, ticket.discord_id, langCode, langCode !== 'en');
+        const card = ticketTranslationService.buildLanguageSelector(ticket.id, ticket.discord_id, updated);
+        await interaction.reply({
+            content: `🌐 **Ticket translation updated!** Language set to **${updated.languageEmoji} ${updated.languageName}** (${updated.enabled ? '🟢 Enabled' : '⏸️ Paused'}).`,
+            flags: MessageFlags.Ephemeral,
+        });
+        await interaction.channel.send({
+            components: [card],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        }).catch(() => undefined);
+        return;
+    }
+    if (action === 'enable' || action === 'disable' || action === 'toggle') {
+        const explicit = action === 'enable' ? true : action === 'disable' ? false : undefined;
+        let current = await ticketTranslationService.getState(channelId);
+        if (!current) {
+            current = await ticketTranslationService.setLanguage(channelId, ticket.id, ticket.discord_id, 'en', false);
+        }
+        const updated = await ticketTranslationService.toggleTranslation(channelId, explicit);
+        const card = ticketTranslationService.buildLanguageSelector(ticket.id, ticket.discord_id, updated);
+        await interaction.reply({
+            content: updated?.enabled
+                ? `🟢 **Live Translation Activated!** Messages will auto-translate between **${updated.languageEmoji} ${updated.languageName}** and **🇬🇧 English**.`
+                : `⏸️ **Live Translation Paused.** Translation has been disabled by <@${interaction.user.id}>.`,
+        });
+        await interaction.channel.send({
+            components: [card],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        }).catch(() => undefined);
+    }
+}
+async function handleTranslationToggle(interaction) {
+    const channelId = interaction.channelId;
+    const ticket = await supabase.getTicketByChannel(channelId).catch(() => null);
+    if (!ticket) {
+        await interaction.reply({ content: '⚠️ Ticket not found.', flags: MessageFlags.Ephemeral });
+        return;
+    }
+    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
+    const isStaff = memberHasTicketStaffAccess(interaction, settings, ticket.category);
+    const isOwner = interaction.user.id === ticket.discord_id;
+    if (!isStaff && !isOwner) {
+        await interaction.reply({
+            content: '⛔ Only staff or the ticket creator can toggle translation.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const updated = await ticketTranslationService.toggleTranslation(channelId);
+    if (!updated) {
+        await interaction.reply({ content: '⚠️ No translation state found for this ticket.', flags: MessageFlags.Ephemeral });
+        return;
+    }
+    const card = ticketTranslationService.buildLanguageSelector(ticket.id, ticket.discord_id, updated);
+    await interaction.update({
+        components: [card],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+    const statusMsg = updated.enabled
+        ? `▶️ **Live Translation Resumed!** Auto-translating between **${updated.languageEmoji} ${updated.languageName}** and **🇬🇧 English**.`
+        : `⏸️ **Live Translation Paused.** Translation has been temporarily disabled by <@${interaction.user.id}>.`;
+    await interaction.channel.send({ content: statusMsg }).catch(() => undefined);
+}
+async function handleTranslationReset(interaction) {
+    const channelId = interaction.channelId;
+    const ticket = await supabase.getTicketByChannel(channelId).catch(() => null);
+    if (!ticket) {
+        await interaction.reply({ content: '⚠️ Ticket not found.', flags: MessageFlags.Ephemeral });
+        return;
+    }
+    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
+    const isStaff = memberHasTicketStaffAccess(interaction, settings, ticket.category);
+    const isOwner = interaction.user.id === ticket.discord_id;
+    if (!isStaff && !isOwner) {
+        await interaction.reply({
+            content: '⛔ Only staff or the ticket creator can reset translation.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const updated = await ticketTranslationService.setLanguage(channelId, ticket.id, ticket.discord_id, 'en', false);
+    const card = ticketTranslationService.buildLanguageSelector(ticket.id, ticket.discord_id, updated);
+    await interaction.update({
+        components: [card],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+    await interaction.channel.send({
+        content: `🇬🇧 **Translation Disabled.** Language reset to standard English by <@${interaction.user.id}>.`,
+    }).catch(() => undefined);
+}
+async function handleLanguageSelect(interaction) {
+    const customId = interaction.customId;
+    const [, ticketId, customerId] = customId.split(':');
+    const selectedLang = interaction.values[0];
+    const channelId = interaction.channelId;
+    const ticket = await supabase.getTicketByChannel(channelId).catch(() => null);
+    const updated = await ticketTranslationService.setLanguage(channelId, ticketId, customerId, selectedLang, selectedLang !== 'en');
+    const card = ticketTranslationService.buildLanguageSelector(ticketId, customerId, updated);
+    await interaction.update({
+        components: [card],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    });
+    if (selectedLang !== 'en') {
+        const announcement = `🌐 **Live Multi-Language Translation Activated!**\n` +
+            `• Messages from <@${customerId}> will be auto-translated from **${updated.languageEmoji} ${updated.languageName}** to **🇬🇧 English** for staff.\n` +
+            `• Staff responses in English will be translated to **${updated.languageEmoji} ${updated.languageName}** for <@${customerId}>.\n` +
+            `• Staff can pause, re-enable, or reset translation anytime using the buttons above or \`/ticket translate\`.`;
+        await interaction.channel.send({ content: announcement }).catch(() => undefined);
+    }
+    else {
+        await interaction.channel.send({
+            content: `🇬🇧 **Standard English Selected.** Auto-translation is disabled for this ticket.`,
+        }).catch(() => undefined);
+    }
+}

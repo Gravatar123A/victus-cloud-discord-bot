@@ -1,0 +1,135 @@
+import { LavalinkManager } from 'lavalink-client';
+import { config } from '../config.js';
+import { logger } from '../utils/logger.js';
+import { ComponentsV2 } from '../embeds/componentsV2.js';
+import { nowPlayingContainer } from '../embeds/music.js';
+const V2 = ComponentsV2.IS_COMPONENTS_V2;
+/**
+ * Build the Lavalink manager, attach it to the client (`client.lavalink`) and
+ * forward Discord's raw voice packets so voice connections can be established.
+ */
+export function createLavalinkManager(client) {
+    if (!config.lavalink.password) {
+        logger.error('🎵 LAVALINK_PASSWORD is not set. Music commands will remain unavailable.');
+    }
+    const manager = new LavalinkManager({
+        nodes: [
+            {
+                id: config.lavalink.id,
+                host: config.lavalink.host,
+                port: config.lavalink.port,
+                authorization: config.lavalink.password,
+                secure: config.lavalink.secure,
+                retryAmount: 5,
+                retryDelay: 30_000,
+            },
+        ],
+        sendToShard: (guildId, payload) => client.guilds.cache.get(guildId)?.shard?.send(payload),
+        client: {
+            id: config.discord.clientId,
+            username: config.branding.name,
+        },
+        autoSkip: true,
+        playerOptions: {
+            defaultSearchPlatform: config.lavalink.defaultSource,
+            clientBasedPositionUpdateInterval: 1000,
+            onDisconnect: { autoReconnect: true, destroyPlayer: false },
+            // Leave the voice channel a couple of minutes after the queue runs dry.
+            onEmptyQueue: { destroyAfterMs: 120_000 },
+        },
+        queueOptions: { maxPreviousTracks: 25 },
+    });
+    client.lavalink = manager;
+    // Forward raw gateway events (VOICE_STATE_UPDATE / VOICE_SERVER_UPDATE).
+    client.on('raw', (d) => {
+        manager.sendRawData(d).catch(() => undefined);
+    });
+    attachNodeListeners(manager);
+    attachPlayerListeners(client, manager);
+    return manager;
+}
+function attachNodeListeners(manager) {
+    manager.nodeManager
+        .on('connect', (node) => logger.info(`🎵 Lavalink node "${node.id}" connected`))
+        .on('reconnecting', (node) => logger.warn(`🎵 Lavalink node "${node.id}" reconnecting...`))
+        .on('disconnect', (node, reason) => logger.warn(`🎵 Lavalink node "${node.id}" disconnected: ${JSON.stringify(reason)}`))
+        .on('error', (node, error) => {
+        const message = error?.message || String(error);
+        const authenticationHint = /\b(401|403|unauthori[sz]ed|forbidden)\b/i.test(message)
+            ? ' Check that LAVALINK_PASSWORD matches server.password on the node.'
+            : '';
+        logger.error(`🎵 Lavalink node "${node.id}" error: ${message}.${authenticationHint}`);
+    });
+}
+/** Whether at least one authenticated Lavalink websocket is ready for work. */
+export function isMusicAvailable(client) {
+    if (!config.lavalink.password)
+        return false;
+    return client.lavalink.nodeManager.leastUsedNodes().length > 0;
+}
+async function getTextChannel(client, player) {
+    if (!player.textChannelId)
+        return null;
+    const channel = client.channels.cache.get(player.textChannelId) ||
+        (await client.channels.fetch(player.textChannelId).catch(() => null));
+    return channel && channel.isTextBased() ? channel : null;
+}
+/** Delete the previous Now Playing panel for a player, if any. */
+async function clearNowPlaying(client, player) {
+    const msg = player.get('npMessage');
+    if (msg) {
+        await msg.delete().catch(() => undefined);
+        player.set('npMessage', undefined);
+    }
+}
+/** Post a fresh Now Playing panel, replacing any previous one. */
+export async function postNowPlaying(client, player) {
+    const channel = await getTextChannel(client, player);
+    if (!channel || !('send' in channel))
+        return;
+    await clearNowPlaying(client, player);
+    const payload = await nowPlayingContainer(player, 'guild' in channel ? channel.guild : undefined);
+    const sent = await channel
+        .send({ embeds: payload.embeds, components: payload.components, files: payload.files, flags: V2 })
+        .catch(() => null);
+    if (sent)
+        player.set('npMessage', sent);
+}
+/** Refresh the existing Now Playing panel in place (e.g. after pause/loop). */
+export async function refreshNowPlaying(player) {
+    const msg = player.get('npMessage');
+    if (!msg)
+        return;
+    const payload = await nowPlayingContainer(player, msg.guild);
+    await msg.edit({ embeds: payload.embeds, components: payload.components, files: payload.files, flags: V2 }).catch(() => undefined);
+}
+function attachPlayerListeners(client, manager) {
+    manager
+        .on('trackStart', async (player) => {
+        await postNowPlaying(client, player);
+    })
+        .on('queueEnd', async (player) => {
+        await clearNowPlaying(client, player);
+        const channel = await getTextChannel(client, player);
+        if (channel && 'send' in channel) {
+            await channel
+                .send({
+                components: [
+                    ComponentsV2.infoContainer('Queue Finished', 'That was the last track. Add more with `/play` — I will leave the voice channel if the queue stays empty.'),
+                ],
+                flags: V2,
+            })
+                .catch(() => undefined);
+        }
+    })
+        .on('playerDestroy', async (player) => {
+        await clearNowPlaying(client, player);
+    })
+        .on('trackError', (player, track, payload) => {
+        logger.warn(`🎵 Track error in guild ${player.guildId}: ${JSON.stringify(payload?.exception ?? payload)}`);
+    })
+        .on('trackStuck', (player) => {
+        logger.warn(`🎵 Track stuck in guild ${player.guildId} — skipping.`);
+        player.skip().catch(() => undefined);
+    });
+}

@@ -1,0 +1,335 @@
+import { supabase } from './supabase.js';
+import { pterodactyl } from './pterodactyl.js';
+import { compactId, decodeDisplayText, formatCredits, statusLabel } from '../utils/premium.js';
+const POWER_ACTIONS = {
+    start: 'start',
+    boot: 'start',
+    run: 'start',
+    stop: 'stop',
+    shutdown: 'stop',
+    restart: 'restart',
+    reboot: 'restart',
+    kill: 'kill',
+};
+function normalizedPrompt(prompt) {
+    return prompt.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+function record(server) {
+    return {
+        ...server,
+        ...(server.attributes || {}),
+    };
+}
+function serverIdentifier(server) {
+    const data = record(server);
+    return String(data.identifier || data.uuid || data.id || '');
+}
+function serverName(server) {
+    return decodeDisplayText(record(server).name, 'Unknown server');
+}
+function serverStatus(server) {
+    const data = record(server);
+    return data.is_suspended || data.suspended ? 'suspended' : String(data.status || 'offline');
+}
+function hasSensitiveAccountIntent(text) {
+    // Any mention of the user's own account/billing data should hit the handler
+    // (which fetches the real values) instead of falling through to a generic
+    // "go to the website" answer.
+    const topic = /\b(e-?mail|mail address|phone|invoice|invoices|bill|billing|payment|payments|owe|transactions?|coins?|credits?|balance|wallet)\b/;
+    if (!topic.test(text))
+        return false;
+    const personal = /\b(my|mine|i|me|linked|victus|account)\b/.test(text);
+    const verb = /\b(check|show|view|see|get|list|pull up|look ?up|what'?s?|what is|how much|how many|do i|have i|any)\b/.test(text);
+    return personal || verb;
+}
+function hasServerListIntent(text) {
+    if (!/\bservers?\b/.test(text))
+        return false;
+    const asksForServers = /\b(how many|list|show|view|see|what|which|status|statuses|have|own|got|attached|connected|do i)\b/.test(text);
+    const belongsToUser = /\b(my|mine|i|me)\b/.test(text) ||
+        /\b(do i have|i have|i got|have i got|servers? i got|servers? do i have)\b/.test(text);
+    return asksForServers && belongsToUser;
+}
+function hasServiceIntent(text) {
+    if (/\b(victus\s*cloud|victus)\b/i.test(text) && /\b(offers?|provides?|have|do you offer|what.*services)\b/i.test(text) && !/\b(my|mine)\b/.test(text)) {
+        if (/\b(what|which|list).*(services|offers|provides)/i.test(text) || /\bservices.*(victus|offers|provides)/i.test(text))
+            return false;
+    }
+    if (/^\s*(what|which|list).*\bservices\b.*\b(victus|offers|provides|do you)\b/i.test(text))
+        return false;
+    const topic = /\b(services?|orders?|subscriptions?|hosting plans?|active hosting|my plan)\b/;
+    if (!topic.test(text))
+        return false;
+    const personal = /\b(my|mine|i|me)\b/.test(text);
+    const verb = /\b(list|show|view|see|what|which|how many|have|own|got|active|check|get|do i|any)\b/.test(text);
+    return personal && verb;
+}
+function parsePowerIntent(text) {
+    if (/^\s*(how|what|where|when|why)\b/.test(text) && !/\b(can you|please|for me)\b/.test(text)) {
+        return null;
+    }
+    const phraseAction = text.match(/\b(?:turn|power)\s+(on|off)\b/);
+    const actionMatch = text.match(/\b(start|boot|run|stop|shutdown|restart|reboot|kill)\b/);
+    const action = phraseAction?.[1] === 'on' ? 'start' : phraseAction?.[1] === 'off' ? 'stop' : actionMatch?.[1];
+    if (!action)
+        return null;
+    const signal = POWER_ACTIONS[action];
+    if (!signal)
+        return null;
+    const commandLike = text.startsWith(action) ||
+        (phraseAction && text.includes(phraseAction[0])) ||
+        /\b(can you|please|pls|could you|would you|i need you to|turn)\b/.test(text) ||
+        /\b(my|the)\b.{0,30}\bserver\b/.test(text);
+    if (!commandLike)
+        return null;
+    let serverSearch = '';
+    const quoted = text.match(/["'`](.+?)["'`]/);
+    if (quoted?.[1]) {
+        serverSearch = quoted[1];
+    }
+    else {
+        const afterServer = text.match(/\bserver\s+(?:named|called)?\s*([a-z0-9_.\- ]{2,64})/);
+        const actionPhrase = phraseAction?.[0] || action;
+        const afterAction = text.match(new RegExp(`\\b${actionPhrase}\\b\\s+(?:my\\s+|the\\s+)?([a-z0-9_.\\- ]{2,64}?)(?:\\s+server)?$`));
+        serverSearch = (afterServer?.[1] || afterAction?.[1] || '')
+            .replace(/\b(server|please|pls|for me|now|thanks|thank you)\b/g, '')
+            .trim();
+    }
+    return { signal, serverSearch };
+}
+async function getLinkedContext(discordId) {
+    const linked = await supabase.getLinkedAccount(discordId).catch(() => null);
+    if (!linked)
+        return null;
+    const profile = await supabase.getUserProfile(linked.user_id).catch(() => null);
+    return { userId: linked.user_id, profile };
+}
+async function getServers(profile) {
+    if (!profile?.email)
+        return [];
+    return await supabase.getUserServers(profile.email);
+}
+async function getBillingUserId(email) {
+    const billingUser = await supabase.getBillingUserByEmail(email).catch(() => null);
+    return String(billingUser?.id || billingUser?.attributes?.id || '');
+}
+async function getUserInvoices(profile) {
+    const email = profile?.email?.toLowerCase();
+    if (!email)
+        return [];
+    const [invoices, billingUserId] = await Promise.all([
+        supabase.getInvoices().catch(() => []),
+        getBillingUserId(email),
+    ]);
+    return invoices.filter((invoice) => {
+        const invoiceEmail = String(invoice.user?.email || invoice.email || invoice.customer_email || '').toLowerCase();
+        const userId = String(invoice.user_id || invoice.customer_id || invoice.user?.id || '');
+        return invoiceEmail === email || (billingUserId && userId === billingUserId);
+    });
+}
+async function getUserServices(profile) {
+    const email = profile?.email?.toLowerCase();
+    if (!email)
+        return [];
+    const [orders, billingUserId] = await Promise.all([
+        supabase.getOrders().catch(() => []),
+        getBillingUserId(email),
+    ]);
+    return orders.filter((order) => {
+        const orderEmail = String(order.user?.email || order.email || order.customer_email || '').toLowerCase();
+        const userId = String(order.user_id || order.customer_id || order.user?.id || '');
+        return orderEmail === email || (billingUserId && userId === billingUserId);
+    });
+}
+function findServer(servers, search) {
+    if (servers.length === 1 && !search)
+        return { server: servers[0] };
+    if (!search)
+        return {};
+    const term = search.toLowerCase();
+    const matches = servers.filter((server) => {
+        const name = serverName(server).toLowerCase();
+        const identifier = serverIdentifier(server).toLowerCase();
+        return identifier === term || identifier.includes(term) || name === term || name.includes(term);
+    });
+    if (matches.length === 1)
+        return { server: matches[0] };
+    if (matches.length > 1)
+        return { ambiguous: matches };
+    return {};
+}
+function serverListSummary(servers) {
+    if (servers.length === 0) {
+        return 'I do not see any servers attached to your linked Victus account yet.';
+    }
+    const lines = servers.slice(0, 8).map((server, index) => {
+        const identifier = serverIdentifier(server);
+        return `${index + 1}. **${serverName(server)}** \`${compactId(identifier)}\` - ${statusLabel(serverStatus(server))}`;
+    });
+    const extra = servers.length > lines.length ? `\nand ${servers.length - lines.length} more.` : '';
+    return `You have **${servers.length}** server${servers.length === 1 ? '' : 's'} on your linked Victus account:\n${lines.join('\n')}${extra}`;
+}
+function invoiceListSummary(invoices) {
+    if (invoices.length === 0) {
+        return 'I do not see any invoices attached to your linked Victus account yet.';
+    }
+    const lines = invoices.slice(0, 8).map((invoice, index) => {
+        const amount = invoice.total || invoice.amount || '0.00';
+        const status = invoice.status || 'pending';
+        const date = invoice.created_at ? new Date(invoice.created_at).toLocaleDateString() : 'unknown date';
+        return `${index + 1}. Invoice **#${invoice.id || '-'}** - **$${amount}** - ${status} - ${date}`;
+    });
+    const extra = invoices.length > lines.length ? `\nand ${invoices.length - lines.length} more.` : '';
+    return `You have **${invoices.length}** invoice${invoices.length === 1 ? '' : 's'}:\n${lines.join('\n')}${extra}`;
+}
+function serviceListSummary(services) {
+    if (services.length === 0) {
+        return 'I do not see any active services attached to your linked Victus account yet.';
+    }
+    const lines = services.slice(0, 8).map((service, index) => {
+        const name = service.product?.name || service.product_name || `Service #${service.id || '-'}`;
+        const status = service.status || 'active';
+        const price = service.price || service.total || '0.00';
+        const renewsAt = service.renewal_date || service.due_date
+            ? new Date(service.renewal_date || service.due_date).toLocaleDateString()
+            : 'no renewal date';
+        return `${index + 1}. **${decodeDisplayText(name)}** - **${status}** - $${price}/mo - ${renewsAt}`;
+    });
+    const extra = services.length > lines.length ? `\nand ${services.length - lines.length} more.` : '';
+    return `You have **${services.length}** service${services.length === 1 ? '' : 's'}:\n${lines.join('\n')}${extra}`;
+}
+async function handleSensitiveAccountQuestion(text, context) {
+    if (!hasSensitiveAccountIntent(text))
+        return { handled: false };
+    const linked = await getLinkedContext(context.discordId);
+    if (!linked) {
+        return {
+            handled: true,
+            content: 'That is private account info. Connect your Victus account to Discord first, then ask me in DMs.',
+        };
+    }
+    const privateLines = [];
+    if (/\b(e-?mail|mail address)\b/.test(text)) {
+        privateLines.push(`Your linked Victus account email is \`${linked.profile?.email || 'not available'}\`.`);
+    }
+    // "coins"/"wallet" -> the Paymenter COINS figure (the in-app wallet).
+    if (/\b(coins?|wallet)\b/.test(text)) {
+        const email = linked.profile?.email;
+        if (email) {
+            const balances = await supabase.getPaymenterBalances(email);
+            const coinsCur = (process.env.VICTUS_COINS_CURRENCY || 'COINS').toUpperCase();
+            privateLines.push(`Your Victus wallet holds **${formatCredits(balances.coins, coinsCur)}**.`);
+        }
+        else {
+            privateLines.push('Link a Victus account email first to see your COINS wallet.');
+        }
+    }
+    // "balance"/"credits" -> the billing credit (USD) figure.
+    if (/\b(balance|credits?)\b/.test(text) && !/\b(coins?|wallet)\b/.test(text)) {
+        const balance = await supabase.getCreditBalance(linked.profile);
+        privateLines.push(`Your current billing credit balance is **${formatCredits(balance.amount, balance.currency)}**.`);
+    }
+    if (/\b(invoice|invoices|bill|billing|payment|payments|owe|transactions?)\b/.test(text)) {
+        privateLines.push(invoiceListSummary(await getUserInvoices(linked.profile)));
+    }
+    if (privateLines.length === 0) {
+        // Topic matched (e.g. "billing") but no specific sub-topic — default to
+        // showing invoices + balance rather than deflecting.
+        const balance = await supabase.getCreditBalance(linked.profile);
+        privateLines.push(`Your current wallet balance is **${formatCredits(balance.amount, balance.currency)}**.`);
+        privateLines.push(invoiceListSummary(await getUserInvoices(linked.profile)));
+    }
+    const dmContent = privateLines.join('\n');
+    if (context.publicReply) {
+        return {
+            handled: true,
+            content: 'That is private account info, so come to DMs for the answer. I sent what I can there.',
+            dmContent,
+        };
+    }
+    return { handled: true, content: dmContent };
+}
+async function handleServerQuestion(text, context) {
+    const powerIntent = parsePowerIntent(text);
+    if (!powerIntent && !hasServerListIntent(text))
+        return { handled: false };
+    const linked = await getLinkedContext(context.discordId);
+    if (!linked) {
+        return {
+            handled: true,
+            content: 'I can show your Victus servers after your Discord account is connected to your Victus account.',
+        };
+    }
+    const servers = await getServers(linked.profile);
+    if (!powerIntent) {
+        return { handled: true, content: serverListSummary(servers) };
+    }
+    if (servers.length === 0) {
+        return { handled: true, content: 'I could not find any servers attached to your linked Victus account.' };
+    }
+    const match = findServer(servers, powerIntent.serverSearch);
+    if (match.ambiguous?.length) {
+        const options = match.ambiguous.slice(0, 6).map((server) => `- **${serverName(server)}** \`${serverIdentifier(server)}\``);
+        return {
+            handled: true,
+            content: `I found multiple matching servers. Tell me the exact server ID or name:\n${options.join('\n')}`,
+        };
+    }
+    if (!match.server) {
+        const hint = servers.slice(0, 6).map((server) => `- **${serverName(server)}** \`${serverIdentifier(server)}\``);
+        return {
+            handled: true,
+            content: `Which server should I ${powerIntent.signal}? Your linked servers are:\n${hint.join('\n')}`,
+        };
+    }
+    const identifier = serverIdentifier(match.server);
+    try {
+        await pterodactyl.sendPowerSignal(identifier, powerIntent.signal);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'Panel power API failed.';
+        return {
+            handled: true,
+            content: `I found **${serverName(match.server)}**, but I could not send the power action: ${message}`,
+        };
+    }
+    return {
+        handled: true,
+        content: `Sent **${powerIntent.signal}** to **${serverName(match.server)}** \`${compactId(identifier)}\`.`,
+    };
+}
+async function handleServiceQuestion(text, context) {
+    if (!hasServiceIntent(text))
+        return { handled: false };
+    const linked = await getLinkedContext(context.discordId);
+    if (!linked) {
+        return {
+            handled: true,
+            content: 'I can show your Victus services after your Discord account is connected to your Victus account.',
+        };
+    }
+    const content = serviceListSummary(await getUserServices(linked.profile));
+    if (context.publicReply) {
+        return {
+            handled: true,
+            content: 'That is account-specific, so come to DMs for the service list. I sent what I can there.',
+            dmContent: content,
+        };
+    }
+    return { handled: true, content };
+}
+class VictusAiActionsService {
+    async tryHandle(prompt, context) {
+        const text = normalizedPrompt(prompt);
+        if (!text)
+            return { handled: false };
+        const sensitive = await handleSensitiveAccountQuestion(text, context);
+        if (sensitive.handled)
+            return sensitive;
+        const servers = await handleServerQuestion(text, context);
+        if (servers.handled)
+            return servers;
+        return handleServiceQuestion(text, context);
+    }
+}
+export const victusAiActions = new VictusAiActionsService();

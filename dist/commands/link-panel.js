@@ -1,0 +1,132 @@
+import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder, } from 'discord.js';
+import { supabase } from '../services/supabase.js';
+import { config } from '../config.js';
+import { ComponentsV2 } from '../embeds/componentsV2.js';
+import { generateLinkToken, getExpiryTime } from '../utils/tokens.js';
+import { logger } from '../utils/logger.js';
+import { assignLinkedRole } from '../utils/roles.js';
+import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
+const LINK_PANEL_BUTTON = 'victus_link_panel_start';
+const LINK_POLL_INTERVAL_MS = 10000;
+const LINK_POLL_MAX_ATTEMPTS = 30;
+function canManageLinkPanel(interaction) {
+    return Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ||
+        interaction.memberPermissions?.has(PermissionFlagsBits.Administrator));
+}
+function watchForCompletedLink(interaction) {
+    const discordId = interaction.user.id;
+    const guildId = interaction.guildId;
+    let attempts = 0;
+    const pollInterval = setInterval(async () => {
+        attempts++;
+        if (attempts > LINK_POLL_MAX_ATTEMPTS) {
+            clearInterval(pollInterval);
+            return;
+        }
+        const linked = await supabase.getLinkedAccount(discordId);
+        if (!linked)
+            return;
+        clearInterval(pollInterval);
+        logger.info(`Link panel polling: account link detected for ${discordId}`);
+        const roleSuccess = await assignLinkedRole(interaction.client, discordId);
+        const dmContainer = ComponentsV2.successContainer('Account Successfully Linked', 'Your Discord account has been linked to Victus Cloud.\n\n' +
+            (roleSuccess
+                ? 'Your website linked role has been assigned.'
+                : 'Your account is linked, but I could not assign the linked role. Please contact staff.'));
+        await sendNotificationDM(interaction.client, discordId, dmContainer, 'security');
+        if (guildId) {
+            await sendAuditLog(interaction.client, guildId, 'Account Linked (Link Panel)', `User: <@${discordId}> (${discordId})\n` +
+                `Status: ${roleSuccess ? 'Role assigned' : 'Role assignment failed or unavailable'}`, roleSuccess ? ComponentsV2.Accents.success : ComponentsV2.Accents.warning);
+        }
+    }, LINK_POLL_INTERVAL_MS);
+}
+async function createPersonalLinkReply(interaction) {
+    const existingLink = await supabase.getLinkedAccount(interaction.user.id);
+    if (existingLink) {
+        const roleSuccess = await assignLinkedRole(interaction.client, interaction.user.id);
+        await interaction.reply({
+            components: [
+                ComponentsV2.infoContainer('Already Connected', 'Your Discord account is already linked to a Victus Cloud account.\n\n' +
+                    (roleSuccess
+                        ? 'Your website linked role is active.'
+                        : 'I could not confirm the linked role. Please contact staff if it is still missing.')),
+            ],
+            flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const token = generateLinkToken();
+    const expiresAt = getExpiryTime(config.bot.linkTokenExpiryMinutes);
+    const linkToken = await supabase.createLinkToken(interaction.user.id, interaction.user.tag, token, expiresAt);
+    if (!linkToken) {
+        await interaction.reply({
+            components: [
+                ComponentsV2.errorContainer('Link Token Failed', 'Could not create your secure link token. Please try again in a moment.'),
+            ],
+            flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const linkUrl = `${config.branding.website}/discord-link?token=${token}`;
+    const expiryTimestamp = Math.floor(expiresAt.getTime() / 1000);
+    const container = ComponentsV2.linkAccountContainer(interaction.user.tag, interaction.user.displayAvatarURL({ size: 128 }), expiryTimestamp, linkUrl);
+    await interaction.reply({
+        components: [container],
+        flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+    });
+    logger.info(`Link panel token generated for ${interaction.user.tag} (${interaction.user.id})`);
+    watchForCompletedLink(interaction);
+}
+export async function postLinkPanel(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (!canManageLinkPanel(interaction)) {
+        await interaction.editReply({
+            content: 'You need the **Manage Server** permission to post the Victus Cloud link panel.',
+        });
+        return;
+    }
+    if (!interaction.channel || !('send' in interaction.channel)) {
+        await interaction.editReply({
+            content: 'I cannot post a link panel in this channel.',
+        });
+        return;
+    }
+    try {
+        await interaction.channel.send({
+            components: [ComponentsV2.linkPanelContainer()],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+    }
+    catch (error) {
+        logger.error('Failed to send link panel:', error);
+        if (error?.errors)
+            logger.error('Validation details:', JSON.stringify(error.errors, null, 2));
+        await interaction.editReply('Discord rejected the link panel message. Please check my channel permissions and try again.');
+        return;
+    }
+    await interaction.editReply({
+        content: 'Premium link panel posted in this channel.',
+    });
+}
+export const linkPanelCommand = {
+    data: new SlashCommandBuilder()
+        .setName('link-panel')
+        .setDescription('Post a Victus Cloud account-linking panel with a one-click link button')
+        .setDMPermission(false),
+    cooldown: 20,
+    async execute(interaction) {
+        await postLinkPanel(interaction);
+    },
+    async handleButton(interaction) {
+        if (interaction.customId !== LINK_PANEL_BUTTON)
+            return;
+        await createPersonalLinkReply(interaction);
+    },
+};
+export const linkPanelAliasCommand = {
+    ...linkPanelCommand,
+    data: new SlashCommandBuilder()
+        .setName('linkpanel')
+        .setDescription('Alias for /link-panel, posts the Victus Cloud account-linking panel')
+        .setDMPermission(false),
+};

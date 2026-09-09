@@ -1,0 +1,137 @@
+import { Collection } from 'discord.js';
+import { logger } from '../utils/logger.js';
+// Import commands
+import { linkCommand } from './link.js';
+import { unlinkCommand } from './unlink.js';
+import { serversCommand } from './servers.js';
+import { servicesCommand } from './services.js';
+import { invoicesCommand } from './invoices.js';
+import { helpCommand } from './help.js';
+import { adminCommand } from './admin/index.js';
+import { configCommand } from './config.js';
+import { userCommand } from './user.js';
+import { ticketCommand } from './ticket.js';
+import { preferencesCommand } from './preferences.js';
+import { announceCommand } from './announce.js';
+import { anncCommand } from './annc.js';
+import { accountCommand } from './account.js';
+import { linkPanelAliasCommand, linkPanelCommand } from './link-panel.js';
+import { createAccountCommand } from './create-account.js';
+import { askCommand } from './ask.js';
+import { summonCommand } from './summon.js';
+import { economyCommand } from './economy.js';
+import { musicCommands } from './music/index.js';
+import { prefixCommand, setprefixCommand } from './prefix.js';
+import { embedCommand, embedListActionButtons, embedLinksRouter } from './embed.js';
+import { suggestCommand, suggestionCommand } from './suggest.js';
+import { giveawayCommand } from './giveaway.js';
+import { customcmdCommand } from './customcmd.js';
+import { welcomeCommand } from './welcome.js';
+import { staffAppCommand } from './staff-app.js';
+import { j2cCommand } from './j2c.js';
+import { warnCommand } from './warn.js';
+import { dmCommand } from './dm.js';
+import { playlistCommand } from './playlist.js';
+import { afkCommand } from './afk.js';
+import { purgeCommand } from './purge.js';
+import { kickCommand } from './kick.js';
+import { banCommand } from './ban.js';
+import { timeoutCommand } from './timeout.js';
+import { vpsStatsCommand } from './vpsstats.js';
+import { pollCommand } from './poll.js';
+import { auditLogCommand } from './auditLog.js';
+import { reactRolesCommand } from './reactroles.js';
+import { serverStatsCommand } from './serverstats.js';
+import { unbanCommand } from './unban.js';
+import { untimeoutCommand } from './untimeout.js';
+import { whitelistCommand } from './whitelist.js';
+import { communityCoinsCommand } from './community-coins.js';
+import { levelCommand } from './level.js';
+import { shareResourceCommand } from './shareResource.js';
+import { resourceApplyCommand } from './resourceApply.js';
+import { manualDcLinkCommand } from './manualdclink.js';
+import { currencyCommand } from './currency.js';
+import { pricingCommand } from './pricing.js';
+import { leaderboardCommand } from './leaderboard.js';
+// Export command collection
+export const commands = new Collection();
+// Register all commands
+const allCommands = [
+    shareResourceCommand,
+    resourceApplyCommand,
+    manualDcLinkCommand,
+    currencyCommand,
+    pricingCommand,
+    linkCommand,
+    unlinkCommand,
+    serversCommand,
+    servicesCommand,
+    invoicesCommand,
+    helpCommand,
+    adminCommand,
+    configCommand,
+    userCommand,
+    ticketCommand,
+    preferencesCommand,
+    announceCommand,
+    anncCommand,
+    accountCommand,
+    linkPanelCommand,
+    linkPanelAliasCommand,
+    createAccountCommand,
+    askCommand,
+    summonCommand,
+    economyCommand,
+    prefixCommand,
+    setprefixCommand,
+    embedCommand,
+    embedListActionButtons,
+    embedLinksRouter,
+    suggestCommand,
+    suggestionCommand,
+    giveawayCommand,
+    customcmdCommand,
+    welcomeCommand,
+    staffAppCommand,
+    j2cCommand,
+    warnCommand,
+    dmCommand,
+    playlistCommand,
+    afkCommand,
+    purgeCommand,
+    kickCommand,
+    banCommand,
+    timeoutCommand,
+    vpsStatsCommand,
+    pollCommand,
+    auditLogCommand,
+    reactRolesCommand,
+    serverStatsCommand,
+    unbanCommand,
+    untimeoutCommand,
+    whitelistCommand,
+    communityCoinsCommand,
+    levelCommand,
+    leaderboardCommand,
+    ...musicCommands,
+];
+for (const command of allCommands) {
+    commands.set(command.data.name, command);
+}
+/**
+ * Load commands into the client
+ */
+export async function loadCommands(client) {
+    for (const [name, command] of commands) {
+        client.commands.set(name, command);
+        logger.debug(`Loaded command: ${name}`);
+    }
+}
+/**
+ * Get all command data for registration
+ */
+export function getCommandData() {
+    return allCommands
+        .filter((cmd) => !cmd.data.name.startsWith('_'))
+        .map((cmd) => cmd.data.toJSON());
+}
