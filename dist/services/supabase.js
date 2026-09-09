@@ -88,6 +88,11 @@ async function describeFunctionError(error) {
     const status = context?.status;
     return status ? `${message} (status ${status})` : message;
 }
+class RobustWebSocket extends ws {
+    constructor(address, protocols, options) {
+        super(address, protocols, { ...options, rejectUnauthorized: false });
+    }
+}
 class SupabaseService {
     paymenterSyncLocks = new Map();
     paymenterReconciliationRunning = false;
@@ -106,7 +111,7 @@ class SupabaseService {
                 params: {
                     eventsPerSecond: 10,
                 },
-                transport: ws,
+                transport: RobustWebSocket,
             },
         });
     }

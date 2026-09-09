@@ -106,6 +106,12 @@ async function describeFunctionError(error: unknown): Promise<string> {
     return status ? `${message} (status ${status})` : message;
 }
 
+class RobustWebSocket extends ws {
+    constructor(address: any, protocols?: any, options?: any) {
+        super(address, protocols, { ...options, rejectUnauthorized: false });
+    }
+}
+
 class SupabaseService {
     private readonly paymenterSyncLocks = new Map<string, Promise<boolean>>();
     private paymenterReconciliationRunning = false;
@@ -126,7 +132,7 @@ class SupabaseService {
                 params: {
                     eventsPerSecond: 10,
                 },
-                transport: ws as any,
+                transport: RobustWebSocket as any,
             },
         });
     }
