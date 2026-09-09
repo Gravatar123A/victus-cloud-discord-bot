@@ -518,7 +518,8 @@ export const messageCreateEvent = {
         // Automatically respond if message is in the designated staff AI channel or an active Antigravity thread/session
         const isStaffAiChannel = !!config.antigravity.staffChannelId && message.channelId === config.antigravity.staffChannelId;
         const hasActiveStaffSession = !!antigravityPipeline.getSession(message.channelId);
-        if (config.antigravity.enabled && message.inGuild() && (isStaffAiChannel || hasActiveStaffSession)) {
+        const isStaffAiThread = message.channel.isThread() && message.channel.name.startsWith('staffai-');
+        if (config.antigravity.enabled && message.inGuild() && (isStaffAiChannel || hasActiveStaffSession || isStaffAiThread)) {
             if (antigravityPipeline.isAuthorized(message.member)) {
                 if (message.content.trim().length > 0 || message.attachments.size > 0) {
                     await handleStaffAiMessage(message);

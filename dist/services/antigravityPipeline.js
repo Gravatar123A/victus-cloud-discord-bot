@@ -7,12 +7,17 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { groqAi } from './groqAi.js';
 import { conversationMemory } from './conversationMemory.js';
+import { antigravityAgentApi } from './antigravityAgentApi.js';
+import { antigravityBridge } from './antigravityBridge.js';
 class AntigravityPipelineService {
     // In-memory mapping of Discord channel/thread ID -> Antigravity conversation ID & stats
     sessions = new Map();
     SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
     // Track active runs per channel/thread to prevent concurrent conflicting runs
     runningTasks = new Set();
+    constructor() {
+        antigravityBridge.initBotListener().catch(() => { });
+    }
     /**
      * Check if a GuildMember has permission to run staff Antigravity commands
      */
@@ -184,7 +189,47 @@ class AntigravityPipelineService {
             if (forceNewSession) {
                 this.clearSession(channelOrThreadId);
             }
-            // 1. Try running with agy if installed on host
+            // 1. Try running with local Antigravity AgentAPI (spawns real sessions in Antigravity desktop app on this PC)
+            if (antigravityAgentApi.isAvailable()) {
+                logger.info(`[AntigravityPipeline] Executing via local Antigravity AgentAPI for @${userTag} in ${channelOrThreadId}. Conv: ${activeConvId || 'new'}`);
+                try {
+                    const localResult = await antigravityAgentApi.executeTurn({
+                        prompt: fullPrompt,
+                        activeConversationId: activeConvId && !activeConvId.startsWith('cloud-') ? activeConvId : undefined,
+                        title: `[Discord /staffai] @${userTag}: ${prompt.slice(0, 40)}`,
+                        userTag,
+                        timeoutMs: config.antigravity.timeoutMs || 240000,
+                    });
+                    if (localResult.success && localResult.conversationId) {
+                        this.setSession(channelOrThreadId, localResult.conversationId);
+                    }
+                    return localResult;
+                }
+                catch (agentErr) {
+                    logger.warn('[AntigravityPipeline] Local AgentAPI execution failed, trying next runner:', agentErr?.message || agentErr);
+                }
+            }
+            // 2. Try Workstation Bridge via Supabase Realtime (when running on remote cloud, relay task to user's PC)
+            if (antigravityBridge.isWorkstationOnline()) {
+                logger.info(`[AntigravityPipeline] Workstation Bridge is ONLINE. Relaying task to developer PC for @${userTag}...`);
+                try {
+                    const bridgeResult = await antigravityBridge.dispatchTask({
+                        prompt: fullPrompt,
+                        activeConversationId: activeConvId && !activeConvId.startsWith('cloud-') ? activeConvId : undefined,
+                        title: `[Discord /staffai] @${userTag}: ${prompt.slice(0, 40)}`,
+                        userTag,
+                        timeoutMs: config.antigravity.timeoutMs || 240000,
+                    });
+                    if (bridgeResult.success && bridgeResult.conversationId) {
+                        this.setSession(channelOrThreadId, bridgeResult.conversationId);
+                    }
+                    return bridgeResult;
+                }
+                catch (bridgeErr) {
+                    logger.warn('[AntigravityPipeline] Workstation Bridge dispatch failed, falling back:', bridgeErr?.message || bridgeErr);
+                }
+            }
+            // 3. Try running with agy if installed on host
             if (this.isAgyAvailable()) {
                 try {
                     const agyExe = this.getExecutablePath();
@@ -227,7 +272,7 @@ class AntigravityPipelineService {
                     logger.warn('[AntigravityPipeline] agy execution threw error, falling back to Cloud AI runner:', agyErr);
                 }
             }
-            // 2. Cloud AI Fallback Engine
+            // 4. Cloud AI Fallback Engine
             if (groqAi.isEnabled()) {
                 logger.info(`[AntigravityPipeline] Executing via Cloud AI runner for @${userTag} in ${channelOrThreadId}`);
                 const startTime = Date.now();
@@ -251,10 +296,14 @@ class AntigravityPipelineService {
                     this.setSession(channelOrThreadId, cloudConvId);
                     const currentSession = this.sessions.get(channelOrThreadId);
                     const turns = currentSession?.turns || 1;
+                    let formattedResponse = aiResponse;
+                    if (!antigravityBridge.isWorkstationOnline()) {
+                        formattedResponse += `\n\n*(💡 Tip: To open tasks live in your PC's Antigravity desktop app, start the bridge on your computer: \`npm run antigravity:bridge\`)*`;
+                    }
                     return {
                         success: true,
                         conversationId: cloudConvId,
-                        response: aiResponse,
+                        response: formattedResponse,
                         durationSeconds,
                         numTurns: turns,
                         telemetry: {
@@ -275,15 +324,14 @@ class AntigravityPipelineService {
                     };
                 }
             }
-            // 3. Neither agy nor Cloud AI is available
+            // 5. Neither Local AgentAPI, Workstation Bridge, agy nor Cloud AI is available
             return {
                 success: false,
                 response: '❌ **Antigravity Runner Unavailable**\n\n' +
-                    `The Antigravity CLI binary (\`agy\`) was not found on this hosting server (${process.platform}), and Cloud AI fallback is not configured.\n\n` +
+                    `No active Antigravity runner was detected.\n\n` +
                     '**How to resolve:**\n' +
-                    '1. **Cloud Deployments:** Configure `AI_API_KEY` (or `OPENROUTER_API_KEY`) in your server `.env` to enable the autonomous Cloud AI engine.\n' +
-                    '2. **Local Workstation:** Run the bot on your computer where `agy.exe` is authenticated.\n' +
-                    '3. **Install on Linux:** `curl -fsSL https://antigravity.google/cli/install.sh | bash`',
+                    '1. **Open in PC Antigravity:** Run `npm run antigravity:bridge` on your computer to open sessions directly in your Antigravity desktop app.\n' +
+                    '2. **Cloud AI:** Configure `AI_API_KEY` (or `OPENROUTER_API_KEY`) on the server.\n',
                 hasQuestions: false,
                 error: 'No runner available',
             };

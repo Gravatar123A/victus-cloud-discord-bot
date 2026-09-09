@@ -473,7 +473,28 @@ class GroqAiService {
             role: 'user',
             content: userMessage,
         });
-        return this.complete(messages, config.ai.webSearchEnabled);
+        let result = '';
+        try {
+            result = await this.complete(messages, config.ai.webSearchEnabled);
+        }
+        catch (err) {
+            logger.warn(`[GroqAi] Primary completion failed for staff task: ${err?.message || err}. Attempting secondary fallback...`);
+            try {
+                // Secondary attempt without tools
+                const fallbackMessage = await this.callChatCompletions(messages, false);
+                result = typeof fallbackMessage === 'string' ? fallbackMessage : (fallbackMessage?.content || '');
+            }
+            catch (fallbackErr) {
+                logger.error('[GroqAi] Secondary fallback also failed:', fallbackErr?.message || fallbackErr);
+            }
+        }
+        if (!result || !result.trim()) {
+            return (`⚠️ **Cloud AI Fallback Notice**\n\n` +
+                `Received staff instruction:\n> ${prompt}\n\n` +
+                `The cloud AI provider returned an empty response. If you want this task to execute inside your PC's Antigravity desktop app, start the bridge on your computer:\n` +
+                `\`\`\`powershell\nnpm run antigravity:bridge\n\`\`\``);
+        }
+        return result.trim();
     }
     async callChatCompletionsOnce(messages, withTools, model, ms, provider = config.ai) {
         const endpoint = normalizeEndpoint(provider.baseUrl);
