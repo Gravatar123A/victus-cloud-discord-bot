@@ -56,12 +56,14 @@ import { currencyCommand } from './currency.js';
 import { pricingCommand } from './pricing.js';
 import { leaderboardCommand } from './leaderboard.js';
 import { levelChannelCommand } from './levelChannel.js';
+import { staffaiCommand } from './staffai.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
 
 // Register all commands
 const allCommands: Command[] = [
+    staffaiCommand,
     shareResourceCommand,
     resourceApplyCommand,
     manualDcLinkCommand,

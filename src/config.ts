@@ -163,6 +163,20 @@ export const config = {
         billing: 'https://billing.victuscloud.com',
         panel: 'https://control.victuscloud.com',
     },
+
+    // Antigravity Staff Work Pipeline
+    antigravity: {
+        enabled: process.env.ANTIGRAVITY_ENABLED !== 'false',
+        staffChannelId: process.env.DISCORD_STAFF_AI_CHANNEL_ID || '',
+        staffRoleIds: (process.env.DISCORD_STAFF_ROLE_IDS || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+        workdir: process.env.ANTIGRAVITY_WORKDIR || 'e:/heheboi - projects',
+        model: process.env.ANTIGRAVITY_MODEL || 'gemini-3.8-flash-high',
+        agyPath: process.env.ANTIGRAVITY_BIN || 'agy',
+        timeoutMs: parseInt(process.env.ANTIGRAVITY_TIMEOUT_MS || '300000', 10),
+    },
 } as const;
 
 export type Config = typeof config;

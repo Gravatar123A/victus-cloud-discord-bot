@@ -18,6 +18,8 @@ import { inspectModerationMessage } from '../services/moderation.js';
 import { memberStatsService } from '../services/memberStatsService.js';
 import { ticketTranslationService } from '../services/ticketTranslationService.js';
 import { levelSettings } from '../services/levelSettings.js';
+import { antigravityPipeline } from '../services/antigravityPipeline.js';
+import { createProcessingEmbed, createResultEmbeds } from '../embeds/antigravityEmbeds.js';
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
 const aiChannelCache = new Map();
@@ -135,6 +137,41 @@ function formatDurationMs(ms) {
     const hrs = Math.floor(mins / 60);
     const remainingMins = mins % 60;
     return `${hrs}h ${remainingMins}m`;
+}
+async function handleStaffAiMessage(message) {
+    try {
+        if ('sendTyping' in message.channel) {
+            await message.channel.sendTyping().catch(() => undefined);
+        }
+        const taskText = message.content.trim() || 'Please inspect the attached file(s) and follow up.';
+        const processingEmbed = createProcessingEmbed(taskText, message.author.tag, message.attachments.size > 0);
+        const statusMsg = await message.reply({
+            embeds: [processingEmbed],
+            allowedMentions: { repliedUser: false },
+        });
+        const result = await antigravityPipeline.executeTask({
+            prompt: taskText,
+            userId: message.author.id,
+            userTag: message.author.tag,
+            channelOrThreadId: message.channelId,
+            attachments: [...message.attachments.values()],
+        });
+        const { embeds, components } = createResultEmbeds(result, {
+            task: taskText,
+            userTag: message.author.tag,
+        });
+        await statusMsg.edit({
+            embeds,
+            components,
+        });
+    }
+    catch (err) {
+        logger.error('[StaffAI] Error handling message in staff session:', err);
+        await message.reply({
+            content: `❌ **Antigravity Pipeline Error:** ${err?.message || 'Execution failed.'}`,
+            allowedMentions: { repliedUser: false },
+        }).catch(() => undefined);
+    }
 }
 export const messageCreateEvent = {
     name: 'messageCreate',
@@ -475,6 +512,18 @@ export const messageCreateEvent = {
             if (!looksLikeCommand) {
                 void awardMessageXp(message.author.id).catch(() => undefined);
                 void memberStatsService.recordMessage(message.guildId, message.author.id).catch(() => undefined);
+            }
+        }
+        // Antigravity Staff Work Pipeline Check:
+        // Automatically respond if message is in the designated staff AI channel or an active Antigravity thread/session
+        const isStaffAiChannel = !!config.antigravity.staffChannelId && message.channelId === config.antigravity.staffChannelId;
+        const hasActiveStaffSession = !!antigravityPipeline.getSession(message.channelId);
+        if (config.antigravity.enabled && message.inGuild() && (isStaffAiChannel || hasActiveStaffSession)) {
+            if (antigravityPipeline.isAuthorized(message.member)) {
+                if (message.content.trim().length > 0 || message.attachments.size > 0) {
+                    await handleStaffAiMessage(message);
+                    return;
+                }
             }
         }
         const summoned = message.inGuild() ? isChannelSummoned(message.channelId) : false;

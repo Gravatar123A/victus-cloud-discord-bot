@@ -25,3 +25,6 @@ Thumbs.db
 
 # Test coverage
 coverage/
+
+# Antigravity Discord temporary storage
+.antigravity_discord/
