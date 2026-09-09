@@ -5,7 +5,6 @@ import { pipeline } from 'stream/promises';
 import { PermissionFlagsBits } from 'discord.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { groqAi } from './groqAi.js';
 import { conversationMemory } from './conversationMemory.js';
 import { antigravityAgentApi } from './antigravityAgentApi.js';
 import { antigravityBridge } from './antigravityBridge.js';
@@ -200,17 +199,24 @@ class AntigravityPipelineService {
                         userTag,
                         timeoutMs: config.antigravity.timeoutMs || 240000,
                     });
-                    if (localResult.success && localResult.conversationId) {
+                    if (localResult.conversationId) {
                         this.setSession(channelOrThreadId, localResult.conversationId);
                     }
                     return localResult;
                 }
                 catch (agentErr) {
-                    logger.warn('[AntigravityPipeline] Local AgentAPI execution failed, trying next runner:', agentErr?.message || agentErr);
+                    logger.error('[AntigravityPipeline] Local AgentAPI execution failed:', agentErr);
+                    return {
+                        success: false,
+                        response: `❌ **Antigravity Execution Error**\n\n${agentErr?.message || 'Error executing in local Antigravity runtime.'}`,
+                        hasQuestions: false,
+                        error: agentErr?.message,
+                    };
                 }
             }
             // 2. Try Workstation Bridge via Supabase Realtime (when running on remote cloud, relay task to user's PC)
-            if (antigravityBridge.isWorkstationOnline()) {
+            const isBridgeOnline = await antigravityBridge.checkWorkstationOnline();
+            if (isBridgeOnline) {
                 logger.info(`[AntigravityPipeline] Workstation Bridge is ONLINE. Relaying task to developer PC for @${userTag}...`);
                 try {
                     const bridgeResult = await antigravityBridge.dispatchTask({
@@ -220,13 +226,19 @@ class AntigravityPipelineService {
                         userTag,
                         timeoutMs: config.antigravity.timeoutMs || 240000,
                     });
-                    if (bridgeResult.success && bridgeResult.conversationId) {
+                    if (bridgeResult.conversationId) {
                         this.setSession(channelOrThreadId, bridgeResult.conversationId);
                     }
                     return bridgeResult;
                 }
                 catch (bridgeErr) {
-                    logger.warn('[AntigravityPipeline] Workstation Bridge dispatch failed, falling back:', bridgeErr?.message || bridgeErr);
+                    logger.error('[AntigravityPipeline] Workstation Bridge dispatch failed:', bridgeErr);
+                    return {
+                        success: false,
+                        response: `❌ **Antigravity Execution Error**\n\n${bridgeErr?.message || 'Error communicating with your PC Antigravity runtime.'}`,
+                        hasQuestions: false,
+                        error: bridgeErr?.message,
+                    };
                 }
             }
             // 3. Try running with agy if installed on host
@@ -248,92 +260,43 @@ class AntigravityPipelineService {
                     }
                     logger.info(`[AntigravityPipeline] Executing via agy binary (${agyExe}) for @${userTag} in ${channelOrThreadId}. Conv: ${activeConvId || 'new'}`);
                     const agyResult = await this.spawnAgyProcess(agyExe, args, config.antigravity.workdir);
-                    if (agyResult.success) {
-                        if (agyResult.conversationId) {
-                            this.setSession(channelOrThreadId, agyResult.conversationId);
-                        }
-                        if (!agyResult.telemetry) {
-                            agyResult.telemetry = {
-                                model: `${config.antigravity.model || 'gemini-3.8-flash-high'} (Workstation Runner)`,
-                                turns: this.sessions.get(channelOrThreadId)?.turns || 1,
-                            };
-                        }
-                        return agyResult;
+                    if (agyResult.conversationId) {
+                        this.setSession(channelOrThreadId, agyResult.conversationId);
                     }
-                    // If it failed due to spawn error (ENOENT), log and fall through to Cloud AI
-                    if (agyResult.error && (agyResult.error.includes('ENOENT') || agyResult.error.includes('not found'))) {
-                        logger.warn('[AntigravityPipeline] agy runner reported ENOENT. Attempting Cloud AI fallback...');
+                    if (!agyResult.telemetry) {
+                        agyResult.telemetry = {
+                            model: `${config.antigravity.model || 'gemini-3.8-flash-high'} (Workstation Runner)`,
+                            turns: this.sessions.get(channelOrThreadId)?.turns || 1,
+                        };
                     }
-                    else {
-                        return agyResult;
-                    }
+                    return agyResult;
                 }
                 catch (agyErr) {
-                    logger.warn('[AntigravityPipeline] agy execution threw error, falling back to Cloud AI runner:', agyErr);
-                }
-            }
-            // 4. Cloud AI Fallback Engine
-            if (groqAi.isEnabled()) {
-                logger.info(`[AntigravityPipeline] Executing via Cloud AI runner for @${userTag} in ${channelOrThreadId}`);
-                const startTime = Date.now();
-                try {
-                    const history = await conversationMemory.getHistory(channelOrThreadId, 6);
-                    const attachmentSummary = attachments?.map((a) => ({
-                        name: a.name || 'attachment',
-                        url: a.url,
-                    }));
-                    const aiResponse = await groqAi.executeStaffTask(prompt, {
-                        userTag,
-                        history,
-                        attachments: attachmentSummary,
-                    });
-                    await conversationMemory.addExchange(channelOrThreadId, prompt, aiResponse);
-                    const { hasQuestions, questions } = this.extractQuestions(aiResponse);
-                    const durationSeconds = (Date.now() - startTime) / 1000;
-                    const cloudConvId = activeConvId?.startsWith('cloud-')
-                        ? activeConvId
-                        : `cloud-${channelOrThreadId}`;
-                    this.setSession(channelOrThreadId, cloudConvId);
-                    const currentSession = this.sessions.get(channelOrThreadId);
-                    const turns = currentSession?.turns || 1;
-                    let formattedResponse = aiResponse;
-                    if (!antigravityBridge.isWorkstationOnline()) {
-                        formattedResponse += `\n\n*(💡 Tip: To open tasks live in your PC's Antigravity desktop app, start the bridge on your computer: \`npm run antigravity:bridge\`)*`;
-                    }
-                    return {
-                        success: true,
-                        conversationId: cloudConvId,
-                        response: formattedResponse,
-                        durationSeconds,
-                        numTurns: turns,
-                        telemetry: {
-                            model: `${config.ai.model} (Cloud AI Engine)`,
-                            turns,
-                        },
-                        hasQuestions,
-                        questions,
-                    };
-                }
-                catch (cloudErr) {
-                    logger.error('[AntigravityPipeline] Cloud AI execution failed:', cloudErr);
+                    logger.error('[AntigravityPipeline] agy execution failed:', agyErr);
                     return {
                         success: false,
-                        response: `Cloud AI execution encountered an error: ${cloudErr?.message || 'unknown error'}`,
+                        response: `❌ **Antigravity CLI Failed**\n\n${agyErr?.message || 'Error executing agy CLI.'}`,
                         hasQuestions: false,
-                        error: cloudErr?.message || 'Cloud AI error',
+                        error: agyErr?.message,
                     };
                 }
             }
-            // 5. Neither Local AgentAPI, Workstation Bridge, agy nor Cloud AI is available
+            // 4. Strict Mode: Antigravity is offline. Do NOT fall back to other AI APIs.
             return {
                 success: false,
-                response: '❌ **Antigravity Runner Unavailable**\n\n' +
-                    `No active Antigravity runner was detected.\n\n` +
-                    '**How to resolve:**\n' +
-                    '1. **Open in PC Antigravity:** Run `npm run antigravity:bridge` on your computer to open sessions directly in your Antigravity desktop app.\n' +
-                    '2. **Cloud AI:** Configure `AI_API_KEY` (or `OPENROUTER_API_KEY`) on the server.\n',
+                response: '❌ **Antigravity Workstation Bridge Offline**\n\n' +
+                    'Could not connect to Antigravity on your computer.\n\n' +
+                    'This pipeline is strictly configured to execute directly inside **Google Antigravity** on your PC.\n\n' +
+                    '**How to connect:**\n' +
+                    '1. Open PowerShell on your computer\n' +
+                    '2. Run:\n' +
+                    '```powershell\n' +
+                    'cd "e:\\heheboi - projects\\victus-cloud-discord-bot"\n' +
+                    'npm run antigravity:bridge\n' +
+                    '```\n' +
+                    '*Once the bridge shows "🟢 Bridge is LIVE!", send your command again and the session will open right in your Antigravity desktop app!*',
                 hasQuestions: false,
-                error: 'No runner available',
+                error: 'Antigravity workstation bridge is offline',
             };
         }
         finally {

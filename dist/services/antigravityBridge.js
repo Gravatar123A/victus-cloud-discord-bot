@@ -34,6 +34,12 @@ export class AntigravityBridgeService {
                 this.workstationName = payload.workstation || 'Windows Workstation';
             }
         });
+        ch.on('broadcast', { event: 'pong' }, ({ payload }) => {
+            if (payload && payload.timestamp) {
+                this.lastWorkstationHeartbeat = payload.timestamp;
+                this.workstationName = payload.workstation || 'Windows Workstation';
+            }
+        });
         ch.on('broadcast', { event: 'task_response' }, ({ payload }) => {
             if (payload && payload.taskId) {
                 const pending = this.pendingTasks.get(payload.taskId);
@@ -57,6 +63,30 @@ export class AntigravityBridgeService {
     isWorkstationOnline() {
         // Considered online if heartbeat received within last 30 seconds
         return Date.now() - this.lastWorkstationHeartbeat < 30000;
+    }
+    /**
+     * Actively probe the workstation to check if it is online (with quick ping/pong fallback)
+     */
+    async checkWorkstationOnline() {
+        await this.initBotListener();
+        if (this.isWorkstationOnline())
+            return true;
+        try {
+            const ch = this.getChannel();
+            await ch.send({
+                type: 'broadcast',
+                event: 'ping',
+                payload: { timestamp: Date.now() },
+            });
+            const start = Date.now();
+            while (Date.now() - start < 2000) {
+                if (this.isWorkstationOnline())
+                    return true;
+                await new Promise((resolve) => setTimeout(resolve, 150));
+            }
+        }
+        catch { }
+        return this.isWorkstationOnline();
     }
     /**
      * Get workstation status info
@@ -106,6 +136,17 @@ export class AntigravityBridgeService {
      */
     async runAsWorkstationDaemon(handler) {
         const ch = this.getChannel();
+        ch.on('broadcast', { event: 'ping' }, () => {
+            ch.send({
+                type: 'broadcast',
+                event: 'pong',
+                payload: {
+                    workstation: os.hostname(),
+                    user: os.userInfo().username,
+                    timestamp: Date.now(),
+                },
+            }).catch(() => { });
+        });
         ch.on('broadcast', { event: 'task_request' }, async ({ payload }) => {
             if (!payload || !payload.taskId)
                 return;
