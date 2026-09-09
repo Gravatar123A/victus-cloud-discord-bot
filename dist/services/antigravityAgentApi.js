@@ -1,9 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import { logger } from '../utils/logger.js';
-const execAsync = promisify(exec);
 export class AntigravityAgentApiService {
     agentApiBatPath = null;
     /**
@@ -14,10 +12,11 @@ export class AntigravityAgentApiService {
             return this.agentApiBatPath;
         }
         const candidates = [
+            path.join(process.env.LOCALAPPDATA || 'C:\\Users\\User\\AppData\\Local', 'Programs', 'antigravity', 'resources', 'bin', 'language_server.exe'),
+            'C:\\Users\\User\\AppData\\Local\\Programs\\antigravity\\resources\\bin\\language_server.exe',
             path.join(process.env.USERPROFILE || 'C:\\Users\\User', '.gemini', 'antigravity', 'bin', 'agentapi.bat'),
             'C:\\Users\\User\\.gemini\\antigravity\\bin\\agentapi.bat',
             path.join(process.env.HOME || '/root', '.gemini', 'antigravity', 'bin', 'agentapi'),
-            path.join(process.env.LOCALAPPDATA || 'C:\\Users\\User\\AppData\\Local', 'Programs', 'antigravity', 'resources', 'bin', 'language_server.exe'),
         ];
         for (const candidate of candidates) {
             if (fs.existsSync(candidate)) {
@@ -26,6 +25,36 @@ export class AntigravityAgentApiService {
             }
         }
         return null;
+    }
+    /**
+     * Execute an agentapi command cleanly via process spawning (handles multiline prompts safely)
+     */
+    async runCommand(args) {
+        const exe = this.getExecutablePath();
+        if (!exe) {
+            throw new Error('agentapi executable not found on this machine');
+        }
+        const isLanguageServer = exe.toLowerCase().endsWith('language_server.exe');
+        const finalArgs = isLanguageServer ? ['agentapi', ...args] : args;
+        return new Promise((resolve, reject) => {
+            const child = spawn(exe, finalArgs, {
+                windowsHide: true,
+                shell: !isLanguageServer, // use shell only if running .bat
+            });
+            let stdout = '';
+            let stderr = '';
+            child.stdout.on('data', (d) => (stdout += d.toString()));
+            child.stderr.on('data', (d) => (stderr += d.toString()));
+            child.on('error', (err) => reject(err));
+            child.on('close', (code) => {
+                if (code !== 0) {
+                    reject(new Error(`AgentAPI process exited with code ${code}: ${stderr || stdout}`));
+                }
+                else {
+                    resolve(stdout);
+                }
+            });
+        });
     }
     /**
      * Check if agentapi is available on this machine
@@ -44,19 +73,9 @@ export class AntigravityAgentApiService {
      * Start a new conversation inside the Antigravity desktop app
      */
     async startConversation(title, prompt, model = 'flash') {
-        const exe = this.getExecutablePath();
-        if (!exe) {
-            throw new Error('agentapi executable not found on this machine');
-        }
-        const safeTitle = title.replace(/["\r\n]/g, ' ').slice(0, 80);
-        // Escape prompt safely for command line
-        const escapedPrompt = prompt.replace(/"/g, '""');
-        const cmd = `"${exe}" new-conversation --title="${safeTitle}" "${escapedPrompt}"`;
+        const safeTitle = title.replace(/[\r\n]/g, ' ').slice(0, 80);
         logger.info(`[AgentAPI] Starting new Antigravity desktop session: "${safeTitle}"`);
-        const { stdout } = await execAsync(cmd, {
-            windowsHide: true,
-            maxBuffer: 10 * 1024 * 1024,
-        });
+        const stdout = await this.runCommand(['new-conversation', `--title=${safeTitle}`, prompt]);
         const parsed = JSON.parse(stdout.trim());
         const convId = parsed?.response?.newConversation?.conversationId;
         if (!convId) {
@@ -69,17 +88,8 @@ export class AntigravityAgentApiService {
      * Send a follow-up turn into an existing Antigravity desktop conversation
      */
     async sendMessage(conversationId, prompt) {
-        const exe = this.getExecutablePath();
-        if (!exe) {
-            throw new Error('agentapi executable not found on this machine');
-        }
-        const escapedPrompt = prompt.replace(/"/g, '""');
-        const cmd = `"${exe}" send-message "${conversationId}" "${escapedPrompt}"`;
         logger.info(`[AgentAPI] Sending turn to Antigravity desktop session: ${conversationId}`);
-        await execAsync(cmd, {
-            windowsHide: true,
-            maxBuffer: 10 * 1024 * 1024,
-        });
+        await this.runCommand(['send-message', conversationId, prompt]);
     }
     /**
      * Watch transcript.jsonl until the agent finishes its response
