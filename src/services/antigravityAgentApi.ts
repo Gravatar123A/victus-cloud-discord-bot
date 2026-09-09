@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { logger } from '../utils/logger.js';
 import type { AntigravityResult } from './antigravityPipeline.js';
 
 export class AntigravityAgentApiService {
     private agentApiBatPath: string | null = null;
+    private cachedLsAddress: string | null = null;
+    private cachedCsrfToken: string | null = null;
 
     /**
      * Locate the agentapi executable on the host
@@ -34,6 +36,64 @@ export class AntigravityAgentApiService {
     }
 
     /**
+     * Auto-detect the running Antigravity Language Server address and CSRF token.
+     * When running in an external terminal, these env vars are not inherited automatically.
+     */
+    public resolveLanguageServerEnv(): { address?: string; csrfToken?: string } {
+        let address = process.env.ANTIGRAVITY_LS_ADDRESS || this.cachedLsAddress || undefined;
+        let csrfToken = process.env.ANTIGRAVITY_CSRF_TOKEN || this.cachedCsrfToken || undefined;
+
+        // 1. Detect port from language_server.log
+        if (!address) {
+            const logPath = path.join(
+                process.env.APPDATA || 'C:\\Users\\User\\AppData\\Roaming',
+                'Antigravity',
+                'logs',
+                'language_server.log'
+            );
+
+            if (fs.existsSync(logPath)) {
+                try {
+                    const log = fs.readFileSync(logPath, 'utf8');
+                    const matches = [...log.matchAll(/Language server listening on random port at (\d+) for HTTP/g)];
+                    if (matches.length > 0) {
+                        const port = matches[matches.length - 1][1];
+                        address = `localhost:${port}`;
+                        this.cachedLsAddress = address;
+                    }
+                } catch (e) {
+                    logger.warn('[AgentAPI] Failed reading language_server.log for port detection');
+                }
+            }
+        }
+
+        // 2. Detect CSRF token from running language_server.exe process command line
+        if (!csrfToken) {
+            try {
+                const out = execFileSync(
+                    'powershell.exe',
+                    [
+                        '-NoProfile',
+                        '-Command',
+                        `Get-CimInstance Win32_Process -Filter "Name like '%language_server%'" | Select-Object -ExpandProperty CommandLine`
+                    ],
+                    { encoding: 'utf8', windowsHide: true }
+                );
+
+                const tokenMatch = out.match(/--csrf_token\s+([a-f0-9-]+)/i);
+                if (tokenMatch) {
+                    csrfToken = tokenMatch[1];
+                    this.cachedCsrfToken = csrfToken;
+                }
+            } catch (e) {
+                logger.warn('[AgentAPI] Failed detecting CSRF token from running process');
+            }
+        }
+
+        return { address, csrfToken };
+    }
+
+    /**
      * Execute an agentapi command cleanly via process spawning (handles multiline prompts safely)
      */
     private async runCommand(args: string[]): Promise<string> {
@@ -45,8 +105,18 @@ export class AntigravityAgentApiService {
         const isLanguageServer = exe.toLowerCase().endsWith('language_server.exe');
         const finalArgs = isLanguageServer ? ['agentapi', ...args] : args;
 
+        const { address, csrfToken } = this.resolveLanguageServerEnv();
+        const env: NodeJS.ProcessEnv = { ...process.env };
+        if (address) {
+            env.ANTIGRAVITY_LS_ADDRESS = address;
+        }
+        if (csrfToken) {
+            env.ANTIGRAVITY_CSRF_TOKEN = csrfToken;
+        }
+
         return new Promise<string>((resolve, reject) => {
             const child = spawn(exe, finalArgs, {
+                env,
                 windowsHide: true,
                 shell: !isLanguageServer, // use shell only if running .bat
             });

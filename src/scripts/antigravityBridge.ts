@@ -16,6 +16,12 @@ async function main() {
     }
 
     logger.info(`✅ Found Antigravity runtime at: ${agentApiExe}`);
+    const { address, csrfToken } = antigravityAgentApi.resolveLanguageServerEnv();
+    if (address) {
+        logger.info(`🌐 Antigravity Language Server detected at: ${address} (CSRF: ${csrfToken ? 'verified' : 'none'})`);
+    } else {
+        logger.warn('⚠️ Language Server address not detected. Make sure Antigravity desktop app is open.');
+    }
     logger.info(`📂 Brain directory: ${antigravityAgentApi.getBrainDir()}`);
     logger.info('🔌 Connecting to Supabase Realtime channel "antigravity_bridge"...');
 
