@@ -86,10 +86,19 @@ export const staffaiCommand = {
                             .setDescription(`The task has been routed into <#${threadTarget.id}> for continuous work & questions.`),
                     ],
                 });
-                await threadTarget.send({
-                    embeds,
-                    components,
-                });
+                try {
+                    await threadTarget.send({
+                        embeds,
+                        components,
+                    });
+                }
+                catch (sendErr) {
+                    logger.warn('[StaffAI] Could not post result in thread, falling back to main message:', sendErr);
+                    await interaction.followUp({
+                        embeds,
+                        components,
+                    });
+                }
             }
             else {
                 // Otherwise edit the main interaction reply

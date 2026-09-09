@@ -16,9 +16,9 @@ async function main() {
     }
 
     logger.info(`✅ Found Antigravity runtime at: ${agentApiExe}`);
-    const { address, csrfToken } = antigravityAgentApi.resolveLanguageServerEnv();
+    const { address, csrfToken, projectId } = antigravityAgentApi.resolveLanguageServerEnv();
     if (address) {
-        logger.info(`🌐 Antigravity Language Server detected at: ${address} (CSRF: ${csrfToken ? 'verified' : 'none'})`);
+        logger.info(`🌐 Antigravity Language Server detected at: ${address} (CSRF: ${csrfToken ? 'verified' : 'none'}, Project: ${projectId || 'default'})`);
     } else {
         logger.warn('⚠️ Language Server address not detected. Make sure Antigravity desktop app is open.');
     }

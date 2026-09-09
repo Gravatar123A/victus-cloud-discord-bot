@@ -117,10 +117,18 @@ export const staffaiCommand: Command = {
                     ],
                 });
 
-                await threadTarget.send({
-                    embeds,
-                    components,
-                });
+                try {
+                    await threadTarget.send({
+                        embeds,
+                        components,
+                    });
+                } catch (sendErr: any) {
+                    logger.warn('[StaffAI] Could not post result in thread, falling back to main message:', sendErr);
+                    await interaction.followUp({
+                        embeds,
+                        components,
+                    });
+                }
             } else {
                 // Otherwise edit the main interaction reply
                 await interaction.editReply({

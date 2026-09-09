@@ -3,11 +3,12 @@ import { spawnSync } from "node:child_process";
 
 const entrypoint = new URL("./dist/index.js", import.meta.url);
 const discordJsPackage = new URL("./node_modules/discord.js/package.json", import.meta.url);
+const discordJsUser = new URL("./node_modules/discord.js/src/structures/User.js", import.meta.url);
 
 // 1. Verify critical dependencies
-if (!existsSync(discordJsPackage)) {
-    console.log("[Victus Bot] Dependencies missing in node_modules. Running clean production install...");
-    const install = spawnSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund"], {
+if (!existsSync(discordJsPackage) || !existsSync(discordJsUser)) {
+    console.log("[Victus Bot] Dependencies missing or incomplete in node_modules. Running clean production install...");
+    const install = spawnSync("npm", ["install", "discord.js@14.25.1", "--force", "--omit=dev", "--no-audit", "--no-fund"], {
         stdio: "inherit",
         shell: process.platform === "win32",
     });

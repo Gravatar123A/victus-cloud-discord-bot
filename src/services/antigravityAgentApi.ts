@@ -8,6 +8,7 @@ export class AntigravityAgentApiService {
     private agentApiBatPath: string | null = null;
     private cachedLsAddress: string | null = null;
     private cachedCsrfToken: string | null = null;
+    private cachedProjectId: string | null = null;
 
     /**
      * Locate the agentapi executable on the host
@@ -36,12 +37,13 @@ export class AntigravityAgentApiService {
     }
 
     /**
-     * Auto-detect the running Antigravity Language Server address and CSRF token.
+     * Auto-detect the running Antigravity Language Server address, CSRF token, and project ID.
      * When running in an external terminal, these env vars are not inherited automatically.
      */
-    public resolveLanguageServerEnv(): { address?: string; csrfToken?: string } {
+    public resolveLanguageServerEnv(): { address?: string; csrfToken?: string; projectId?: string } {
         let address = process.env.ANTIGRAVITY_LS_ADDRESS || this.cachedLsAddress || undefined;
         let csrfToken = process.env.ANTIGRAVITY_CSRF_TOKEN || this.cachedCsrfToken || undefined;
+        let projectId = process.env.ANTIGRAVITY_PROJECT_ID || this.cachedProjectId || undefined;
 
         // 1. Detect port from language_server.log
         if (!address) {
@@ -90,7 +92,47 @@ export class AntigravityAgentApiService {
             }
         }
 
-        return { address, csrfToken };
+        // 3. Detect Project ID from Antigravity app_storage.json or ~/.gemini/config/projects
+        if (!projectId) {
+            const appStoragePath = path.join(
+                process.env.APPDATA || 'C:\\Users\\User\\AppData\\Roaming',
+                'Antigravity',
+                'app_storage.json'
+            );
+
+            if (fs.existsSync(appStoragePath)) {
+                try {
+                    const raw = JSON.parse(fs.readFileSync(appStoragePath, 'utf8'));
+                    projectId = raw['new-convo-last-selected-project'] || raw['lastCreatedProjectId'];
+                } catch {}
+            }
+
+            if (!projectId) {
+                const configDir = path.join(
+                    process.env.USERPROFILE || 'C:\\Users\\User',
+                    '.gemini',
+                    'config',
+                    'projects'
+                );
+
+                if (fs.existsSync(configDir)) {
+                    try {
+                        const files = fs.readdirSync(configDir).filter(
+                            (f) => f.endsWith('.json') && f !== 'default-cli-project.json'
+                        );
+                        if (files.length > 0) {
+                            projectId = files[0].replace('.json', '');
+                        }
+                    } catch {}
+                }
+            }
+
+            if (projectId) {
+                this.cachedProjectId = projectId;
+            }
+        }
+
+        return { address, csrfToken, projectId };
     }
 
     /**
@@ -105,7 +147,7 @@ export class AntigravityAgentApiService {
         const isLanguageServer = exe.toLowerCase().endsWith('language_server.exe');
         const finalArgs = isLanguageServer ? ['agentapi', ...args] : args;
 
-        const { address, csrfToken } = this.resolveLanguageServerEnv();
+        const { address, csrfToken, projectId } = this.resolveLanguageServerEnv();
         const env: NodeJS.ProcessEnv = { ...process.env };
         if (address) {
             env.ANTIGRAVITY_LS_ADDRESS = address;
@@ -113,6 +155,10 @@ export class AntigravityAgentApiService {
         if (csrfToken) {
             env.ANTIGRAVITY_CSRF_TOKEN = csrfToken;
         }
+        if (projectId) {
+            env.ANTIGRAVITY_PROJECT_ID = projectId;
+        }
+        env.ANTIGRAVITY_AGENT = '1';
 
         return new Promise<string>((resolve, reject) => {
             const child = spawn(exe, finalArgs, {
