@@ -27,7 +27,7 @@ function formatTelemetry(result: AntigravityResult): string {
     if (result.numTurns !== undefined) {
         parts.push(`🔄 \`Turn ${result.numTurns}\``);
     }
-    parts.push(`⚡ \`${config.antigravity.model || 'Gemini 3.8 Flash'}\``);
+    parts.push(`⚡ \`${result.telemetry?.model || config.antigravity.model || 'Gemini 3.8 Flash'}\``);
 
     if (result.usage?.total_tokens) {
         parts.push(`🪙 \`${result.usage.total_tokens.toLocaleString()} tokens\``);

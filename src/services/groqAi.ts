@@ -551,6 +551,56 @@ class GroqAiService {
         }
     }
 
+    async executeStaffTask(
+        prompt: string,
+        context?: {
+            userTag?: string;
+            history?: { role: 'user' | 'assistant'; content: string }[];
+            attachments?: { name: string; url: string }[];
+        }
+    ): Promise<string> {
+        const staffSystemPrompt = [
+            'You are Antigravity Staff AI — an advanced autonomous engineering and technical operations assistant for Victus Cloud.',
+            'You are running inside a Discord staff operations channel/thread assisting server administrators and engineers.',
+            'You have deep expertise in systems administration, Discord bots, gaming infrastructure (Minecraft, Rust, ARK), Pterodactyl panels, networking, databases, Docker, Node.js, and TypeScript.',
+            'Provide direct, technically accurate, and production-ready solutions.',
+            'If the instruction requires decisions, choices, or information from the staff operator, format your questions under a dedicated section:',
+            '### ❓ Questions for Staff',
+            '1. [First specific question]',
+            '2. [Second specific question]',
+        ].join('\n');
+
+        const messages: ChatMessage[] = [
+            { role: 'system', content: staffSystemPrompt },
+        ];
+
+        if (context?.history && context.history.length > 0) {
+            for (const h of context.history) {
+                messages.push({
+                    role: h.role,
+                    content: h.content,
+                });
+            }
+        }
+
+        let userMessage = prompt;
+        if (context?.attachments && context.attachments.length > 0) {
+            const atts = context.attachments.map((a) => `- ${a.name}: ${a.url}`).join('\n');
+            userMessage += `\n\n[Attachments]:\n${atts}\n(Please inspect or consider these attachments in your analysis).`;
+        }
+
+        if (context?.userTag) {
+            userMessage = `[Operator: ${context.userTag}]\n${userMessage}`;
+        }
+
+        messages.push({
+            role: 'user',
+            content: userMessage,
+        });
+
+        return this.complete(messages, config.ai.webSearchEnabled);
+    }
+
     private async callChatCompletionsOnce(
         messages: ChatMessage[],
         withTools: boolean,

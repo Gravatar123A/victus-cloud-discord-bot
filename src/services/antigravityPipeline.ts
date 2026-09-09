@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { existsSync, mkdirSync, createWriteStream } from 'fs';
 import path from 'path';
 import { pipeline } from 'stream/promises';
@@ -6,6 +6,8 @@ import type { Attachment, GuildMember } from 'discord.js';
 import { PermissionFlagsBits } from 'discord.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { groqAi } from './groqAi.js';
+import { conversationMemory } from './conversationMemory.js';
 
 export interface AntigravityResult {
     success: boolean;
@@ -18,6 +20,10 @@ export interface AntigravityResult {
         output_tokens?: number;
         thinking_tokens?: number;
         total_tokens?: number;
+    };
+    telemetry?: {
+        model?: string;
+        turns?: number;
     };
     hasQuestions: boolean;
     questions?: string[];
@@ -35,8 +41,8 @@ export interface RunTaskOptions {
 }
 
 class AntigravityPipelineService {
-    // In-memory mapping of Discord channel/thread ID -> Antigravity conversation ID
-    private sessions = new Map<string, { conversationId: string; lastUpdated: number }>();
+    // In-memory mapping of Discord channel/thread ID -> Antigravity conversation ID & stats
+    private sessions = new Map<string, { conversationId: string; lastUpdated: number; turns: number }>();
     private readonly SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
     // Track active runs per channel/thread to prevent concurrent conflicting runs
@@ -79,9 +85,11 @@ class AntigravityPipelineService {
      * Set or update an active conversation ID for a channel or thread
      */
     public setSession(channelOrThreadId: string, conversationId: string): void {
+        const existing = this.sessions.get(channelOrThreadId);
         this.sessions.set(channelOrThreadId, {
             conversationId,
             lastUpdated: Date.now(),
+            turns: (existing?.turns || 0) + 1,
         });
     }
 
@@ -90,6 +98,7 @@ class AntigravityPipelineService {
      */
     public clearSession(channelOrThreadId: string): void {
         this.sessions.delete(channelOrThreadId);
+        conversationMemory.clear(channelOrThreadId).catch(() => {});
     }
 
     /**
@@ -121,26 +130,64 @@ class AntigravityPipelineService {
     }
 
     /**
-     * Resolve the agy executable path
+     * Resolve the agy executable path across platforms
      */
-    private getExecutablePath(): string {
+    public getExecutablePath(): string {
         if (config.antigravity.agyPath && config.antigravity.agyPath !== 'agy') {
             return config.antigravity.agyPath;
         }
-        const defaultWinPath = path.join(
-            process.env.LOCALAPPDATA || 'C:\\Users\\User\\AppData\\Local',
-            'agy',
-            'bin',
-            'agy.exe'
-        );
-        if (existsSync(defaultWinPath)) {
-            return defaultWinPath;
+
+        // Common Linux / container locations
+        const linuxPaths = [
+            path.join(process.env.HOME || '/root', '.local', 'bin', 'agy'),
+            '/usr/local/bin/agy',
+            '/usr/bin/agy',
+            '/home/container/.local/bin/agy',
+        ];
+        for (const lp of linuxPaths) {
+            if (existsSync(lp)) return lp;
         }
+
+        // Common Windows locations
+        const winPaths = [
+            path.join(process.env.LOCALAPPDATA || 'C:\\Users\\User\\AppData\\Local', 'agy', 'bin', 'agy.exe'),
+            'C:\\Users\\User\\AppData\\Local\\agy\\bin\\agy.exe',
+        ];
+        for (const wp of winPaths) {
+            if (existsSync(wp)) return wp;
+        }
+
+        // Dynamic PATH lookup
+        try {
+            const lookupCmd = process.platform === 'win32' ? 'where.exe agy' : 'which agy';
+            const found = execSync(lookupCmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim().split(/\r?\n/)[0];
+            if (found && existsSync(found)) return found;
+        } catch {
+            // Not in PATH
+        }
+
         return 'agy';
     }
 
     /**
-     * Execute a task instruction through the local Antigravity CLI
+     * Check if agy binary is available on the current host
+     */
+    public isAgyAvailable(): boolean {
+        const exe = this.getExecutablePath();
+        if (path.isAbsolute(exe)) {
+            return existsSync(exe);
+        }
+        try {
+            const lookupCmd = process.platform === 'win32' ? 'where.exe agy' : 'which agy';
+            execSync(lookupCmd, { stdio: 'ignore' });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Execute a task instruction with local agy engine or seamless Cloud AI fallback
      */
     public async executeTask(options: RunTaskOptions): Promise<AntigravityResult> {
         const { prompt, userId, userTag, channelOrThreadId, attachments, forceNewSession } = options;
@@ -187,34 +234,125 @@ class AntigravityPipelineService {
                 this.clearSession(channelOrThreadId);
             }
 
-            const agyExe = this.getExecutablePath();
-            const args = [
-                '--dangerously-skip-permissions',
-                '--output-format',
-                'json',
-                '-p',
-                fullPrompt,
-            ];
+            // 1. Try running with agy if installed on host
+            if (this.isAgyAvailable()) {
+                try {
+                    const agyExe = this.getExecutablePath();
+                    const args = [
+                        '--dangerously-skip-permissions',
+                        '--output-format',
+                        'json',
+                        '-p',
+                        fullPrompt,
+                    ];
 
-            if (activeConvId) {
-                args.push('--conversation', activeConvId);
+                    if (activeConvId && !activeConvId.startsWith('cloud-')) {
+                        args.push('--conversation', activeConvId);
+                    }
+
+                    if (config.antigravity.model) {
+                        args.push('--model', config.antigravity.model);
+                    }
+
+                    logger.info(
+                        `[AntigravityPipeline] Executing via agy binary (${agyExe}) for @${userTag} in ${channelOrThreadId}. Conv: ${activeConvId || 'new'}`
+                    );
+
+                    const agyResult = await this.spawnAgyProcess(agyExe, args, config.antigravity.workdir);
+
+                    if (agyResult.success) {
+                        if (agyResult.conversationId) {
+                            this.setSession(channelOrThreadId, agyResult.conversationId);
+                        }
+                        if (!agyResult.telemetry) {
+                            agyResult.telemetry = {
+                                model: `${config.antigravity.model || 'gemini-3.8-flash-high'} (Workstation Runner)`,
+                                turns: this.sessions.get(channelOrThreadId)?.turns || 1,
+                            };
+                        }
+                        return agyResult;
+                    }
+
+                    // If it failed due to spawn error (ENOENT), log and fall through to Cloud AI
+                    if (agyResult.error && (agyResult.error.includes('ENOENT') || agyResult.error.includes('not found'))) {
+                        logger.warn('[AntigravityPipeline] agy runner reported ENOENT. Attempting Cloud AI fallback...');
+                    } else {
+                        return agyResult;
+                    }
+                } catch (agyErr: any) {
+                    logger.warn('[AntigravityPipeline] agy execution threw error, falling back to Cloud AI runner:', agyErr);
+                }
             }
 
-            if (config.antigravity.model) {
-                args.push('--model', config.antigravity.model);
+            // 2. Cloud AI Fallback Engine
+            if (groqAi.isEnabled()) {
+                logger.info(
+                    `[AntigravityPipeline] Executing via Cloud AI runner for @${userTag} in ${channelOrThreadId}`
+                );
+                const startTime = Date.now();
+                try {
+                    const history = await conversationMemory.getHistory(channelOrThreadId, 6);
+
+                    const attachmentSummary = attachments?.map((a) => ({
+                        name: a.name || 'attachment',
+                        url: a.url,
+                    }));
+
+                    const aiResponse = await groqAi.executeStaffTask(prompt, {
+                        userTag,
+                        history,
+                        attachments: attachmentSummary,
+                    });
+
+                    await conversationMemory.addExchange(channelOrThreadId, prompt, aiResponse);
+
+                    const { hasQuestions, questions } = this.extractQuestions(aiResponse);
+                    const durationSeconds = (Date.now() - startTime) / 1000;
+                    const cloudConvId = activeConvId?.startsWith('cloud-')
+                        ? activeConvId
+                        : `cloud-${channelOrThreadId}`;
+
+                    this.setSession(channelOrThreadId, cloudConvId);
+                    const currentSession = this.sessions.get(channelOrThreadId);
+                    const turns = currentSession?.turns || 1;
+
+                    return {
+                        success: true,
+                        conversationId: cloudConvId,
+                        response: aiResponse,
+                        durationSeconds,
+                        numTurns: turns,
+                        telemetry: {
+                            model: `${config.ai.model} (Cloud AI Engine)`,
+                            turns,
+                        },
+                        hasQuestions,
+                        questions,
+                    };
+                } catch (cloudErr: any) {
+                    logger.error('[AntigravityPipeline] Cloud AI execution failed:', cloudErr);
+                    return {
+                        success: false,
+                        response: `Cloud AI execution encountered an error: ${cloudErr?.message || 'unknown error'}`,
+                        hasQuestions: false,
+                        error: cloudErr?.message || 'Cloud AI error',
+                    };
+                }
             }
 
-            logger.info(
-                `[AntigravityPipeline] Running task for user ${userTag} in ${channelOrThreadId}. Conv: ${activeConvId || 'new'}`
-            );
-
-            const result = await this.spawnAgyProcess(agyExe, args, config.antigravity.workdir);
-
-            if (result.success && result.conversationId) {
-                this.setSession(channelOrThreadId, result.conversationId);
-            }
-
-            return result;
+            // 3. Neither agy nor Cloud AI is available
+            return {
+                success: false,
+                response:
+                    '❌ **Antigravity Runner Unavailable**\n\n' +
+                    `The Antigravity CLI binary (\`agy\`) was not found on this hosting server (${process.platform}), and Cloud AI fallback is not configured.\n\n` +
+                    '**How to resolve:**\n' +
+                    '1. **Cloud Deployments:** Configure `AI_API_KEY` (or `OPENROUTER_API_KEY`) in your server `.env` to enable the autonomous Cloud AI engine.\n' +
+                    '2. **Local Workstation:** Run the bot on your computer where `agy.exe` is authenticated.\n' +
+                    '3. **Install on Linux:** `curl -fsSL https://antigravity.google/cli/install.sh | bash`',
+                hasQuestions: false,
+                error: 'No runner available',
+            };
         } finally {
             this.runningTasks.delete(channelOrThreadId);
         }
@@ -230,10 +368,12 @@ class AntigravityPipelineService {
             let stderrData = '';
             let isTimedOut = false;
 
+            const isWin = process.platform === 'win32';
             const child = spawn(exe, args, {
                 cwd,
                 env: { ...process.env },
                 windowsHide: true,
+                shell: isWin && !path.isAbsolute(exe),
             });
 
             const timer = setTimeout(() => {
