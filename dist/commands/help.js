@@ -61,11 +61,11 @@ export const helpCommand = {
     data: new SlashCommandBuilder()
         .setName('help')
         .setDescription('Open the premium Victus Cloud interactive help menu')
-        .setDMPermission(false),
+        .setDMPermission(true),
     cooldown: 3,
     async execute(interaction) {
         await interaction.deferReply({ flags: EPH | V2 });
-        const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
+        const settings = interaction.guildId ? await supabase.getBotSettings(interaction.guildId).catch(() => null) : null;
         const prefix = settings?.prefix || '!';
         const container = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
         container.addMediaGalleryComponents(ComponentsV2.mediaGallery(CATEGORY_ARTWORK.main));
@@ -91,7 +91,7 @@ export const helpCommand = {
         if (interaction.customId !== 'help_category')
             return;
         const category = interaction.values[0] || 'main';
-        const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
+        const settings = interaction.guildId ? await supabase.getBotSettings(interaction.guildId).catch(() => null) : null;
         const prefix = settings?.prefix || '!';
         const container = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
         // Render corresponding category artwork

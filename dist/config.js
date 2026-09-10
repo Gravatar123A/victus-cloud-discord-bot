@@ -117,7 +117,7 @@ export const config = {
         // XP awarded per full minute spent active in a voice channel.
         xpPerVoiceMinute: parseInt(process.env.ECON_XP_PER_VOICE_MINUTE || '15', 10),
         xpPerLevel: parseInt(process.env.ECON_XP_PER_LEVEL || '200', 10),
-        coinsPerLevel: parseInt(process.env.ECON_COINS_PER_LEVEL || '30', 10),
+        coinsPerLevel: parseInt(process.env.ECON_COINS_PER_LEVEL || '100', 10),
         // Automatic "+N COINS per Discord invite" reward (escrow model).
         // Disabled by default: the whole feature is inert until
         // DISCORD_INVITE_COINS_ENABLED=true is set on the bot host, so a deploy

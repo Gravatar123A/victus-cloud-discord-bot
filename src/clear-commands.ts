@@ -21,14 +21,18 @@ async function clearCommands() {
         );
         logger.info('  ✅ Global commands cleared');
 
-        // Clear guild commands if guild ID is set
-        if (config.discord.guildId) {
-            logger.info(`  → Clearing guild commands for ${config.discord.guildId}...`);
+        // Clear guild commands for all configured guilds (primary + support)
+        const instantGuilds = [config.discord.guildId, config.bot.supportGuildId].filter(
+            (g, i, arr): g is string => !!g && arr.indexOf(g) === i,
+        );
+
+        for (const guildId of instantGuilds) {
+            logger.info(`  → Clearing guild commands for ${guildId}...`);
             await rest.put(
-                Routes.applicationGuildCommands(config.discord.clientId, config.discord.guildId),
+                Routes.applicationGuildCommands(config.discord.clientId, guildId),
                 { body: [] }
             );
-            logger.info('  ✅ Guild commands cleared');
+            logger.info(`  ✅ Guild commands cleared for ${guildId}`);
         }
 
         logger.info('✅ All commands cleared! Run "npm run register" to re-register commands.');

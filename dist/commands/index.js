@@ -56,10 +56,14 @@ import { pricingCommand } from './pricing.js';
 import { leaderboardCommand } from './leaderboard.js';
 import { levelChannelCommand } from './levelChannel.js';
 import { staffaiCommand } from './staffai.js';
+import { pingCommand } from './ping.js';
+import { pingAdminCommand } from './ping-admin.js';
 // Export command collection
 export const commands = new Collection();
 // Register all commands
 const allCommands = [
+    pingCommand,
+    pingAdminCommand,
     staffaiCommand,
     shareResourceCommand,
     massShareResourceCommand,
@@ -134,10 +138,53 @@ export async function loadCommands(client) {
     }
 }
 /**
- * Get all command data for registration
+ * Command names meant to work globally and in DMs.
+ * All other commands are server-only (registered per-guild with dm_permission: false).
+ */
+export const GLOBAL_COMMAND_NAMES = [
+    'ping',
+    'ping-admin',
+    'help',
+    'link',
+    'unlink',
+    'servers',
+    'services',
+    'invoices',
+    'ask',
+    'currency',
+    'pricing',
+    'account',
+    'create-account',
+    'preferences',
+    'level',
+];
+/**
+ * Get all command data for registration (complete catalog)
  */
 export function getCommandData() {
     return allCommands
         .filter((cmd) => !cmd.data.name.startsWith('_'))
         .map((cmd) => cmd.data.toJSON());
+}
+/**
+ * Get Global (DM-enabled) command payloads with dm_permission: true
+ */
+export function getGlobalCommandData() {
+    return allCommands
+        .filter((cmd) => !cmd.data.name.startsWith('_') && GLOBAL_COMMAND_NAMES.includes(cmd.data.name))
+        .map((cmd) => {
+        const json = cmd.data.toJSON();
+        return { ...json, dm_permission: true };
+    });
+}
+/**
+ * Get Guild-only (server-scoped) command payloads with dm_permission: false
+ */
+export function getGuildCommandData() {
+    return allCommands
+        .filter((cmd) => !cmd.data.name.startsWith('_') && !GLOBAL_COMMAND_NAMES.includes(cmd.data.name))
+        .map((cmd) => {
+        const json = cmd.data.toJSON();
+        return { ...json, dm_permission: false };
+    });
 }
