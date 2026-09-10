@@ -91,7 +91,23 @@ export const staffaiCommand: Command = {
             }
         }
 
+        let threadProgressMsg: any = null;
+        if (threadTarget) {
+            try {
+                threadProgressMsg = await threadTarget.send({
+                    embeds: [
+                        createProcessingEmbed(task, interaction.user.tag, !!attachment)
+                            .setTitle('⏳ Antigravity Pipeline Executing')
+                            .setDescription('Antigravity agent runtime has accepted the task and is working...'),
+                    ],
+                });
+            } catch (initErr) {
+                logger.warn('[StaffAI] Could not send initial progress message in thread:', initErr);
+            }
+        }
+
         try {
+            let lastProgressUpdate = 0;
             const result = await antigravityPipeline.executeTask({
                 prompt: task,
                 userId: interaction.user.id,
@@ -99,6 +115,31 @@ export const staffaiCommand: Command = {
                 channelOrThreadId: workingChannelId,
                 attachments: attachment ? [attachment] : undefined,
                 forceNewSession,
+                onProgress: async (prog) => {
+                    const now = Date.now();
+                    if (now - lastProgressUpdate < 10000) return;
+                    lastProgressUpdate = now;
+
+                    const mins = Math.floor(prog.elapsedSeconds / 60);
+                    const secs = prog.elapsedSeconds % 60;
+                    const timeStr = `${mins}m ${secs.toString().padStart(2, '0')}s`;
+
+                    const updatedEmbed = createProcessingEmbed(task, interaction.user.tag, !!attachment)
+                        .setTitle('🔄 Antigravity Working...')
+                        .setDescription(
+                            `⏱️ **Elapsed:** \`${timeStr}\`${prog.stepIndex ? ` • **Step:** \`${prog.stepIndex}\`` : ''}\n` +
+                            `⚡ **Activity:** \`${(prog.statusMessage || 'Executing steps...').slice(0, 100)}\`\n\n` +
+                            `*(Session running live on developer PC)*`
+                        );
+
+                    try {
+                        if (threadProgressMsg) {
+                            await threadProgressMsg.edit({ embeds: [updatedEmbed] });
+                        } else if (!threadTarget) {
+                            await interaction.editReply({ embeds: [updatedEmbed] });
+                        }
+                    } catch {}
+                },
             });
 
             const { embeds, components } = createResultEmbeds(result, {
@@ -106,7 +147,7 @@ export const staffaiCommand: Command = {
                 userTag: interaction.user.tag,
             });
 
-            // If we created a thread, send the result directly inside the thread and update the root message
+            // If we created a thread, send or edit the result directly inside the thread and update the root message
             if (threadTarget) {
                 await interaction.editReply({
                     content: `🧵 Antigravity pipeline thread created: <#${threadTarget.id}>`,
@@ -118,10 +159,17 @@ export const staffaiCommand: Command = {
                 });
 
                 try {
-                    await threadTarget.send({
-                        embeds,
-                        components,
-                    });
+                    if (threadProgressMsg) {
+                        await threadProgressMsg.edit({
+                            embeds,
+                            components,
+                        });
+                    } else {
+                        await threadTarget.send({
+                            embeds,
+                            components,
+                        });
+                    }
                 } catch (sendErr: any) {
                     logger.warn('[StaffAI] Could not post result in thread, falling back to main message:', sendErr);
                     await interaction.followUp({

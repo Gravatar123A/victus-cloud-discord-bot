@@ -1,5 +1,5 @@
 import { execSync, spawn } from 'child_process';
-import { existsSync, mkdirSync, createWriteStream } from 'fs';
+import { existsSync, mkdirSync, createWriteStream, readFileSync, statSync } from 'fs';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { PermissionFlagsBits } from 'discord.js';
@@ -164,15 +164,47 @@ class AntigravityPipelineService {
         try {
             // Process attachments if any
             const attachmentNotes = [];
+            const bridgeAttachments = [];
             if (attachments && attachments.length > 0) {
                 for (const att of attachments) {
                     try {
                         const localPath = await this.saveAttachmentLocally(att);
                         attachmentNotes.push(`- File: "${att.name}" (${att.contentType || 'unknown'}) saved at: "${localPath.replace(/\\/g, '/')}"`);
+                        let textContent;
+                        try {
+                            const isText = (att.contentType &&
+                                (att.contentType.startsWith('text/') ||
+                                    att.contentType.includes('json') ||
+                                    att.contentType.includes('markdown') ||
+                                    att.contentType.includes('javascript') ||
+                                    att.contentType.includes('typescript'))) ||
+                                att.name.endsWith('.md') ||
+                                att.name.endsWith('.txt') ||
+                                att.name.endsWith('.json') ||
+                                att.name.endsWith('.ts') ||
+                                att.name.endsWith('.js') ||
+                                att.name.endsWith('.py');
+                            const stats = statSync(localPath);
+                            if (isText && stats.size <= 500000) {
+                                textContent = readFileSync(localPath, 'utf8');
+                            }
+                        }
+                        catch { }
+                        bridgeAttachments.push({
+                            name: att.name,
+                            url: att.url,
+                            contentType: att.contentType || undefined,
+                            textContent,
+                        });
                     }
                     catch (err) {
                         logger.warn(`Failed to cache attachment ${att.name}:`, err);
                         attachmentNotes.push(`- File: "${att.name}" (Failed to download: ${err?.message})`);
+                        bridgeAttachments.push({
+                            name: att.name,
+                            url: att.url,
+                            contentType: att.contentType || undefined,
+                        });
                     }
                 }
             }
@@ -197,7 +229,19 @@ class AntigravityPipelineService {
                         activeConversationId: activeConvId && !activeConvId.startsWith('cloud-') ? activeConvId : undefined,
                         title: `[Discord /staffai] @${userTag}: ${prompt.slice(0, 40)}`,
                         userTag,
-                        timeoutMs: config.antigravity.timeoutMs || 240000,
+                        timeoutMs: config.antigravity.timeoutMs || 1800000,
+                        inactivityTimeoutMs: config.antigravity.inactivityTimeoutMs || 600000,
+                        onProgress: options.onProgress
+                            ? async (p) => {
+                                if (options.onProgress) {
+                                    await options.onProgress({
+                                        elapsedSeconds: p.elapsedSeconds,
+                                        statusMessage: p.statusMessage,
+                                        stepIndex: p.stepIndex,
+                                    });
+                                }
+                            }
+                            : undefined,
                     });
                     if (localResult.conversationId) {
                         this.setSession(channelOrThreadId, localResult.conversationId);
@@ -221,10 +265,26 @@ class AntigravityPipelineService {
                 try {
                     const bridgeResult = await antigravityBridge.dispatchTask({
                         prompt: fullPrompt,
+                        rawPrompt: prompt,
                         activeConversationId: activeConvId && !activeConvId.startsWith('cloud-') ? activeConvId : undefined,
                         title: `[Discord /staffai] @${userTag}: ${prompt.slice(0, 40)}`,
                         userTag,
-                        timeoutMs: config.antigravity.timeoutMs || 240000,
+                        userId,
+                        channelId: channelOrThreadId,
+                        timeoutMs: config.antigravity.timeoutMs || 1800000,
+                        inactivityTimeoutMs: config.antigravity.inactivityTimeoutMs || 600000,
+                        attachments: bridgeAttachments,
+                        onProgress: options.onProgress
+                            ? async (p) => {
+                                if (options.onProgress) {
+                                    await options.onProgress({
+                                        elapsedSeconds: p.elapsedSeconds,
+                                        statusMessage: p.statusMessage,
+                                        stepIndex: p.stepIndex,
+                                    });
+                                }
+                            }
+                            : undefined,
                     });
                     if (bridgeResult.conversationId) {
                         this.setSession(channelOrThreadId, bridgeResult.conversationId);

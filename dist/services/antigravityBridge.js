@@ -7,6 +7,8 @@ export class AntigravityBridgeService {
     lastWorkstationHeartbeat = 0;
     workstationName = '';
     pendingTasks = new Map();
+    dispatchedTaskMetadata = new Map();
+    lateCompletionHandler = null;
     isSubscribed = false;
     /**
      * Get or initialize the shared Realtime channel
@@ -22,7 +24,13 @@ export class AntigravityBridgeService {
         return this.channel;
     }
     /**
-     * Start listening for workstation presence and task responses on the bot side
+     * Register a callback to post results in Discord when a task completes after the initial timeout
+     */
+    setLateCompletionHandler(handler) {
+        this.lateCompletionHandler = handler;
+    }
+    /**
+     * Start listening for workstation presence, progress, and task responses on the bot side
      */
     async initBotListener() {
         if (this.isSubscribed)
@@ -40,13 +48,54 @@ export class AntigravityBridgeService {
                 this.workstationName = payload.workstation || 'Windows Workstation';
             }
         });
-        ch.on('broadcast', { event: 'task_response' }, ({ payload }) => {
+        ch.on('broadcast', { event: 'task_progress' }, async ({ payload }) => {
+            if (payload && payload.taskId) {
+                const pending = this.pendingTasks.get(payload.taskId);
+                if (pending) {
+                    // Reset watchdog timer on every progress heartbeat so active tasks never fail prematurely
+                    clearTimeout(pending.timer);
+                    pending.timer = setTimeout(() => {
+                        this.pendingTasks.delete(payload.taskId);
+                        pending.reject(new Error(`Workstation Antigravity bridge timed out after ${pending.inactivityTimeoutMs / 1000}s of inactivity.`));
+                    }, pending.inactivityTimeoutMs);
+                    if (pending.onProgress) {
+                        try {
+                            await pending.onProgress(payload);
+                        }
+                        catch { }
+                    }
+                }
+            }
+        });
+        ch.on('broadcast', { event: 'task_response' }, async ({ payload }) => {
             if (payload && payload.taskId) {
                 const pending = this.pendingTasks.get(payload.taskId);
                 if (pending) {
                     clearTimeout(pending.timer);
                     this.pendingTasks.delete(payload.taskId);
                     pending.resolve(payload.result);
+                }
+                else {
+                    // Task finished after the initial promise expired: deliver directly to Discord!
+                    const meta = this.dispatchedTaskMetadata.get(payload.taskId);
+                    if (meta && (meta.channelId || meta.threadId)) {
+                        logger.info(`[AntigravityBridge] Delivering late completion for task ${payload.taskId} to Discord...`);
+                        if (this.lateCompletionHandler) {
+                            try {
+                                await this.lateCompletionHandler({
+                                    taskId: payload.taskId,
+                                    result: payload.result,
+                                    channelId: meta.channelId,
+                                    threadId: meta.threadId,
+                                    userTag: meta.userTag,
+                                    rawPrompt: meta.rawPrompt,
+                                });
+                            }
+                            catch (lateErr) {
+                                logger.error(`[AntigravityBridge] Failed to deliver late completion for task ${payload.taskId}:`, lateErr);
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -61,11 +110,10 @@ export class AntigravityBridgeService {
      * Check if a workstation bridge is actively connected and sending heartbeats
      */
     isWorkstationOnline() {
-        // Considered online if heartbeat received within last 30 seconds
         return Date.now() - this.lastWorkstationHeartbeat < 30000;
     }
     /**
-     * Actively probe the workstation to check if it is online (with quick ping/pong fallback)
+     * Actively probe the workstation to check if it is online
      */
     async checkWorkstationOnline() {
         await this.initBotListener();
@@ -108,16 +156,48 @@ export class AntigravityBridgeService {
             throw new Error('Workstation Antigravity bridge is offline');
         }
         const taskId = randomUUID();
-        const timeoutMs = request.timeoutMs || 240000;
+        const timeoutMs = request.timeoutMs || 1800000; // 30 minutes overall maximum
+        const inactivityTimeoutMs = request.inactivityTimeoutMs || 600000; // 10 minutes inactivity
+        // Store metadata for resilient late delivery
+        this.dispatchedTaskMetadata.set(taskId, {
+            channelId: request.channelId,
+            threadId: request.threadId,
+            userTag: request.userTag,
+            rawPrompt: request.rawPrompt,
+            dispatchedAt: Date.now(),
+        });
+        // Prune old metadata over 2 hours old
+        const twoHoursAgo = Date.now() - 7200000;
+        for (const [id, meta] of this.dispatchedTaskMetadata.entries()) {
+            if (meta.dispatchedAt < twoHoursAgo) {
+                this.dispatchedTaskMetadata.delete(id);
+            }
+        }
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.pendingTasks.delete(taskId);
-                reject(new Error(`Workstation Antigravity bridge timed out after ${timeoutMs / 1000}s`));
-            }, timeoutMs);
-            this.pendingTasks.set(taskId, { resolve, reject, timer });
+                reject(new Error(`Workstation Antigravity bridge timed out after ${inactivityTimeoutMs / 1000}s of inactivity.`));
+            }, inactivityTimeoutMs);
+            this.pendingTasks.set(taskId, {
+                resolve,
+                reject,
+                timer,
+                inactivityTimeoutMs,
+                onProgress: request.onProgress,
+            });
             const payload = {
                 taskId,
-                ...request,
+                prompt: request.prompt,
+                rawPrompt: request.rawPrompt,
+                activeConversationId: request.activeConversationId,
+                title: request.title,
+                userTag: request.userTag,
+                userId: request.userId,
+                channelId: request.channelId,
+                threadId: request.threadId,
+                timeoutMs,
+                inactivityTimeoutMs,
+                attachments: request.attachments,
             };
             const ch = this.getChannel();
             ch.send({
@@ -129,6 +209,19 @@ export class AntigravityBridgeService {
                 this.pendingTasks.delete(taskId);
                 reject(err);
             });
+        });
+    }
+    /**
+     * Workstation daemon emits progress update back to the cloud bot
+     */
+    async reportProgress(progress) {
+        const ch = this.getChannel();
+        await ch.send({
+            type: 'broadcast',
+            event: 'task_progress',
+            payload: progress,
+        }).catch((err) => {
+            logger.warn('[AntigravityBridge] Failed to broadcast task progress:', err);
         });
     }
     /**
@@ -151,8 +244,14 @@ export class AntigravityBridgeService {
             if (!payload || !payload.taskId)
                 return;
             logger.info(`[AntigravityBridge] Received task from Discord: "${payload.prompt.slice(0, 50)}..."`);
+            const progressReporter = async (p) => {
+                await this.reportProgress({
+                    taskId: payload.taskId,
+                    ...p,
+                });
+            };
             try {
-                const result = await handler(payload);
+                const result = await handler(payload, progressReporter);
                 await ch.send({
                     type: 'broadcast',
                     event: 'task_response',

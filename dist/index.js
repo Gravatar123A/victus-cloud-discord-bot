@@ -4,6 +4,7 @@ import { logger } from './utils/logger.js';
 import { loadCommands } from './commands/index.js';
 import { loadEvents } from './events/index.js';
 import { createLavalinkManager } from './services/music.js';
+import { antigravityBridge } from './services/antigravityBridge.js';
 // Global override: Disable accent colors for all V2 layout containers to achieve clean slate designs
 ContainerBuilder.prototype.setAccentColor = function () {
     return this;
@@ -64,6 +65,30 @@ async function main() {
     await loadCommands(client);
     await loadEvents(client);
     logger.info(`📦 Loaded ${client.commands.size} commands`);
+    // Register late completion delivery for Antigravity tasks that finish after prolonged execution
+    antigravityBridge.setLateCompletionHandler(async (info) => {
+        const targetChannelId = info.threadId || info.channelId;
+        if (!targetChannelId)
+            return;
+        try {
+            const channel = await client.channels.fetch(targetChannelId);
+            if (channel && channel.isTextBased()) {
+                const { createResultEmbeds } = await import('./embeds/antigravityEmbeds.js');
+                const { embeds, components } = createResultEmbeds(info.result, {
+                    task: info.rawPrompt || 'Staff Task',
+                    userTag: info.userTag || 'Staff',
+                });
+                await channel.send({
+                    content: `🔔 **Antigravity Workstation Task Completed** (Background Delivery):`,
+                    embeds,
+                    components,
+                });
+            }
+        }
+        catch (err) {
+            logger.error('[AntigravityBridge] Failed to deliver late completion to channel:', err);
+        }
+    });
     // Login
     try {
         await client.login(config.discord.token);

@@ -182,15 +182,31 @@ export class AntigravityAgentApiService {
     /**
      * Watch transcript.jsonl until the agent finishes its response
      */
-    async waitForCompletion(conversationId, initialLineCount, timeoutMs = 180000) {
+    async waitForCompletion(conversationId, initialLineCount, timeoutMs = 1800000, inactivityTimeoutMs = 600000, onProgress) {
         const transcriptPath = path.join(this.getBrainDir(), conversationId, '.system_generated', 'logs', 'transcript.jsonl');
         const startTime = Date.now();
+        let lastActivityTime = Date.now();
+        let lastLineCount = initialLineCount;
+        let lastProgressReportTime = 0;
         const pollIntervalMs = 400;
-        while (Date.now() - startTime < timeoutMs) {
+        while (true) {
+            const now = Date.now();
+            const totalElapsed = now - startTime;
+            const inactivityElapsed = now - lastActivityTime;
+            if (totalElapsed >= timeoutMs) {
+                throw new Error(`Task exceeded overall maximum timeout of ${(timeoutMs / 1000).toFixed(0)}s.`);
+            }
+            if (inactivityElapsed >= inactivityTimeoutMs) {
+                throw new Error(`Antigravity desktop session has been inactive for ${(inactivityTimeoutMs / 1000).toFixed(0)}s without new steps.`);
+            }
             if (fs.existsSync(transcriptPath)) {
                 try {
                     const raw = fs.readFileSync(transcriptPath, 'utf8');
                     const lines = raw.trim().split('\n').filter(Boolean);
+                    if (lines.length > lastLineCount) {
+                        lastActivityTime = now;
+                        lastLineCount = lines.length;
+                    }
                     if (lines.length > initialLineCount) {
                         for (let i = lines.length - 1; i >= initialLineCount; i--) {
                             try {
@@ -213,6 +229,39 @@ export class AntigravityAgentApiService {
                                 // Skip partially written lines
                             }
                         }
+                        // Emit periodic progress every 8 seconds
+                        if (onProgress && now - lastProgressReportTime > 8000) {
+                            lastProgressReportTime = now;
+                            let lastAction;
+                            let stepIndex;
+                            for (let i = lines.length - 1; i >= initialLineCount; i--) {
+                                try {
+                                    const entry = JSON.parse(lines[i]);
+                                    stepIndex = entry.step_index;
+                                    if (entry.tool_calls && entry.tool_calls.length > 0) {
+                                        const tc = entry.tool_calls[0];
+                                        lastAction = tc.toolSummary || tc.name || 'Running tool';
+                                        break;
+                                    }
+                                    else if (entry.content && typeof entry.content === 'string') {
+                                        lastAction = entry.content.slice(0, 80).replace(/[\r\n]/g, ' ');
+                                        break;
+                                    }
+                                }
+                                catch { }
+                            }
+                            try {
+                                onProgress({
+                                    conversationId,
+                                    elapsedSeconds: Math.round(totalElapsed / 1000),
+                                    stepIndex,
+                                    statusMessage: lastAction || 'Antigravity is actively executing steps...',
+                                    lastAction,
+                                    lineCount: lines.length,
+                                });
+                            }
+                            catch { }
+                        }
                     }
                 }
                 catch {
@@ -221,7 +270,6 @@ export class AntigravityAgentApiService {
             }
             await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         }
-        throw new Error(`Timed out after ${(timeoutMs / 1000).toFixed(0)}s waiting for Antigravity desktop response.`);
     }
     /**
      * Get the current line count of transcript.jsonl
@@ -242,7 +290,7 @@ export class AntigravityAgentApiService {
      * High-level execution method that creates or continues a session and returns an AntigravityResult
      */
     async executeTurn(options) {
-        const { prompt, activeConversationId, title, userTag, timeoutMs = 180000 } = options;
+        const { prompt, activeConversationId, title, userTag, timeoutMs = 1800000, inactivityTimeoutMs = 600000, onProgress, } = options;
         let convId = activeConversationId;
         let initialLines = 0;
         if (convId) {
@@ -254,7 +302,7 @@ export class AntigravityAgentApiService {
             convId = await this.startConversation(safeTitle, prompt);
             initialLines = 0;
         }
-        const completion = await this.waitForCompletion(convId, initialLines, timeoutMs);
+        const completion = await this.waitForCompletion(convId, initialLines, timeoutMs, inactivityTimeoutMs, onProgress);
         const { hasQuestions, questions } = this.extractQuestions(completion.response);
         return {
             success: true,

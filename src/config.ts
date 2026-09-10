@@ -175,7 +175,8 @@ export const config = {
         workdir: process.env.ANTIGRAVITY_WORKDIR || 'e:/heheboi - projects',
         model: process.env.ANTIGRAVITY_MODEL || 'gemini-3.8-flash-high',
         agyPath: process.env.ANTIGRAVITY_BIN || 'agy',
-        timeoutMs: parseInt(process.env.ANTIGRAVITY_TIMEOUT_MS || '300000', 10),
+        timeoutMs: parseInt(process.env.ANTIGRAVITY_TIMEOUT_MS || '1800000', 10),
+        inactivityTimeoutMs: parseInt(process.env.ANTIGRAVITY_INACTIVITY_TIMEOUT_MS || '600000', 10),
     },
 } as const;
 
