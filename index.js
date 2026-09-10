@@ -8,7 +8,7 @@ const discordJsUser = new URL("./node_modules/discord.js/src/structures/User.js"
 // 1. Verify critical dependencies
 if (!existsSync(discordJsPackage) || !existsSync(discordJsUser)) {
     console.log("[Victus Bot] Dependencies missing or incomplete in node_modules. Running clean production install...");
-    const install = spawnSync("npm", ["install", "discord.js@14.25.1", "--force", "--omit=dev", "--no-audit", "--no-fund"], {
+    const install = spawnSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--cache=/tmp/.npm"], {
         stdio: "inherit",
         shell: process.platform === "win32",
     });
@@ -18,6 +18,7 @@ if (!existsSync(discordJsPackage) || !existsSync(discordJsUser)) {
             "[Victus Bot] ⚠️ Your server disk quota is likely 100% full or node_modules has invalid permissions.\n" +
             "[Victus Bot] 💡 Fix: In Pterodactyl File Manager, delete the 'node_modules' folder and any files in 'logs/', then restart.\n"
         );
+        process.exit(install.status || 1);
     }
 }
 

@@ -7,7 +7,7 @@ const discordJsPackage = new URL("./node_modules/discord.js/package.json", impor
 // 1. Verify critical dependencies
 if (!existsSync(discordJsPackage)) {
     console.log("[Victus Bot] Dependencies missing in node_modules. Running clean production install...");
-    const install = spawnSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund"], {
+    const install = spawnSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--cache=/tmp/.npm"], {
         stdio: "inherit",
         shell: process.platform === "win32",
     });
@@ -17,6 +17,7 @@ if (!existsSync(discordJsPackage)) {
             "[Victus Bot] ⚠️ Your server disk quota is likely 100% full or node_modules has invalid permissions.\n" +
             "[Victus Bot] 💡 Fix: In Pterodactyl File Manager, delete the 'node_modules' folder and any files in 'logs/', then restart.\n"
         );
+        process.exit(install.status || 1);
     }
 }
 

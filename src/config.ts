@@ -172,7 +172,7 @@ export const config = {
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean),
-        workdir: process.env.ANTIGRAVITY_WORKDIR || 'e:/heheboi - projects',
+        workdir: process.env.ANTIGRAVITY_WORKDIR || (process.platform === 'win32' ? 'e:/heheboi - projects' : process.cwd()),
         model: process.env.ANTIGRAVITY_MODEL || 'gemini-3.8-flash-high',
         agyPath: process.env.ANTIGRAVITY_BIN || 'agy',
         timeoutMs: parseInt(process.env.ANTIGRAVITY_TIMEOUT_MS || '1800000', 10),
