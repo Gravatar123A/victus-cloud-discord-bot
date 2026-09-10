@@ -21,3 +21,55 @@ test('resourceScraper rejects invalid URLs', async () => {
         await scrapeResourceUrl('not-a-valid-url');
     });
 });
+
+test('resourceScraper parses CurseForge links and extracts categories/tags', async (t) => {
+    const originalFetch = globalThis.fetch;
+    const mockHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>JEI - Just Enough Items - Minecraft Mods - CurseForge</title>
+            <meta property="og:title" content="JEI - Just Enough Items" />
+            <meta property="og:description" content="A great Minecraft mod" />
+            <meta property="og:image" content="https://media.forgecdn.net/avatars/123.png" />
+            <meta name="author" content="mezz" />
+        </head>
+        <body>
+            <a href="/minecraft/mc-mods/item-valuation">Item Valuation</a>
+            <a href="/minecraft/mc-mods/map-information">Map Information</a>
+            <a href="/minecraft/mc-mods/jei/files">Files (ignored)</a>
+            <a href="https://www.curseforge.com/minecraft/mc-mods/technology">Technology</a>
+        </body>
+        </html>
+    `;
+
+    globalThis.fetch = async (url) => {
+        return {
+            ok: true,
+            text: async () => mockHtml,
+            json: async () => ({}),
+        };
+    };
+
+    try {
+        const result = await scrapeResourceUrl('https://www.curseforge.com/minecraft/mc-mods/jei');
+        assert.ok(result);
+        assert.equal(result.site_name, 'CurseForge');
+        assert.equal(result.category_hint, 'Mods');
+        assert.equal(result.author, 'mezz');
+        assert.ok(result.tags_hint);
+        
+        const tags = result.tags_hint;
+        assert.ok(tags.includes('item-valuation'));
+        assert.ok(tags.includes('item valuation'));
+        assert.ok(tags.includes('map-information'));
+        assert.ok(tags.includes('map information'));
+        assert.ok(tags.includes('technology'));
+        
+        assert.ok(!tags.includes('files'));
+        assert.ok(!tags.includes('jei'));
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+

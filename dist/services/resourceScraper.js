@@ -176,12 +176,54 @@ async function parseCurseForge(url, html) {
         categoryHint = 'Maps';
     const authorMatch = html.match(/class=["']author-tag["'][^>]*>([^<]+)</i) || html.match(/by\s+<span[^>]*>([^<]+)<\/span>/i);
     const author = authorMatch ? authorMatch[1].trim() : meta.author;
+    // Extract categories and tags from HTML anchor links
+    let projectSlug = '';
+    try {
+        const urlObj = new URL(url);
+        const parts = urlObj.pathname.split('/').filter(Boolean);
+        if (parts.length >= 2) {
+            projectSlug = parts[parts.length - 1].toLowerCase();
+        }
+    }
+    catch { }
+    const tags = new Set();
+    // Add existing keywords if any
+    if (meta.keywords) {
+        meta.keywords.forEach((k) => tags.add(k.toLowerCase()));
+    }
+    let match;
+    const categoryLinkRegex = /<a\s+[^>]*href=["'](?:https?:\/\/(?:www\.)?curseforge\.com)?\/([^/?"' >]+)\/([^/?"' >]+)\/([^/?"' >]+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    while ((match = categoryLinkRegex.exec(html)) !== null) {
+        const game = match[1].toLowerCase();
+        const section = match[2].toLowerCase();
+        const slug = match[3].toLowerCase();
+        const text = cleanHtmlText(match[4]).trim();
+        const ignoredSlugs = [
+            'files', 'screenshots', 'relations', 'pages', 'download', 'comments',
+            'issues', 'source', 'wiki', 'feedback', 'search', 'settings', 'install'
+        ];
+        if (ignoredSlugs.includes(slug) || slug === projectSlug) {
+            continue;
+        }
+        if (['mc-mods', 'texture-packs', 'worlds', 'customization', 'bukkit-plugins', 'addons'].includes(slug)) {
+            continue;
+        }
+        if (slug.length > 1 && slug.length < 30) {
+            tags.add(slug);
+            if (slug.includes('-')) {
+                tags.add(slug.replace(/-/g, ' '));
+            }
+        }
+        if (text && text.length > 1 && text.length < 30 && !text.includes('\n') && !text.includes('<') && !text.includes('>')) {
+            tags.add(text.toLowerCase());
+        }
+    }
     return {
         title: meta.title.replace(/\s*-\s*Minecraft\s*Mods\s*-\s*CurseForge/i, '').replace(/\s*-\s*CurseForge/i, ''),
         description: meta.description || 'Minecraft resource on CurseForge',
         images: meta.image ? [meta.image] : [],
         category_hint: categoryHint,
-        tags_hint: meta.keywords || [],
+        tags_hint: Array.from(tags),
         author,
         source_url: url,
         site_name: 'CurseForge',
