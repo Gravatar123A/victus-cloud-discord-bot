@@ -48,7 +48,7 @@ export class WhitelistSettingsService {
         return updated;
     }
 
-    async isImmune(guildId: string, userId: string, category: 'ban' | 'kick' | 'timeout' | 'warn'): Promise<boolean> {
+    async isImmune(guildId: string, userId: string, category: 'ban' | 'kick' | 'timeout' | 'warn' | 'cuss' | 'link' | 'spam' | 'caps'): Promise<boolean> {
         const config = await this.get(guildId);
         const record = config.users.find(u => u.userId === userId);
         if (!record) return false;

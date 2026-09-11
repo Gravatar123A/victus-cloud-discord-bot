@@ -2,16 +2,14 @@ import { Events, EmbedBuilder } from 'discord.js';
 import type { GuildMember, PartialGuildMember } from 'discord.js';
 import type { Event } from '../types/index.js';
 import { auditLogSettings } from '../services/auditLogSettings.js';
+import { antiNukeService } from '../services/antiNukeService.js';
 import { logger } from '../utils/logger.js';
 import { config as botConfig } from '../config.js';
 import { supabase } from '../services/supabase.js';
 
 /**
  * If the leaving member has a PENDING invite credit, void it — they left before
- * qualifying, so the inviter is never paid (the clean anti-farm path; no COINS
- * were ever moved). A 'confirmed' credit is left untouched: in the escrow model
- * the 20 COINS are only paid after the qualifying period AND while still a
- * member, so there is nothing to claw back.
+ * qualifying, so the inviter is never paid.
  */
 async function voidInviteCreditOnLeave(member: GuildMember | PartialGuildMember): Promise<void> {
     if (!botConfig.economy.invite.enabled) return;
@@ -36,13 +34,17 @@ async function voidInviteCreditOnLeave(member: GuildMember | PartialGuildMember)
 export const guildMemberRemoveEvent: Event = {
     name: Events.GuildMemberRemove,
     async execute(member: GuildMember) {
+        // 1. Process Anti-Nuke protection for Kicks
+        await antiNukeService.handleMemberRemove(member).catch((error) => {
+            logger.error('Error handling Anti-Nuke member remove:', error);
+        });
+
         // Void any pending invite credit first, isolated from the audit flow.
         await voidInviteCreditOnLeave(member).catch((error) => {
             logger.error('Error voiding invite credit on leave:', error);
         });
 
-        // Discord link COINS revocation: if this member had the 100 COINS link reward,
-        // deduct it immediately and notify. Idempotent via coins_revoked flag.
+        // Discord link COINS revocation
         await supabase.revokeDiscordLinkCoins(member.id).then((revoked) => {
             if (revoked) logger.info(`Discord link COINS revoked for ${member.id} (left guild ${member.guild.id})`);
         }).catch((error) => {

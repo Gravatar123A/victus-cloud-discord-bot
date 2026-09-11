@@ -1,8 +1,7 @@
-import { ChannelType, Events } from 'discord.js';
+import { Events } from 'discord.js';
 import { warnSettings } from '../services/warnSettings.js';
-import { ComponentsV2 } from '../embeds/componentsV2.js';
+import { antiNukeService } from '../services/antiNukeService.js';
 import { logger } from '../utils/logger.js';
-const V2 = ComponentsV2.IS_COMPONENTS_V2;
 export const channelDeleteEvent = {
     name: Events.ChannelDelete,
     async execute(channel) {
@@ -11,27 +10,18 @@ export const channelDeleteEvent = {
         if (!channel.guild)
             return;
         try {
+            // 1. Process Anti-Nuke protection first
+            await antiNukeService.handleChannelDelete(channel);
+            // 2. Handle original warn log channel recreation mapping
             const guildId = channel.guild.id;
             const config = await warnSettings.get(guildId);
             if (config.warnChannelId === channel.id) {
-                logger.info(`Warn channel ${channel.id} was deleted in guild ${guildId}. Recreating...`);
-                // Recreate the channel under the same name, category parent, and copy permissions
-                const newChannel = await channel.guild.channels.create({
-                    name: channel.name,
-                    type: ChannelType.GuildText,
-                    parent: channel.parentId || undefined,
-                    permissionOverwrites: channel.permissionOverwrites.cache.map((p) => ({
-                        id: p.id,
-                        type: p.type,
-                        allow: p.allow.toArray(),
-                        deny: p.deny.toArray()
-                    }))
-                });
-                // Update settings to reference new channel
-                await warnSettings.set(guildId, { warnChannelId: newChannel.id });
-                // Send restoration log alert
-                const alertCard = ComponentsV2.warningContainer('Channel Recreated', 'The warnings logs channel was deleted and has been automatically recreated to maintain staff operations.');
-                await newChannel.send({ components: [alertCard], flags: V2 }).catch(() => { });
+                logger.info(`Warn channel ${channel.id} was deleted in guild ${guildId}. Aligning warn settings to recreated channel...`);
+                // Find the newly recreated channel (restored by antiNukeService) and update references
+                const newChannel = channel.guild.channels.cache.find((c) => c.name === channel.name && c.id !== channel.id);
+                if (newChannel) {
+                    await warnSettings.set(guildId, { warnChannelId: newChannel.id });
+                }
             }
         }
         catch (error) {
@@ -39,3 +29,4 @@ export const channelDeleteEvent = {
         }
     }
 };
+export default channelDeleteEvent;

@@ -9,6 +9,7 @@ import {
 import { supabase } from './supabase.js';
 import { groqAi } from './groqAi.js';
 import { warnSettings, WarningRecord } from './warnSettings.js';
+import { whitelistSettings } from './whitelistSettings.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
 
@@ -242,7 +243,9 @@ export async function inspectModerationMessage(message: Message): Promise<boolea
         const explicitAbuse = hasExplicitAbuse(content);
         const classification = content.length >= 4 ? await classifyWithTimeout(content) : null;
         const localLanguage = languageCheck ? detectNonEnglishLocally(content) : null;
-        const abusive = explicitAbuse || Boolean(classification?.abusive && (classification.abuseConfidence >= 0.88));
+
+        const isCussImmune = await whitelistSettings.isImmune(message.guildId!, message.author.id, 'cuss').catch(() => false);
+        const abusive = !isCussImmune && (explicitAbuse || Boolean(classification?.abusive && (classification.abuseConfidence >= 0.88)));
         const nonEnglish = languageCheck && Boolean(
             localLanguage || (classification && !classification.english && classification.languageConfidence >= 0.86),
         );

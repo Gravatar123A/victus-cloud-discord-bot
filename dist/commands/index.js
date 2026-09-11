@@ -58,6 +58,7 @@ import { levelChannelCommand } from './levelChannel.js';
 import { staffaiCommand } from './staffai.js';
 import { pingCommand } from './ping.js';
 import { pingAdminCommand } from './ping-admin.js';
+import { antinukeCommand } from './antinuke.js';
 // Viral Expansion Engine commands
 import { ownerStatsCommand } from './ownerStats.js';
 import { hostPromoCommand, freeServerCommand } from './hostPromo.js';
@@ -129,6 +130,7 @@ const allCommands = [
     unbanCommand,
     untimeoutCommand,
     whitelistCommand,
+    antinukeCommand,
     communityCoinsCommand,
     levelCommand,
     levelChannelCommand,

@@ -2,11 +2,17 @@ import { Events, EmbedBuilder } from 'discord.js';
 import type { GuildBan } from 'discord.js';
 import type { Event } from '../types/index.js';
 import { auditLogSettings } from '../services/auditLogSettings.js';
+import { antiNukeService } from '../services/antiNukeService.js';
 import { logger } from '../utils/logger.js';
 
 export const guildBanAddEvent: Event = {
     name: Events.GuildBanAdd,
     async execute(ban: GuildBan) {
+        // 1. Process Anti-Nuke protection for Ban additions
+        await antiNukeService.handleBanAdd(ban).catch((error) => {
+            logger.error('Error handling Anti-Nuke ban add:', error);
+        });
+
         try {
             const guildId = ban.guild.id;
             const config = await auditLogSettings.get(guildId);

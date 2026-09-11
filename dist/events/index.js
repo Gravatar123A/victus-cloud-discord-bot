@@ -13,6 +13,14 @@ import { guildBanAddEvent } from './guildBanAdd.js';
 import { guildBanRemoveEvent } from './guildBanRemove.js';
 import { inviteCreateEvent } from './inviteCreate.js';
 import { inviteDeleteEvent } from './inviteDelete.js';
+// Anti-Nuke new events
+import { channelCreateEvent } from './channelCreate.js';
+import { roleCreateEvent } from './roleCreate.js';
+import { roleDeleteEvent } from './roleDelete.js';
+import { roleUpdateEvent } from './roleUpdate.js';
+import { emojiDeleteEvent } from './emojiDelete.js';
+import { stickerDeleteEvent } from './stickerDelete.js';
+import { guildUpdateEvent } from './guildUpdate.js';
 const events = [
     readyEvent,
     interactionCreateEvent,
@@ -27,6 +35,14 @@ const events = [
     guildBanRemoveEvent,
     inviteCreateEvent,
     inviteDeleteEvent,
+    // Anti-Nuke triggers
+    channelCreateEvent,
+    roleCreateEvent,
+    roleDeleteEvent,
+    roleUpdateEvent,
+    emojiDeleteEvent,
+    stickerDeleteEvent,
+    guildUpdateEvent,
 ];
 /**
  * Load events into the client
