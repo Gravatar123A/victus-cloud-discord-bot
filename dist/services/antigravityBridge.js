@@ -187,6 +187,7 @@ export class AntigravityBridgeService {
             });
             const payload = {
                 taskId,
+                dispatchedAt: Date.now(),
                 prompt: request.prompt,
                 rawPrompt: request.rawPrompt,
                 activeConversationId: request.activeConversationId,
@@ -228,6 +229,8 @@ export class AntigravityBridgeService {
      * Start running as the workstation daemon (on the user's PC)
      */
     async runAsWorkstationDaemon(handler) {
+        const daemonStartedAt = Date.now();
+        const processedTasks = new Set();
         const ch = this.getChannel();
         ch.on('broadcast', { event: 'ping' }, () => {
             ch.send({
@@ -243,6 +246,35 @@ export class AntigravityBridgeService {
         ch.on('broadcast', { event: 'task_request' }, async ({ payload }) => {
             if (!payload || !payload.taskId)
                 return;
+            // Deduplicate
+            if (processedTasks.has(payload.taskId)) {
+                logger.warn(`[AntigravityBridge] Ignoring duplicate task ${payload.taskId}`);
+                return;
+            }
+            processedTasks.add(payload.taskId);
+            // Stale/pending task protection:
+            // If the task was dispatched before this bridge daemon session started, or is older than 45 seconds,
+            // do NOT execute it. Discard cleanly so staff can initiate a fresh task.
+            const now = Date.now();
+            const isDispatchedBeforeStart = payload.dispatchedAt && payload.dispatchedAt < (daemonStartedAt - 5000);
+            const isOld = payload.dispatchedAt && (now - payload.dispatchedAt > 45000);
+            if (isDispatchedBeforeStart || isOld) {
+                logger.warn(`[AntigravityBridge] ⏭️ Skipping pending/stale task ${payload.taskId} from @${payload.userTag || 'staff'} (dispatched ${payload.dispatchedAt ? Math.round((now - payload.dispatchedAt) / 1000) + 's ago' : 'prior to daemon start'}). Waiting for staff to submit a new task.`);
+                await ch.send({
+                    type: 'broadcast',
+                    event: 'task_response',
+                    payload: {
+                        taskId: payload.taskId,
+                        result: {
+                            success: false,
+                            response: '⚠️ **Task cleared**: This task was pending from a previous session or bridge restart and was safely cleared. Please submit a new `/staffai` task to begin work.',
+                            hasQuestions: false,
+                            error: 'Task cleared on bridge reconnect',
+                        },
+                    },
+                }).catch(() => { });
+                return;
+            }
             logger.info(`[AntigravityBridge] Received task from Discord: "${payload.prompt.slice(0, 50)}..."`);
             const progressReporter = async (p) => {
                 await this.reportProgress({

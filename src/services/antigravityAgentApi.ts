@@ -1,8 +1,22 @@
 import fs from 'fs';
 import path from 'path';
+import http from 'http';
 import { spawn, execFileSync } from 'child_process';
 import { logger } from '../utils/logger.js';
 import type { AntigravityResult } from './antigravityPipeline.js';
+
+function probeHttpPort(port: number, host = '127.0.0.1', timeoutMs = 600): Promise<boolean> {
+    return new Promise((resolve) => {
+        const req = http.get(`http://${host}:${port}/`, { timeout: timeoutMs }, (res) => {
+            resolve(res.statusCode === 200 || res.statusCode === 404);
+        });
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => {
+            req.destroy();
+            resolve(false);
+        });
+    });
+}
 
 export interface AgentApiProgress {
     conversationId: string;
@@ -46,13 +60,63 @@ export class AntigravityAgentApiService {
     }
 
     /**
+     * Resolve project ID from app_storage.json or ~/.gemini/config/projects
+     */
+    public resolveProjectId(): string | undefined {
+        if (this.cachedProjectId) return this.cachedProjectId;
+        if (process.env.ANTIGRAVITY_PROJECT_ID) {
+            this.cachedProjectId = process.env.ANTIGRAVITY_PROJECT_ID;
+            return this.cachedProjectId;
+        }
+
+        const appStoragePath = path.join(
+            process.env.APPDATA || 'C:\\Users\\User\\AppData\\Roaming',
+            'Antigravity',
+            'app_storage.json'
+        );
+
+        if (fs.existsSync(appStoragePath)) {
+            try {
+                const raw = JSON.parse(fs.readFileSync(appStoragePath, 'utf8'));
+                const pId = raw['new-convo-last-selected-project'] || raw['lastCreatedProjectId'];
+                if (pId) {
+                    this.cachedProjectId = pId;
+                    return pId;
+                }
+            } catch {}
+        }
+
+        const configDir = path.join(
+            process.env.USERPROFILE || 'C:\\Users\\User',
+            '.gemini',
+            'config',
+            'projects'
+        );
+
+        if (fs.existsSync(configDir)) {
+            try {
+                const files = fs.readdirSync(configDir).filter(
+                    (f) => f.endsWith('.json') && f !== 'default-cli-project.json'
+                );
+                if (files.length > 0) {
+                    const pId = files[0].replace('.json', '');
+                    this.cachedProjectId = pId;
+                    return pId;
+                }
+            } catch {}
+        }
+
+        return undefined;
+    }
+
+    /**
      * Auto-detect the running Antigravity Language Server address, CSRF token, and project ID.
      * When running in an external terminal, these env vars are not inherited automatically.
      */
     public resolveLanguageServerEnv(): { address?: string; csrfToken?: string; projectId?: string } {
         let address = process.env.ANTIGRAVITY_LS_ADDRESS || this.cachedLsAddress || undefined;
         let csrfToken = process.env.ANTIGRAVITY_CSRF_TOKEN || this.cachedCsrfToken || undefined;
-        let projectId = process.env.ANTIGRAVITY_PROJECT_ID || this.cachedProjectId || undefined;
+        const projectId = this.resolveProjectId();
 
         // 1. Detect port from language_server.log
         if (!address) {
@@ -69,7 +133,7 @@ export class AntigravityAgentApiService {
                     const matches = [...log.matchAll(/Language server listening on random port at (\d+) for HTTP/g)];
                     if (matches.length > 0) {
                         const port = matches[matches.length - 1][1];
-                        address = `localhost:${port}`;
+                        address = `127.0.0.1:${port}`;
                         this.cachedLsAddress = address;
                     }
                 } catch (e) {
@@ -101,53 +165,148 @@ export class AntigravityAgentApiService {
             }
         }
 
-        // 3. Detect Project ID from Antigravity app_storage.json or ~/.gemini/config/projects
-        if (!projectId) {
-            const appStoragePath = path.join(
-                process.env.APPDATA || 'C:\\Users\\User\\AppData\\Roaming',
-                'Antigravity',
-                'app_storage.json'
-            );
-
-            if (fs.existsSync(appStoragePath)) {
-                try {
-                    const raw = JSON.parse(fs.readFileSync(appStoragePath, 'utf8'));
-                    projectId = raw['new-convo-last-selected-project'] || raw['lastCreatedProjectId'];
-                } catch {}
-            }
-
-            if (!projectId) {
-                const configDir = path.join(
-                    process.env.USERPROFILE || 'C:\\Users\\User',
-                    '.gemini',
-                    'config',
-                    'projects'
-                );
-
-                if (fs.existsSync(configDir)) {
-                    try {
-                        const files = fs.readdirSync(configDir).filter(
-                            (f) => f.endsWith('.json') && f !== 'default-cli-project.json'
-                        );
-                        if (files.length > 0) {
-                            projectId = files[0].replace('.json', '');
-                        }
-                    } catch {}
-                }
-            }
-
-            if (projectId) {
-                this.cachedProjectId = projectId;
-            }
-        }
-
         return { address, csrfToken, projectId };
     }
 
     /**
-     * Execute an agentapi command cleanly via process spawning (handles multiline prompts safely)
+     * Verify or actively re-detect the live Language Server port and CSRF token.
+     * Probes TCP ports via HTTP so stale/dead ports are never used.
      */
-    private async runCommand(args: string[]): Promise<string> {
+    public async getVerifiedLanguageServerEnv(forceRefresh = false): Promise<{
+        address?: string;
+        csrfToken?: string;
+        projectId?: string;
+    }> {
+        // If not forced and we have cached address and csrfToken, test if the port is still alive
+        if (!forceRefresh && this.cachedLsAddress && this.cachedCsrfToken) {
+            const portMatch = this.cachedLsAddress.match(/:(\d+)$/);
+            if (portMatch) {
+                const port = parseInt(portMatch[1], 10);
+                const isAlive = await probeHttpPort(port);
+                if (isAlive) {
+                    return {
+                        address: this.cachedLsAddress,
+                        csrfToken: this.cachedCsrfToken,
+                        projectId: this.resolveProjectId(),
+                    };
+                }
+            }
+        }
+
+        // Cache was invalid, stale, or port died: do a full live scan
+        logger.info('[AgentAPI] Scanning for active Antigravity Language Server process & port...');
+        this.cachedLsAddress = null;
+        this.cachedCsrfToken = null;
+
+        // 1. Scan running Win32_Process for language_server.exe
+        try {
+            const script = `
+            $proc = Get-CimInstance Win32_Process -Filter "Name like '%language_server%'" | Select-Object -First 1
+            if ($proc) {
+                $token = ''
+                if ($proc.CommandLine -match '--csrf_token\\s+([a-f0-9-]+)') {
+                    $token = $matches[1]
+                }
+                $conns = Get-NetTCPConnection -OwningProcess $proc.ProcessId -State Listen -ErrorAction SilentlyContinue
+                $ports = ($conns | Select-Object -ExpandProperty LocalPort) -join ','
+                [PSCustomObject]@{
+                    Pid = $proc.ProcessId
+                    CsrfToken = $token
+                    Ports = $ports
+                } | ConvertTo-Json -Compress
+            }
+            `;
+            const out = execFileSync('powershell.exe', ['-NoProfile', '-Command', script], {
+                encoding: 'utf8',
+                windowsHide: true,
+            }).trim();
+
+            if (out) {
+                const data = JSON.parse(out);
+                const candidatePorts = (data.Ports || '')
+                    .split(',')
+                    .map((p: string) => parseInt(p.trim(), 10))
+                    .filter(Boolean);
+
+                let activePort: number | null = null;
+                for (const port of candidatePorts) {
+                    if (await probeHttpPort(port)) {
+                        activePort = port;
+                        break;
+                    }
+                }
+
+                if (activePort) {
+                    this.cachedLsAddress = `127.0.0.1:${activePort}`;
+                    this.cachedCsrfToken = data.CsrfToken || null;
+                    logger.info(
+                        `[AgentAPI] Connected to live Antigravity Language Server at ${this.cachedLsAddress} (PID: ${data.Pid})`
+                    );
+                }
+            }
+        } catch (scanErr) {
+            logger.warn('[AgentAPI] Process scanning encountered an error:', scanErr);
+        }
+
+        // 2. Fallback to language_server.log if process scan didn't find active port
+        if (!this.cachedLsAddress) {
+            const logPath = path.join(
+                process.env.APPDATA || 'C:\\Users\\User\\AppData\\Roaming',
+                'Antigravity',
+                'logs',
+                'language_server.log'
+            );
+
+            if (fs.existsSync(logPath)) {
+                try {
+                    const log = fs.readFileSync(logPath, 'utf8');
+                    const matches = [...log.matchAll(/Language server listening on random port at (\d+) for HTTP/g)];
+                    for (let i = matches.length - 1; i >= 0 && i >= matches.length - 5; i--) {
+                        const port = parseInt(matches[i][1], 10);
+                        if (await probeHttpPort(port)) {
+                            this.cachedLsAddress = `127.0.0.1:${port}`;
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    logger.warn('[AgentAPI] Failed reading language_server.log for port detection');
+                }
+            }
+        }
+
+        // 3. CSRF Token fallback
+        if (!this.cachedCsrfToken) {
+            try {
+                const out = execFileSync(
+                    'powershell.exe',
+                    [
+                        '-NoProfile',
+                        '-Command',
+                        `Get-CimInstance Win32_Process -Filter "Name like '%language_server%'" | Select-Object -ExpandProperty CommandLine`
+                    ],
+                    { encoding: 'utf8', windowsHide: true }
+                );
+                const tokenMatch = out.match(/--csrf_token\s+([a-f0-9-]+)/i);
+                if (tokenMatch) {
+                    this.cachedCsrfToken = tokenMatch[1];
+                }
+            } catch {}
+        }
+
+        const projectId = this.resolveProjectId();
+
+        return {
+            address: this.cachedLsAddress || undefined,
+            csrfToken: this.cachedCsrfToken || undefined,
+            projectId,
+        };
+    }
+
+    /**
+     * Execute an agentapi command cleanly via process spawning (handles multiline prompts safely).
+     * Includes automatic retry with cache invalidation if connection to LS port is refused.
+     */
+    private async runCommand(args: string[], isRetry = false): Promise<string> {
         const exe = this.getExecutablePath();
         if (!exe) {
             throw new Error('agentapi executable not found on this machine');
@@ -156,7 +315,7 @@ export class AntigravityAgentApiService {
         const isLanguageServer = exe.toLowerCase().endsWith('language_server.exe');
         const finalArgs = isLanguageServer ? ['agentapi', ...args] : args;
 
-        const { address, csrfToken, projectId } = this.resolveLanguageServerEnv();
+        const { address, csrfToken, projectId } = await this.getVerifiedLanguageServerEnv(isRetry);
         const env: NodeJS.ProcessEnv = { ...process.env };
         if (address) {
             env.ANTIGRAVITY_LS_ADDRESS = address;
@@ -169,29 +328,48 @@ export class AntigravityAgentApiService {
         }
         env.ANTIGRAVITY_AGENT = '1';
 
-        return new Promise<string>((resolve, reject) => {
-            const child = spawn(exe, finalArgs, {
-                env,
-                windowsHide: true,
-                shell: !isLanguageServer, // use shell only if running .bat
+        try {
+            return await new Promise<string>((resolve, reject) => {
+                const child = spawn(exe, finalArgs, {
+                    env,
+                    windowsHide: true,
+                    shell: !isLanguageServer, // use shell only if running .bat
+                });
+
+                let stdout = '';
+                let stderr = '';
+
+                child.stdout.on('data', (d) => (stdout += d.toString()));
+                child.stderr.on('data', (d) => (stderr += d.toString()));
+
+                child.on('error', (err) => reject(err));
+
+                child.on('close', (code) => {
+                    if (code !== 0) {
+                        reject(new Error(`AgentAPI process exited with code ${code}: ${stderr || stdout}`));
+                    } else {
+                        resolve(stdout);
+                    }
+                });
             });
+        } catch (err: any) {
+            const errStr = String(err?.message || '');
+            const isConnectionErr =
+                errStr.includes('connectex') ||
+                errStr.includes('actively refused') ||
+                errStr.includes('dial tcp') ||
+                errStr.includes('code = Unavailable');
 
-            let stdout = '';
-            let stderr = '';
-
-            child.stdout.on('data', (d) => (stdout += d.toString()));
-            child.stderr.on('data', (d) => (stderr += d.toString()));
-
-            child.on('error', (err) => reject(err));
-
-            child.on('close', (code) => {
-                if (code !== 0) {
-                    reject(new Error(`AgentAPI process exited with code ${code}: ${stderr || stdout}`));
-                } else {
-                    resolve(stdout);
-                }
-            });
-        });
+            if (!isRetry && isConnectionErr) {
+                logger.warn(
+                    '[AgentAPI] Connection refused on previous Language Server port. Invalidating cache and re-detecting...'
+                );
+                this.cachedLsAddress = null;
+                this.cachedCsrfToken = null;
+                return this.runCommand(args, true);
+            }
+            throw err;
+        }
     }
 
     /**
@@ -238,6 +416,15 @@ export class AntigravityAgentApiService {
     public async sendMessage(conversationId: string, prompt: string): Promise<void> {
         logger.info(`[AgentAPI] Sending turn to Antigravity desktop session: ${conversationId}`);
         await this.runCommand(['send-message', conversationId, prompt]);
+    }
+
+    /**
+     * Fetch conversation metadata for an Antigravity desktop conversation
+     */
+    public async getConversationMetadata(conversationId: string): Promise<any> {
+        const stdout = await this.runCommand(['get-conversation-metadata', conversationId]);
+        const parsed = JSON.parse(stdout.trim());
+        return parsed?.response?.conversationMetadata?.metadata || parsed;
     }
 
     /**

@@ -18,7 +18,7 @@ async function main() {
     }
 
     logger.info(`✅ Found Antigravity runtime at: ${agentApiExe}`);
-    const { address, csrfToken, projectId } = antigravityAgentApi.resolveLanguageServerEnv();
+    const { address, csrfToken, projectId } = await antigravityAgentApi.getVerifiedLanguageServerEnv();
     if (address) {
         logger.info(`🌐 Antigravity Language Server detected at: ${address} (CSRF: ${csrfToken ? 'verified' : 'none'}, Project: ${projectId || 'default'})`);
     } else {
