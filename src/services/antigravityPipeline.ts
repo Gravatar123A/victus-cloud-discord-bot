@@ -55,17 +55,25 @@ class AntigravityPipelineService {
     }
 
     /**
-     * Check if a GuildMember has permission to run staff Antigravity commands
+     * Check if a GuildMember has permission to run staff Antigravity commands.
+     * External Discord server owners or administrators CANNOT run internal infrastructure commands.
      */
     public isAuthorized(member: GuildMember | null): boolean {
         if (!member) return false;
 
-        // Server owner and admins always authorized
-        if (member.id === member.guild.ownerId) return true;
-        if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
-        if (member.permissions.has(PermissionFlagsBits.ManageGuild)) return true;
+        const supportGuildId = config.bot.supportGuildId || config.discord.guildId;
+        // Never allow external server owners/admins access to Victus Cloud internal tools
+        if (supportGuildId && member.guild.id !== supportGuildId) {
+            return false;
+        }
 
-        // Configured staff role IDs
+        // Inside the official Victus Cloud Support Guild ONLY:
+        if (supportGuildId && member.guild.id === supportGuildId) {
+            if (member.id === member.guild.ownerId) return true;
+            if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+        }
+
+        // Configured staff role IDs inside the support guild
         const staffRoles = config.antigravity.staffRoleIds;
         if (staffRoles.length > 0) {
             return staffRoles.some((roleId: string) => member.roles.cache.has(roleId));

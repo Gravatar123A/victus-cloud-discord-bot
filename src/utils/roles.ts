@@ -15,22 +15,51 @@ export const RANK_ROLE_IDS: Record<string, string> = {
 
 const ALL_RANK_ROLE_IDS = Object.values(RANK_ROLE_IDS);
 
-/** Keep exactly the rank role represented by the member's shared Victus XP. */
+/** Keep exactly the rank role represented by the member's shared Victus XP across Support and Community guilds. */
 export async function syncRankRole(client: Client, discordId: string, level: number): Promise<boolean> {
-    const guildId = config.bot.supportGuildId;
-    if (!guildId) {
-        logger.warn('Cannot sync rank role: DISCORD_SUPPORT_GUILD_ID is not configured');
-        return false;
-    }
-    const guild = await client.guilds.fetch(guildId).catch(() => null);
-    const member = guild ? await guild.members.fetch(discordId).catch(() => null) : null;
-    if (!member) return false;
-
     const tier = getTierForLevel(level);
-    const desired = RANK_ROLE_IDS[tier.name];
-    const removable = ALL_RANK_ROLE_IDS.filter((id) => id !== desired && member.roles.cache.has(id));
-    if (removable.length) await member.roles.remove(removable, 'Victus rank synchronization');
-    if (!member.roles.cache.has(desired)) await member.roles.add(desired, `Victus rank: ${tier.name}`);
+
+    // 1. Sync in official support guild if user is present
+    const supportGuildId = config.bot.supportGuildId;
+    if (supportGuildId) {
+        try {
+            const guild = await client.guilds.fetch(supportGuildId).catch(() => null);
+            const member = guild ? await guild.members.fetch(discordId).catch(() => null) : null;
+            if (member) {
+                const desired = RANK_ROLE_IDS[tier.name];
+                const removable = ALL_RANK_ROLE_IDS.filter((id) => id !== desired && member.roles.cache.has(id));
+                if (removable.length) await member.roles.remove(removable, 'Victus rank synchronization');
+                if (desired && !member.roles.cache.has(desired)) await member.roles.add(desired, `Victus rank: ${tier.name}`);
+            }
+        } catch (err) {
+            logger.debug(`Support guild rank sync error for ${discordId}:`, err);
+        }
+    }
+
+    // 2. Also inspect external guilds: if the guild has created a role matching the tier name, sync it!
+    try {
+        for (const guild of client.guilds.cache.values()) {
+            if (guild.id === supportGuildId) continue;
+            const member = guild.members.cache.get(discordId) || await guild.members.fetch(discordId).catch(() => null);
+            if (member) {
+                const matchingRole = guild.roles.cache.find((r) => r.name.toLowerCase() === tier.name.toLowerCase());
+                if (matchingRole && guild.members.me?.permissions.has('ManageRoles') && matchingRole.comparePositionTo(guild.members.me.roles.highest) < 0) {
+                    const otherTierRoles = guild.roles.cache.filter((r) => 
+                        Object.keys(RANK_ROLE_IDS).map((n) => n.toLowerCase()).includes(r.name.toLowerCase()) && 
+                        r.id !== matchingRole.id && 
+                        member.roles.cache.has(r.id)
+                    );
+                    if (otherTierRoles.size) await member.roles.remove(otherTierRoles, 'Victus rank sync');
+                    if (!member.roles.cache.has(matchingRole.id)) {
+                        await member.roles.add(matchingRole.id, `Victus rank: ${tier.name}`);
+                    }
+                }
+            }
+        }
+    } catch (extErr) {
+        logger.debug(`External guild rank sync note for ${discordId}:`, extErr);
+    }
+
     return true;
 }
 

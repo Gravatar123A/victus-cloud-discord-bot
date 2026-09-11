@@ -23,11 +23,27 @@ async function resolveLinkedUserId(discordId: string): Promise<string | null> {
 // Per-user cooldown gate for message XP.
 const lastMessageXpAt = new Map<string, number>();
 
+// Track each user's most recent active guild & channel for cross-server level-up broadcasts
+interface UserActiveLocation {
+    guildId: string;
+    channelId?: string;
+    updatedAt: number;
+}
+const userLastActiveMap = new Map<string, UserActiveLocation>();
+
+export function getLastActiveGuild(discordId: string): UserActiveLocation | undefined {
+    return userLastActiveMap.get(discordId);
+}
+
 /**
  * Award message XP to a linked user, respecting a per-user cooldown. Safe to
- * call on every eligible guild message — bails fast when on cooldown or unlinked.
+ * call on every eligible guild message across any Discord server the bot resides in.
  */
-export async function awardMessageXp(discordId: string): Promise<void> {
+export async function awardMessageXp(discordId: string, guildId?: string, channelId?: string): Promise<void> {
+    if (guildId) {
+        userLastActiveMap.set(discordId, { guildId, channelId, updatedAt: Date.now() });
+    }
+
     const amount = config.economy.xpPerMessage;
     if (amount <= 0) return;
 
@@ -43,17 +59,24 @@ export async function awardMessageXp(discordId: string): Promise<void> {
     if (!userId) return;
 
     try {
-        await supabase.grantXp(userId, amount, 'discord_message', { discord_id: discordId });
+        await supabase.grantXp(userId, amount, 'discord_message', {
+            discord_id: discordId,
+            guild_id: guildId || null,
+            channel_id: channelId || null,
+        });
     } catch (error) {
         logger.warn(`awardMessageXp failed for ${discordId}:`, error);
     }
 }
 
 /**
- * Award voice XP for whole minutes spent active in voice. Returns silently when
- * unlinked or when XP is disabled.
+ * Award voice XP for whole minutes spent active in voice across any server.
  */
-export async function awardVoiceXp(discordId: string, minutes: number): Promise<void> {
+export async function awardVoiceXp(discordId: string, minutes: number, guildId?: string): Promise<void> {
+    if (guildId) {
+        userLastActiveMap.set(discordId, { guildId, updatedAt: Date.now() });
+    }
+
     const perMinute = config.economy.xpPerVoiceMinute;
     if (perMinute <= 0 || minutes <= 0) return;
 
@@ -62,7 +85,11 @@ export async function awardVoiceXp(discordId: string, minutes: number): Promise<
 
     const amount = perMinute * minutes;
     try {
-        await supabase.grantXp(userId, amount, 'discord_voice', { discord_id: discordId, minutes });
+        await supabase.grantXp(userId, amount, 'discord_voice', {
+            discord_id: discordId,
+            minutes,
+            guild_id: guildId || null,
+        });
     } catch (error) {
         logger.warn(`awardVoiceXp failed for ${discordId}:`, error);
     }

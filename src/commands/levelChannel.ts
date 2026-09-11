@@ -5,10 +5,12 @@ import { levelSettings } from '../services/levelSettings.js';
 import { requireAdmin } from '../middleware/requireLinked.js';
 import { logger } from '../utils/logger.js';
 
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
+
 export const levelChannelCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('levelchannel')
-        .setDescription('Configure the channel for level-up and rank-up announcements (Staff only)')
+        .setDescription('Configure the channel for level-up and rank-up announcements')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .setDMPermission(false)
         .addSubcommand((sub) =>
@@ -32,8 +34,17 @@ export const levelChannelCommand: Command = {
     async execute(interaction) {
         if (!interaction.guildId) return;
 
-        const isAdmin = await requireAdmin(interaction);
-        if (!isAdmin) return;
+        const memberPermissions = interaction.memberPermissions;
+        const isGuildManager = memberPermissions?.has(PermissionFlagsBits.ManageGuild) || memberPermissions?.has(PermissionFlagsBits.Administrator);
+        const isPlatformAdmin = await isVictusStaffOrAdmin(interaction.user, interaction.client);
+
+        if (!isGuildManager && !isPlatformAdmin) {
+            await interaction.reply({
+                content: '⛔ You must have Manage Server or Administrator permissions in this server to configure the level-up channel.',
+                flags: MessageFlags.Ephemeral,
+            });
+            return;
+        }
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
 

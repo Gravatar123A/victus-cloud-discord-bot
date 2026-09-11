@@ -7,6 +7,8 @@ import { syncRankRole } from '../utils/roles.js';
 import { supabase } from './supabase.js';
 import { levelSettings } from './levelSettings.js';
 
+import { getLastActiveGuild } from './activityXp.js';
+
 let processing = false;
 
 function levelCard(discordId: string, level: number, totalXp: number, rankedUp: boolean): ContainerBuilder {
@@ -21,7 +23,7 @@ function levelCard(discordId: string, level: number, totalXp: number, rankedUp: 
             `> **Progress**  ${progressBar(current.progress)} ${current.progress.toFixed(0)}%\n` +
             `> **Next level**  ${current.cpToNext.toLocaleString('en-US')} XP remaining\n\n` +
             `### Level rewards\n✨ **+${config.economy.xpPerLevel} XP**  ·  🪙 **+${config.economy.coinsPerLevel} COINS**\n` +
-            `-# Victus Community and Discord progression are fully synchronized.`,
+            `-# Victus Cloud cross-guild progression: real COINS deposited to your wallet for free server hosting.`,
         ),
     );
 }
@@ -67,32 +69,58 @@ async function processOne(client: Client<true>): Promise<boolean> {
         const rankedUp = getTierForLevel(event.previous_level).name !== getTierForLevel(event.level).name;
 
         if (!event.role_synced_at) {
-            const synced = await syncRankRole(client, linked.discord_id, liveLevel);
-            if (!synced) throw new Error('Discord member or support guild unavailable for rank role sync');
+            try {
+                await syncRankRole(client, linked.discord_id, liveLevel);
+            } catch (roleErr) {
+                logger.debug(`[LevelUp] Role sync note for ${linked.discord_id}:`, roleErr);
+            }
             await supabase.updateLevelUpEvent(event.id, { role_synced_at: new Date().toISOString() });
         }
 
         if (!event.dm_sent_at) {
-            const user = await client.users.fetch(linked.discord_id);
-            try {
-                await user.send({ components: [levelCard(linked.discord_id, event.level, eventXp, rankedUp)], flags: ComponentsV2.IS_COMPONENTS_V2 });
-            } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                // A user who is no longer reachable through Discord should not
-                // block the Paymenter reward and public level announcement.
-                if (!/no mutual guilds|cannot send messages to this user|50007|50001/i.test(message)) throw error;
-                logger.info(`Level event ${event.id}: DM unavailable; continuing with public notification`);
+            const user = await client.users.fetch(linked.discord_id).catch(() => null);
+            if (user) {
+                try {
+                    await user.send({ components: [levelCard(linked.discord_id, event.level, eventXp, rankedUp)], flags: ComponentsV2.IS_COMPONENTS_V2 });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    if (!/no mutual guilds|cannot send messages to this user|50007|50001/i.test(message)) throw error;
+                    logger.info(`Level event ${event.id}: DM unavailable; continuing with public notification`);
+                }
             }
             await supabase.updateLevelUpEvent(event.id, { dm_sent_at: new Date().toISOString() });
         }
 
         if (!event.announcement_sent_at) {
-            const channelId = await levelSettings.getChannelId(config.bot.supportGuildId);
-            const channel = await client.channels.fetch(channelId).catch(() => null);
-            if (!channel || !channel.isTextBased() || channel.type === ChannelType.DM || !('send' in channel)) {
-                throw new Error(`Level-up announcement channel (${channelId}) is unavailable`);
+            const card = levelCard(linked.discord_id, event.level, eventXp, rankedUp);
+
+            // 1. If user was recently active in an external guild, announce in that guild's configured level channel
+            const activeLoc = getLastActiveGuild(linked.discord_id);
+            if (activeLoc?.guildId && activeLoc.guildId !== config.bot.supportGuildId) {
+                try {
+                    const extChannelId = await levelSettings.getChannelId(activeLoc.guildId);
+                    const extChannel = await client.channels.fetch(extChannelId).catch(() => null);
+                    if (extChannel && extChannel.isTextBased() && extChannel.type !== ChannelType.DM && 'send' in extChannel) {
+                        await extChannel.send({ components: [card], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                    }
+                } catch (extErr) {
+                    logger.debug(`[LevelUp] External guild level announcement note:`, extErr);
+                }
             }
-            await channel.send({ components: [levelCard(linked.discord_id, event.level, eventXp, rankedUp)], flags: ComponentsV2.IS_COMPONENTS_V2 });
+
+            // 2. Announce in official Support Guild if configured
+            if (config.bot.supportGuildId) {
+                try {
+                    const supportChannelId = await levelSettings.getChannelId(config.bot.supportGuildId);
+                    const supportChannel = await client.channels.fetch(supportChannelId).catch(() => null);
+                    if (supportChannel && supportChannel.isTextBased() && supportChannel.type !== ChannelType.DM && 'send' in supportChannel) {
+                        await supportChannel.send({ components: [card], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                    }
+                } catch (supErr) {
+                    logger.debug(`[LevelUp] Support guild level announcement note:`, supErr);
+                }
+            }
+
             await supabase.updateLevelUpEvent(event.id, { announcement_sent_at: new Date().toISOString() });
         }
 

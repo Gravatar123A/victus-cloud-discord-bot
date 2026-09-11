@@ -13,6 +13,8 @@ import {
 } from '../embeds/antigravityEmbeds.js';
 import { logger } from '../utils/logger.js';
 
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
+
 export const staffaiCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('staffai')
@@ -44,12 +46,14 @@ export const staffaiCommand: Command = {
         ),
 
     cooldown: 3,
+    adminOnly: true,
 
     async execute(interaction) {
         const member = interaction.member as GuildMember | null;
 
-        // Verify Staff Authorization
-        if (!antigravityPipeline.isAuthorized(member)) {
+        // Verify Staff Authorization (strictly isolated to Victus Staff)
+        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client)) || antigravityPipeline.isAuthorized(member);
+        if (!authorized) {
             await interaction.reply({
                 embeds: [createUnauthorizedEmbed()],
                 flags: MessageFlags.Ephemeral,
@@ -198,7 +202,8 @@ export const staffaiCommand: Command = {
         }
 
         const member = interaction.member as GuildMember | null;
-        if (!antigravityPipeline.isAuthorized(member)) {
+        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client)) || antigravityPipeline.isAuthorized(member);
+        if (!authorized) {
             await interaction.reply({
                 embeds: [createUnauthorizedEmbed()],
                 flags: MessageFlags.Ephemeral,
