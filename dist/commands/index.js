@@ -47,6 +47,7 @@ import { untimeoutCommand } from './untimeout.js';
 import { whitelistCommand } from './whitelist.js';
 import { communityCoinsCommand } from './community-coins.js';
 import { levelCommand } from './level.js';
+import { rankCommand } from './rank.js';
 import { shareResourceCommand } from './shareResource.js';
 import { massShareResourceCommand } from './massShareResource.js';
 import { resourceApplyCommand } from './resourceApply.js';
@@ -133,6 +134,7 @@ const allCommands = [
     antinukeCommand,
     communityCoinsCommand,
     levelCommand,
+    rankCommand,
     levelChannelCommand,
     leaderboardCommand,
     ownerStatsCommand,

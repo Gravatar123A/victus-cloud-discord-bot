@@ -21,6 +21,7 @@ import { levelSettings } from '../services/levelSettings.js';
 import { antigravityPipeline } from '../services/antigravityPipeline.js';
 import { createProcessingEmbed, createResultEmbeds } from '../embeds/antigravityEmbeds.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
 const aiChannelCache = new Map();
@@ -393,9 +394,9 @@ export const messageCreateEvent = {
                             }
                         }
                         if (command.adminOnly) {
-                            const isAdmin = await supabase.isUserAdmin(message.author.id).catch(() => false);
-                            if (!isAdmin) {
-                                const container = ComponentsV2.errorContainer('Permission Denied', 'This command is restricted to bot administrators.');
+                            const isStaff = await isVictusStaffOrAdmin(message.author, message.client);
+                            if (!isStaff) {
+                                const container = ComponentsV2.errorContainer('Permission Denied', 'This command controls Victus Cloud platform infrastructure and is strictly restricted to verified platform administrators.');
                                 await message.reply(translateV2Components({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 })).catch(() => { });
                                 return;
                             }
@@ -513,7 +514,7 @@ export const messageCreateEvent = {
         if (message.inGuild() && !message.system) {
             const looksLikeCommand = content.startsWith('/') || content.startsWith(prefix);
             if (!looksLikeCommand) {
-                void awardMessageXp(message.author.id).catch(() => undefined);
+                void awardMessageXp(message.author.id, message.guildId ?? undefined, message.channelId).catch(() => undefined);
                 void memberStatsService.recordMessage(message.guildId, message.author.id).catch(() => undefined);
             }
         }
@@ -523,7 +524,8 @@ export const messageCreateEvent = {
         const hasActiveStaffSession = !!antigravityPipeline.getSession(message.channelId);
         const isStaffAiThread = message.channel.isThread() && message.channel.name.startsWith('staffai-');
         if (config.antigravity.enabled && message.inGuild() && (isStaffAiChannel || hasActiveStaffSession || isStaffAiThread)) {
-            if (antigravityPipeline.isAuthorized(message.member)) {
+            const isStaff = (await isVictusStaffOrAdmin(message.author, message.client)) || antigravityPipeline.isAuthorized(message.member);
+            if (isStaff) {
                 if (message.content.trim().length > 0 || message.attachments.size > 0) {
                     await handleStaffAiMessage(message);
                     return;

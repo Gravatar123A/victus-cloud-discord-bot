@@ -2,6 +2,7 @@ import { MessageFlags, SlashCommandBuilder, ThreadAutoArchiveDuration, } from 'd
 import { antigravityPipeline } from '../services/antigravityPipeline.js';
 import { createProcessingEmbed, createResultEmbeds, createUnauthorizedEmbed, } from '../embeds/antigravityEmbeds.js';
 import { logger } from '../utils/logger.js';
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 export const staffaiCommand = {
     data: new SlashCommandBuilder()
         .setName('staffai')
@@ -24,10 +25,12 @@ export const staffaiCommand = {
         .setDescription('Start a fresh Antigravity session and clear previous memory')
         .setRequired(false)),
     cooldown: 3,
+    adminOnly: true,
     async execute(interaction) {
         const member = interaction.member;
-        // Verify Staff Authorization
-        if (!antigravityPipeline.isAuthorized(member)) {
+        // Verify Staff Authorization (strictly isolated to Victus Staff)
+        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client)) || antigravityPipeline.isAuthorized(member);
+        if (!authorized) {
             await interaction.reply({
                 embeds: [createUnauthorizedEmbed()],
                 flags: MessageFlags.Ephemeral,
@@ -167,7 +170,8 @@ export const staffaiCommand = {
             return;
         }
         const member = interaction.member;
-        if (!antigravityPipeline.isAuthorized(member)) {
+        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client)) || antigravityPipeline.isAuthorized(member);
+        if (!authorized) {
             await interaction.reply({
                 embeds: [createUnauthorizedEmbed()],
                 flags: MessageFlags.Ephemeral,

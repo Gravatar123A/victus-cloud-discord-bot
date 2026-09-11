@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 import { checkCooldown } from '../middleware/rateLimit.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 export const interactionCreateEvent = {
     name: 'interactionCreate',
     async execute(interaction) {
@@ -30,6 +31,18 @@ export const interactionCreateEvent = {
             if (!command) {
                 logger.warn(`Unknown command: ${interaction.commandName}`);
                 return;
+            }
+            // Enforce Victus platform admin/staff isolation for infrastructure commands
+            if (command.adminOnly) {
+                const isStaff = await isVictusStaffOrAdmin(interaction.user, interaction.client);
+                if (!isStaff) {
+                    const container = ComponentsV2.errorContainer('Permission Denied', 'This command controls Victus Cloud infrastructure and is strictly restricted to verified platform administrators.');
+                    await interaction.reply({
+                        components: [container],
+                        flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+                    }).catch(() => { });
+                    return;
+                }
             }
             // Check cooldown
             if (command.cooldown) {

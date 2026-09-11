@@ -77,6 +77,13 @@ export const helpCommand = {
         const body = `-# 💫 VICTUS CLOUD CONNECTION • COMMAND LAYER\n` +
             `# Victus Cloud Support Hub\n\n` +
             `Welcome, **${interaction.user.username}**. Synced with the main console, this panel grants access to all operational commands.\n\n` +
+            `### 🎮 Featured Fun & RPG Commands (100% Real COINS)\n` +
+            `› ⛏️ **Mining & Fishing:** \`/mine\` · \`/fish\` · \`/rpg inv\` · \`/rpg sell\` · \`/rpg craft\`\n` +
+            `› 🎲 **Atomic Gambling:** \`/coinflip <amount>\` · \`/slots <amount>\` · \`/heist @user <amount>\`\n` +
+            `› 🐉 **World Bosses & Mobs:** \`/boss\` · \`/attack\` · \`/tame\` · \`/zoo\` · \`/battle @user <wager>\`\n` +
+            `› ⚡ **Cross-Server Leveling:** \`/rank\` · \`/level\` · \`/leaderboard\` *(+100 COINS / level up)*\n` +
+            `› 🛡️ **Minecraft Server Tools:** \`/server\` · \`/mc-skin\` · \`/mc-status\` · \`/mc-whitelist\` · \`/backup-world\`\n` +
+            `› 🎁 **Community Rewards:** \`/battlepass\` · \`/claim\` · \`/owner-stats\` · \`/host\`\n\n` +
             `### ⚙️ Quick Connection Details\n` +
             `› **Server Prefix:** \`${prefix}\`\n` +
             `› **Bot Prefix:** \`!\` / Mention prefix (e.g. <@${interaction.client.user?.id}>)\n` +
@@ -86,7 +93,7 @@ export const helpCommand = {
             .addSeparatorComponents(ComponentsV2.separator())
             .addActionRowComponents(getButtons())
             .addActionRowComponents(getSelectMenu('main'))
-            .addTextDisplayComponents(ComponentsV2.text(`-# Private session • Victus Cloud v${config.bot.linkTokenExpiryMinutes ? '1.4' : '1.0'}`));
+            .addTextDisplayComponents(ComponentsV2.text(`-# Private session • Victus Cloud v${config.bot.linkTokenExpiryMinutes ? '2.4' : '2.0'}`));
         await interaction.editReply({
             components: [container],
             flags: V2,
@@ -108,6 +115,13 @@ export const helpCommand = {
             case 'main':
                 title = 'Victus Cloud Support Hub';
                 desc = `Welcome, **${interaction.user.username}**. Synced with the main console, this panel grants access to all operational commands.\n\n` +
+                    `### 🎮 Featured Fun & RPG Commands (100% Real COINS)\n` +
+                    `› ⛏️ **Mining & Fishing:** \`/mine\` · \`/fish\` · \`/rpg inv\` · \`/rpg sell\` · \`/rpg craft\`\n` +
+                    `› 🎲 **Atomic Gambling:** \`/coinflip <amount>\` · \`/slots <amount>\` · \`/heist @user <amount>\`\n` +
+                    `› 🐉 **World Bosses & Mobs:** \`/boss\` · \`/attack\` · \`/tame\` · \`/zoo\` · \`/battle @user <wager>\`\n` +
+                    `› ⚡ **Cross-Server Leveling:** \`/rank\` · \`/level\` · \`/leaderboard\` *(+100 COINS / level up)*\n` +
+                    `› 🛡️ **Minecraft Server Tools:** \`/server\` · \`/mc-skin\` · \`/mc-status\` · \`/mc-whitelist\` · \`/backup-world\`\n` +
+                    `› 🎁 **Community Rewards:** \`/battlepass\` · \`/claim\` · \`/owner-stats\` · \`/host\`\n\n` +
                     `### ⚙️ Quick Connection Details\n` +
                     `› **Server Prefix:** \`${prefix}\`\n` +
                     `› **Bot Prefix:** \`!\` / Mention prefix\n` +
@@ -147,6 +161,8 @@ export const helpCommand = {
                 desc = `Commands to customize your server layout, bind database profiles, and set roles.\n\n` +
                     `### Command Catalog\n` +
                     `› \`/config\` • Configure log channels, role locks, and tickets.\n` +
+                    `› \`/levelchannel set <channel>\` • Set target channel for level-up & rank-up broadcasts.\n` +
+                    `› \`/levelchannel view\` • View current level-up broadcast channel.\n` +
                     `› \`/annc\` • Configure and send announcements (Admin only).\n` +
                     `› \`/link-panel\` • Spawns a premium account verification button.\n` +
                     `› \`/setprefix <prefix>\` • Changes the server-specific prefix.\n` +
@@ -189,6 +205,12 @@ export const helpCommand = {
                 title = 'Utility Layer';
                 desc = `Core utilities and account support interfaces.\n\n` +
                     `### Command Catalog\n` +
+                    `› \`/server <status/start/restart>\` • Manage your Victus Minecraft server directly in Discord.\n` +
+                    `› \`/mc-skin <ign>\` • Render 3D isometric player skins and avatars.\n` +
+                    `› \`/mc-status <server_ip>\` • Ping any Minecraft server for MOTD, online players, and ping.\n` +
+                    `› \`/mc-whitelist <ign>\` • Whitelist Minecraft accounts into your server.\n` +
+                    `› \`/backup-world\` • 1-Click Lifeboat world backup and migration.\n` +
+                    `› \`/levelchannel set/view\` • Set level-up and rank-up announcement channel.\n` +
                     `› \`/ask <question>\` • Consult Groq-powered AI for server management.\n` +
                     `› \`/afk [reason]\` • Set your status to AFK.\n` +
                     `› \`/poll create\` • Launch a server-wide interactive poll.\n` +
@@ -198,24 +220,47 @@ export const helpCommand = {
                     `› \`/welcome setup\` • Configure welcome system and join auto-roles.\n` +
                     `› \`/link <token>\` • Connect Discord with your website account.\n` +
                     `› \`/unlink\` • Disconnect linked profile.\n` +
-                    `› \`/community-coins\` • Publish this server for Community Coins — members who join earn COINS.\n` +
+                    `› \`/community-coins\` • Publish this server for Community Coins.\n` +
                     `› \`/help\` • Toggle this support dashboard.`;
                 break;
             case 'fun':
-                title = 'Engagement Hub';
-                desc = `Keep your guild members engaged with fun utilities.\n\n` +
-                    `### Command Catalog\n` +
-                    `› \`/ask question:"tell me a joke"\` • Generates interactive AI humor.\n` +
-                    `› \`/economy Convert\` • Convert currency inside fun mini-games.\n\n` +
-                    `_Member XP awards are updated dynamically during chat and active voice time._`;
+                title = 'Fun & Entertainment Hub';
+                desc = `Full suite of high-engagement mini-games, RPG systems, and betting — all backed by real COINS!\n\n` +
+                    `### ⛏️ Minecraft RPG Engine\n` +
+                    `› \`/mine\` • Mine underground stone, coal, iron, gold, diamond, netherite.\n` +
+                    `› \`/fish\` • Cast line into rivers, oceans, and deep trenches.\n` +
+                    `› \`/rpg inv\` • View equipment tier, durability, and raw materials.\n` +
+                    `› \`/rpg sell\` • Liquidate gathered resources into real Victus COINS.\n` +
+                    `› \`/rpg craft\` • Forge higher tier pickaxes and rods.\n\n` +
+                    `### 🎲 COINS Gambling & Heists\n` +
+                    `› \`/coinflip <amount> [choice]\` • Fast 50/50 double-or-nothing wagers.\n` +
+                    `› \`/slots <amount>\` • 3-reel spinning slots with 50x Wither Jackpot.\n` +
+                    `› \`/heist @user <amount>\` • 5-player co-op bank heist minigame.\n\n` +
+                    `### 🐉 World Bosses & Arena Pets\n` +
+                    `› \`/boss\` • Check global World Boss raid status (Ender Dragon, Wither).\n` +
+                    `› \`/attack [melee/bow/magic]\` • Deal damage and claim shares of 1,000 COINS bounty.\n` +
+                    `› \`/tame\` & \`/zoo\` • Capture wild mobs and view your pet bestiary.\n` +
+                    `› \`/battle @user <wager>\` • PvP pet battles with wagered COINS.\n\n` +
+                    `### ⚡ Progression & AirDrops\n` +
+                    `› \`/rank [user]\` • View full tier rank card, level progress & COINS earnings.\n` +
+                    `› \`/level [user]\` • View XP, current level, and progress bar.\n` +
+                    `› \`/leaderboard\` • Inspect global top earners, levels, and miners.\n` +
+                    `› \`/claim\` • Snatch random supply AirDrops in active chat.\n` +
+                    `› \`/battlepass\` • Progress through 10 tiers of server RAM & subdomain perks.`;
                 break;
             case 'economy':
                 title = 'Victus Economy & Wallet';
-                desc = `Manage Coins, credit sync, bank ledgers, and rankings.\n\n` +
+                desc = `Manage Coins, credit sync, bank ledgers, and rankings. 100% real currency usable on server hosting!\n\n` +
                     `### Command Catalog\n` +
+                    `› \`/rank [user]\` • View synced global rank tier, level, and COINS rewards.\n` +
+                    `› \`/level [user]\` • View synchronized XP and progress (+100 COINS/lvl).\n` +
                     `› \`/account\` • Main dashboard displaying Coins, level, and billing credits.\n` +
-                    `› \`/economy\` • Open the interactive bank and transfer panel.\n\n` +
-                    `_Wallet and ledger are fully synchronized with paymenter / main dashboard._`;
+                    `› \`/economy\` • Open the interactive bank, transfer, and wallet panel.\n` +
+                    `› \`/leaderboard\` • Global richest players, levels, and community rankings.\n` +
+                    `› \`/pricing\` • Live pricing for RAM, CPU cores, and storage in COINS/EUR.\n` +
+                    `› \`/currency\` • Real-time exchange rates across EUR, USD, and COINS.\n` +
+                    `› \`/rpg sell\` • Convert mined ores and caught fish into real COINS.\n\n` +
+                    `_All earned COINS are canonical and can be spent on free hosting at [victuscloud.com/free](https://victuscloud.com/free)._`;
                 break;
             case 'giveaways':
                 title = 'Premium Giveaway System';
