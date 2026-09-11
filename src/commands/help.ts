@@ -31,6 +31,7 @@ function getSelectMenu(currentVal?: string) {
         .setPlaceholder('Explore command categories...')
         .addOptions([
             { label: 'Overview', description: 'Main landing page & information', value: 'main' },
+            { label: 'Viral RPG & Hosting', description: 'Minecraft RPG, Gambling, Bosses & Utilities', value: 'viral_rpg' },
             { label: 'Administration', description: 'Bot configuration, role links & prefixes', value: 'administration' },
             { label: 'Moderation', description: 'Audit logs & suggestion moderations', value: 'moderation' },
             { label: 'Music System', description: 'Compact player & audio controls', value: 'music' },
@@ -55,11 +56,16 @@ function getSelectMenu(currentVal?: string) {
 function getButtons() {
     return new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
+            .setLabel('Bot Docs & Guide')
+            .setStyle(ButtonStyle.Link)
+            .setURL(`${config.branding.website}/bot`)
+            .setEmoji('📖'),
+        new ButtonBuilder()
             .setLabel('Invite Bot')
             .setStyle(ButtonStyle.Link)
             .setURL(INVITE_URL),
         new ButtonBuilder()
-            .setLabel('Support Guild')
+            .setLabel('Support Hub')
             .setStyle(ButtonStyle.Link)
             .setURL(config.branding.website),
         new ButtonBuilder()
@@ -68,6 +74,7 @@ function getButtons() {
             .setURL(`${config.branding.website}/vote`)
     );
 }
+
 
 export const helpCommand: Command = {
     data: new SlashCommandBuilder()
@@ -134,7 +141,37 @@ export const helpCommand: Command = {
                     `Use the dropdown menu below to inspect specific modules.`;
                 break;
 
+            case 'viral_rpg':
+                title = 'Viral RPG & Minecraft Hosting Engine';
+                desc = `Earn real Victus Cloud COINS, battle World Bosses, and manage your Minecraft infrastructure!\n\n` +
+                    `### ⛏️ Minecraft Text-RPG\n` +
+                    `› \`/mine\` • Mine underground for Coal, Iron, Gold, Diamonds & Netherite.\n` +
+                    `› \`/fish\` • Cast line for Cod, Salmon, Tropical Fish & Sunken Treasure.\n` +
+                    `› \`/rpg inv\` • View pickaxe & fishing rod gear tiers and material stocks.\n` +
+                    `› \`/rpg sell\` • Exchange mined ores & fish for real Victus Cloud COINS!\n` +
+                    `› \`/rpg craft\` • Upgrade to Stone, Iron, Diamond, or Netherite equipment.\n\n` +
+                    `### 🎲 High-Stakes Gambling (Real COINS)\n` +
+                    `› \`/coinflip <amount> [choice]\` • Double-or-nothing coinflip.\n` +
+                    `› \`/slots <amount>\` • 3-reel Minecraft slots with Wither Skull jackpot.\n` +
+                    `› \`/heist @user <amount>\` • Organize 5-player squad vault heists.\n\n` +
+                    `### 🐉 World Boss Raids & Mob Gacha\n` +
+                    `› \`/boss\` • View active cross-server Ender Dragon/Wither raid HP.\n` +
+                    `› \`/attack [melee/bow/magic]\` • Deal damage to split the 1,000 COINS pool.\n` +
+                    `› \`/tame\` & \`/zoo\` • Capture wild mobs and inspect your sanctuary.\n` +
+                    `› \`/battle @user <wager>\` • PvP turn-based mob arena duels.\n\n` +
+                    `### 🛡️ Server Utilities & Community Retention\n` +
+                    `› \`/server <start/restart/status>\` • Power controls & live RAM/CPU gauges.\n` +
+                    `› \`/mc-skin <ign>\` & \`/mc-status <ip>\` • 3D player skins & live server pings.\n` +
+                    `› \`/mc-whitelist <ign>\` • Whitelist players to your server console.\n` +
+                    `› \`/backup-world\` • 1-Click Lifeboat backup from 3rd-party hosts.\n` +
+                    `› \`/battlepass\` • Server Battle Pass (Level 5 = +1GB RAM, Level 10 = Subdomain).\n` +
+                    `› \`/claim\` • Intercept 10 COINS Supply AirDrops during quiet chat.\n` +
+                    `› \`/owner-stats\` & \`/host\` • Server owner monetization metrics & referral embeds.\n\n` +
+                    `_Full interactive documentation with architecture diagrams: [victuscloud.com/bot](https://victuscloud.com/bot)_`;
+                break;
+
             case 'administration':
+
                 title = 'Administration Panel';
                 desc = `Commands to customize your server layout, bind database profiles, and set roles.\n\n` +
                     `### Command Catalog\n` +

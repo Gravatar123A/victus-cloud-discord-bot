@@ -34,5 +34,41 @@ class PterodactylService {
             throw new Error(message);
         }
     }
+    async getServerResources(serverIdentifier) {
+        if (!config.pterodactyl.url || !config.pterodactyl.clientApiKey) {
+            throw new Error('Panel credentials not configured.');
+        }
+        const response = await fetch(`${normalizeBaseUrl(config.pterodactyl.url)}/api/client/servers/${encodeURIComponent(serverIdentifier)}/resources`, {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${config.pterodactyl.clientApiKey}`,
+                Accept: 'application/json',
+            },
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch server resources (HTTP ${response.status})`);
+        }
+        const data = await response.json();
+        return data.attributes;
+    }
+    async sendCommand(serverIdentifier, command) {
+        if (!config.pterodactyl.url || !config.pterodactyl.clientApiKey) {
+            throw new Error('Panel credentials not configured.');
+        }
+        const response = await fetch(`${normalizeBaseUrl(config.pterodactyl.url)}/api/client/servers/${encodeURIComponent(serverIdentifier)}/command`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${config.pterodactyl.clientApiKey}`,
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ command }),
+        });
+        if (!response.ok) {
+            const payload = await response.json().catch(() => null);
+            const message = errorMessage(payload, `Panel returned ${response.status}`);
+            throw new Error(message);
+        }
+    }
 }
 export const pterodactyl = new PterodactylService();

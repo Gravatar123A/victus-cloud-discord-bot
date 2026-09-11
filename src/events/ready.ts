@@ -18,6 +18,7 @@ import { startLevelUpWorker } from '../services/levelUp.js';
 import { restoreVoiceXpSessions } from './voiceStateUpdate.js';
 import { syncEntitlementRoles } from '../services/entitlementRoles.js';
 import { leaderboardService } from '../services/leaderboardService.js';
+import { viralExpansionService } from '../services/viralExpansionService.js';
 
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
@@ -356,6 +357,9 @@ export const readyEvent: Event = {
         }, 60_000);
         logger.info('Live Leaderboard 1-minute auto-update scheduler started');
 
+        // Viral Expansion Engine initialization
+        viralExpansionService.init(client);
+
         await processNotificationQueue(client);
         setInterval(() => {
             processNotificationQueue(client).catch((error) => logger.error('DM queue interval failed:', error));
@@ -364,17 +368,17 @@ export const readyEvent: Event = {
             status: 'online',
             activities: [
                 {
-                    name: `${config.branding.name} | /help`,
+                    name: `${config.branding.name} | victuscloud.com/bot`,
                     type: ActivityType.Watching,
                 },
             ],
         });
 
         const activities = [
-            { name: `${config.branding.name} | /help`, type: ActivityType.Watching },
-            { name: 'your cloud services', type: ActivityType.Watching },
-            { name: '/link to connect accounts', type: ActivityType.Playing },
-            { name: 'support workflows', type: ActivityType.Listening },
+            { name: `${config.branding.name} | victuscloud.com/bot`, type: ActivityType.Watching },
+            { name: '/mine | /fish | RPG COINS', type: ActivityType.Playing },
+            { name: 'Cross-Server World Bosses', type: ActivityType.Competing },
+            { name: '/link to connect Victus account', type: ActivityType.Playing },
         ];
 
         let i = 0;
@@ -383,4 +387,5 @@ export const readyEvent: Event = {
             i = (i + 1) % activities.length;
         }, 30000);
     },
+
 };

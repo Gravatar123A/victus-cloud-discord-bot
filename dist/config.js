@@ -144,6 +144,7 @@ export const config = {
         color: 0x6366f1, // Indigo
         logo: 'https://victuscloud.com/favicon.png',
         website: 'https://victuscloud.com',
+        botDocs: 'https://victuscloud.com/bot',
         free: 'https://victuscloud.com/free',
         billing: 'https://billing.victuscloud.com',
         panel: 'https://control.victuscloud.com',

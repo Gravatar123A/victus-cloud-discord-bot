@@ -910,7 +910,7 @@ class SupabaseService {
         return null;
     }
 
-    private async mutatePaymenterCoins(
+    async mutatePaymenterCoins(
         email: string,
         delta: number,
         source: string,
@@ -965,10 +965,11 @@ class SupabaseService {
         throw new Error(lastError);
     }
 
-    private async mirrorProfileCoinsFromPaymenter(userId: string, balance: number, context: string): Promise<void> {
+    async mirrorProfileCoinsFromPaymenter(userId: string, balance: number, context: string): Promise<void> {
         await this.setProfileCoins(userId, balance);
         logger.info(`Mirrored ${balance} COINS to economy wallet for ${userId} (${context})`);
     }
+
 
     /** Directly set the Supabase coins mirror (profiles.total_cp). */
     async setProfileCoins(userId: string, amount: number): Promise<void> {

@@ -61,6 +61,18 @@ import { staffaiCommand } from './staffai.js';
 import { pingCommand } from './ping.js';
 import { pingAdminCommand } from './ping-admin.js';
 
+
+// Viral Expansion Engine commands
+import { ownerStatsCommand } from './ownerStats.js';
+import { hostPromoCommand, freeServerCommand } from './hostPromo.js';
+import { rpgCommand, mineCommand, fishCommand, sellCommand, craftCommand } from './rpg.js';
+import { coinflipCommand, slotsCommand, heistCommand } from './gambling.js';
+import { tameCommand, zooCommand, battleCommand } from './mobGacha.js';
+import { bossCommand, attackCommand, castCommand } from './worldBoss.js';
+import { mcSkinCommand, mcStatusCommand, mcWhitelistCommand, serverCommand } from './mcUtils.js';
+import { backupWorldCommand } from './lifeboat.js';
+import { battlepassCommand, claimAirDropCommand, smpNetworkCommand, warCommand } from './community.js';
+
 // Export command collection
 export const commands = new Collection<string, Command>();
 
@@ -127,8 +139,35 @@ const allCommands: Command[] = [
     levelCommand,
     levelChannelCommand,
     leaderboardCommand,
+    ownerStatsCommand,
+    hostPromoCommand,
+    freeServerCommand,
+    rpgCommand,
+    mineCommand,
+    fishCommand,
+    sellCommand,
+    craftCommand,
+    coinflipCommand,
+    slotsCommand,
+    heistCommand,
+    tameCommand,
+    zooCommand,
+    battleCommand,
+    bossCommand,
+    attackCommand,
+    castCommand,
+    mcSkinCommand,
+    mcStatusCommand,
+    mcWhitelistCommand,
+    serverCommand,
+    backupWorldCommand,
+    battlepassCommand,
+    claimAirDropCommand,
+    smpNetworkCommand,
+    warCommand,
     ...musicCommands,
 ];
+
 
 for (const command of allCommands) {
     commands.set(command.data.name, command);

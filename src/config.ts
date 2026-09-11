@@ -159,6 +159,7 @@ export const config = {
         color: 0x6366f1, // Indigo
         logo: 'https://victuscloud.com/favicon.png',
         website: 'https://victuscloud.com',
+        botDocs: 'https://victuscloud.com/bot',
         free: 'https://victuscloud.com/free',
         billing: 'https://billing.victuscloud.com',
         panel: 'https://control.victuscloud.com',
@@ -179,5 +180,6 @@ export const config = {
         inactivityTimeoutMs: parseInt(process.env.ANTIGRAVITY_INACTIVITY_TIMEOUT_MS || '600000', 10),
     },
 } as const;
+
 
 export type Config = typeof config;

@@ -3,8 +3,10 @@ import { logger } from '../utils/logger.js';
 import { checkCooldown } from '../middleware/rateLimit.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import type { Event } from '../types/index.js';
+import { viralExpansionService } from '../services/viralExpansionService.js';
 
 export const interactionCreateEvent: Event = {
+
     name: 'interactionCreate',
     async execute(interaction: Interaction) {
         // Intercept prefix command message component interactions and translate V2 components
@@ -64,8 +66,11 @@ export const interactionCreateEvent: Event = {
 
             try {
                 logger.info(`Command: /${interaction.commandName} by ${interaction.user.tag} (${interaction.user.id})`);
+                // Viral Expansion Engine: Check unique interaction bonus (+5 COINS to owner)
+                viralExpansionService.handleCommandInteraction(interaction.user, interaction.guild).catch(() => {});
                 await command.execute(interaction);
             } catch (error: any) {
+
                 const errMsg = error?.message || String(error);
                 const errStack = error?.stack || '';
                 logger.error(`❌ Error executing command ${interaction.commandName}:`, error);
@@ -125,6 +130,26 @@ export const interactionCreateEvent: Event = {
         else if (interaction.isButton()) {
             const customId = interaction.customId;
 
+            // Viral Expansion: AirDrop Claim Button
+            if (customId === 'victus_airdrop_claim_btn' && interaction.guild) {
+                const res = await viralExpansionService.claimAirDrop(interaction.guild.id, interaction.user);
+                await interaction.reply({
+                    content: res.message,
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            // Viral Expansion: Mob Tame Button
+            if (customId === 'victus_mob_tame_btn' && interaction.guild) {
+                const res = await viralExpansionService.tameWildMob(interaction.guild.id, interaction.user);
+                await interaction.reply({
+                    content: res.message,
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
             // Check if any command has a button handler
             for (const [, command] of interaction.client.commands) {
                 if (command.handleButton) {
@@ -136,6 +161,7 @@ export const interactionCreateEvent: Event = {
                     }
                 }
             }
+
 
             logger.debug(`Unhandled button: ${customId}`);
         }

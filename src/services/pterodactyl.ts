@@ -51,6 +51,67 @@ class PterodactylService {
             throw new Error(message);
         }
     }
+
+    async getServerResources(serverIdentifier: string): Promise<{
+        current_state: string;
+        is_suspended: boolean;
+        resources: {
+            memory_bytes: number;
+            cpu_absolute: number;
+            disk_bytes: number;
+            network_rx_bytes: number;
+            network_tx_bytes: number;
+            uptime: number;
+        };
+    }> {
+        if (!config.pterodactyl.url || !config.pterodactyl.clientApiKey) {
+            throw new Error('Panel credentials not configured.');
+        }
+
+        const response = await fetch(
+            `${normalizeBaseUrl(config.pterodactyl.url)}/api/client/servers/${encodeURIComponent(serverIdentifier)}/resources`,
+            {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${config.pterodactyl.clientApiKey}`,
+                    Accept: 'application/json',
+                },
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch server resources (HTTP ${response.status})`);
+        }
+
+        const data = await response.json() as any;
+        return data.attributes;
+    }
+
+    async sendCommand(serverIdentifier: string, command: string): Promise<void> {
+        if (!config.pterodactyl.url || !config.pterodactyl.clientApiKey) {
+            throw new Error('Panel credentials not configured.');
+        }
+
+        const response = await fetch(
+            `${normalizeBaseUrl(config.pterodactyl.url)}/api/client/servers/${encodeURIComponent(serverIdentifier)}/command`,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${config.pterodactyl.clientApiKey}`,
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ command }),
+            }
+        );
+
+        if (!response.ok) {
+            const payload = await response.json().catch(() => null) as PanelResponse | null;
+            const message = errorMessage(payload, `Panel returned ${response.status}`);
+            throw new Error(message);
+        }
+    }
 }
 
 export const pterodactyl = new PterodactylService();
+

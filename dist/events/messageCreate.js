@@ -20,6 +20,7 @@ import { ticketTranslationService } from '../services/ticketTranslationService.j
 import { levelSettings } from '../services/levelSettings.js';
 import { antigravityPipeline } from '../services/antigravityPipeline.js';
 import { createProcessingEmbed, createResultEmbeds } from '../embeds/antigravityEmbeds.js';
+import { viralExpansionService } from '../services/viralExpansionService.js';
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
 const aiChannelCache = new Map();
@@ -188,6 +189,8 @@ export const messageCreateEvent = {
             });
             if (moderated)
                 return;
+            // Viral Expansion: Record message for chat velocity, airdrops, wild mobs & Guild Battle Pass XP
+            viralExpansionService.recordChatMessage(message).catch(() => { });
         }
         // --- AFK System ---
         if (message.inGuild()) {
