@@ -771,12 +771,16 @@ class SupabaseService {
     }
 
     private async getPaymenterInternalCoins(email: string): Promise<number | null> {
-        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || '').replace(/\/$/, '');
+        const paymenterUrl = (config.paymenter.url || process.env.PAYMENTER_URL || process.env.VICTUS_PANEL_URL || 'https://billing.victuscloud.com').replace(/\/$/, '');
         const internalToken = this.paymenterInternalToken();
         if (!email || !paymenterUrl || !internalToken) return null;
         try {
-            const response = await fetch(`${paymenterUrl}/api/victus/coins?email=${encodeURIComponent(email)}`, {
-                headers: { 'Authorization': `Bearer ${internalToken}`, 'Accept': 'application/json' },
+            const response = await fetch(`${paymenterUrl}/api/victus/coins?email=${encodeURIComponent(email)}&token=${encodeURIComponent(internalToken)}`, {
+                headers: {
+                    'Authorization': `Bearer ${internalToken}`,
+                    'X-Victus-Internal-Token': internalToken,
+                    'Accept': 'application/json',
+                },
             });
             if (!response.ok) return null;
             const data = await response.json() as any;
@@ -899,7 +903,8 @@ class SupabaseService {
         return process.env.VICTUS_INTERNAL_API_TOKEN
             || process.env.PAYMENTER_INTERNAL_API_TOKEN
             || process.env.PTERODACTYL_INTERNAL_API_TOKEN
-            || '';
+            || config.paymenter.apiKey
+            || 'UPPhseRQIhFDs2wKN1qnx2FC2YCv1n9C-YJHtK6kAqhLjMt61jP0QanVrb48DJl1';
     }
 
     private paymenterCoinBalance(data: any): number | null {
@@ -932,10 +937,11 @@ class SupabaseService {
         let lastError = 'Paymenter coin mutation failed';
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-                const response = await fetch(`${paymenterUrl}/api/victus/coins/${endpoint}`, {
+                const response = await fetch(`${paymenterUrl}/api/victus/coins/${endpoint}?token=${encodeURIComponent(internalToken)}`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${internalToken}`,
+                        'X-Victus-Internal-Token': internalToken,
                         'Content-Type': 'application/json',
                         'Accept': 'application/json',
                     },
@@ -945,6 +951,7 @@ class SupabaseService {
                         source,
                         reference: reference.slice(0, 191),
                         description,
+                        token: internalToken,
                     }),
                 });
                 const text = await response.text();
@@ -1387,7 +1394,7 @@ class SupabaseService {
      */
     async pterodactylApi(endpoint: string, method = 'GET', body?: any): Promise<any> {
         let lastError: unknown = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        for (let attempt = 1; attempt <= 4; attempt++) {
             const { data, error } = await this.client.functions.invoke('admin-pterodactyl', {
                 body: { endpoint, method, body },
             });
@@ -1396,12 +1403,12 @@ class SupabaseService {
             lastError = error;
             const detail = await describeFunctionError(error);
             const rateLimited = /\b429\b|too many attempts|rate.?limit/i.test(detail);
-            if (!rateLimited || attempt === 3) {
+            if (!rateLimited || attempt === 4) {
                 logger.error(`Pterodactyl API call failed (${endpoint}): ${detail}`);
                 throw error;
             }
 
-            const delayMs = attempt * 2_000;
+            const delayMs = attempt * 3_500;
             logger.warn(`Pterodactyl API rate limited (${endpoint}); retrying in ${delayMs / 1000}s`);
             await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
