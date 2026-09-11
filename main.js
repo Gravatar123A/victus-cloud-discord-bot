@@ -1,31 +1,56 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
-const entrypoint = new URL("./dist/index.js", import.meta.url);
-const discordJsPackage = new URL("./node_modules/discord.js/package.json", import.meta.url);
+const rootDir = fileURLToPath(new URL(".", import.meta.url));
+const entrypoint = path.join(rootDir, "dist", "index.js");
+const discordJsPackage = path.join(rootDir, "node_modules", "discord.js", "package.json");
+const nodeModulesDir = path.join(rootDir, "node_modules");
 
-// 1. Verify critical dependencies
+// 1. Ensure node_modules directory exists
+try {
+    if (!existsSync(nodeModulesDir)) {
+        mkdirSync(nodeModulesDir, { recursive: true });
+    }
+} catch (e) {
+    // Ignore pre-creation errors
+}
+
+// 2. Verify critical dependencies
 if (!existsSync(discordJsPackage)) {
     console.log("[Victus Bot] Dependencies missing in node_modules. Running clean production install...");
-    const install = spawnSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--cache=/tmp/.npm"], {
+    const tmpCache = process.platform === "win32" ? path.join(rootDir, ".npm-cache") : "/tmp/.npm";
+    try {
+        mkdirSync(tmpCache, { recursive: true });
+    } catch {}
+
+    const install = spawnSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", `--cache=${tmpCache}`], {
+        cwd: rootDir,
         stdio: "inherit",
         shell: process.platform === "win32",
+        env: {
+            ...process.env,
+            HOME: rootDir,
+            npm_config_cache: tmpCache,
+        },
     });
+
     if (install.status !== 0) {
         console.error(
             "\n[Victus Bot] ❌ Failed to install dependencies (code " + install.status + ").\n" +
-            "[Victus Bot] ⚠️ Your server disk quota is likely 100% full or node_modules has invalid permissions.\n" +
-            "[Victus Bot] 💡 Fix: In Pterodactyl File Manager, delete the 'node_modules' folder and any files in 'logs/', then restart.\n"
+            "[Victus Bot] ⚠️ Your server disk quota may be full or npm lacks permissions to write.\n"
         );
         process.exit(install.status || 1);
     }
 }
 
-// 2. Verify compiled entrypoint
+// 3. Verify compiled entrypoint
 const hasDist = existsSync(entrypoint) && statSync(entrypoint).size > 0;
 if (!hasDist) {
     console.log("[Victus Bot] dist/index.js not found. Building TypeScript before startup...");
     const build = spawnSync("npm", ["run", "build"], {
+        cwd: rootDir,
         stdio: "inherit",
         shell: process.platform === "win32",
     });
@@ -37,3 +62,4 @@ if (!hasDist) {
 }
 
 await import("./dist/index.js");
+
