@@ -85,25 +85,30 @@ async function isAuthorized(interaction: any): Promise<boolean> {
 /**
  * Generate a beautifully styled, high-info Whitelist Editor Embed card.
  */
-function buildEditorEmbed(selectedUserId: string, username: string, categories: string[]): EmbedBuilder {
+function buildEditorEmbed(selectedUserId: string, username: string, categories: string[], addedBy: string): EmbedBuilder {
+    const activeList: string[] = [];
+    if (categories.includes('ban')) activeList.push('• Ban Immunity');
+    if (categories.includes('kick')) activeList.push('• Kick Immunity');
+    if (categories.includes('timeout')) activeList.push('• Timeout/Mute Immunity');
+    if (categories.includes('warn')) activeList.push('• Warning Immunity');
+
+    const activeText = activeList.length > 0 ? activeList.join('\n') : '• None';
+
     return new EmbedBuilder()
         .setColor(ICE_PALETTE.frost)
-        .setTitle('❄️ Whitelist Config Editor')
+        .setTitle(`🛡️ Whitelist Editor: ${username}`)
         .setDescription(
-            `Configure and edit filter bypass immunities for this user.\n\n` +
-            `### 👤 User Information\n` +
-            `› **User:** <@${selectedUserId}> (${username})\n` +
-            `› **ID:** \`${selectedUserId}\`\n\n` +
-            `### 🛡️ Active Immunities\n` +
-            `› **Cuss Word Bypass:** ${categories.includes('cuss') ? '✅ Enabled' : '❌ Disabled'}\n` +
-            `› **Link Filter Bypass:** ${categories.includes('link') ? '✅ Enabled' : '❌ Disabled'}\n` +
-            `› **Spam Filter Bypass:** ${categories.includes('spam') ? '✅ Enabled' : '❌ Disabled'}\n` +
-            `› **Caps Filter Bypass:** ${categories.includes('caps') ? '✅ Enabled' : '❌ Disabled'}\n\n` +
-            `Toggle permissions via the dropdown menu below and click **Save Settings** to finalize, or **Remove Whitelist** to completely clear this user's record.`
+            `Configure immunity status and action bypasses for this member.\n\n` +
+            `› **User:** <@${selectedUserId}>\n` +
+            `(${selectedUserId})\n` +
+            `› **Added By:** <@${addedBy}>\n\n` +
+            `### Active Immunities:\n` +
+            `${activeText}`
         )
         .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
         .setTimestamp();
 }
+
 
 export const whitelistCommand: Command = {
     data: new SlashCommandBuilder()
@@ -174,18 +179,19 @@ export const whitelistCommand: Command = {
 
             const finalEmbed = new EmbedBuilder()
                 .setColor(ICE_PALETTE.glacier)
-                .setTitle('❄️ Whitelist Configuration Finalized')
+                .setTitle('🛡️ Whitelist Configuration Finalized')
                 .setDescription(
                     `Bypass permissions for <@${selectedUserId}> have been successfully updated.\n\n` +
                     `### 👤 User Info\n` +
                     `› **User:** <@${selectedUserId}> (${selectedUser?.username || 'Unknown'})\n` +
                     `› **ID:** \`${selectedUserId}\`\n\n` +
                     `### 📋 Saved Bypass Status\n` +
-                    `${record.categories.includes('cuss') ? '✅' : '❌'} 🤬 Cuss Word Filter Bypass\n` +
-                    `${record.categories.includes('link') ? '✅' : '❌'} 🔗 Link Filter Bypass\n` +
-                    `${record.categories.includes('spam') ? '✅' : '❌'} 📨 Spam Filter Bypass\n` +
-                    `${record.categories.includes('caps') ? '✅' : '❌'} 🔠 Caps Filter Bypass`
+                    `${record.categories.includes('ban') ? '✅' : '❌'} Ban Immunity\n` +
+                    `${record.categories.includes('kick') ? '✅' : '❌'} Kick Immunity\n` +
+                    `${record.categories.includes('timeout') ? '✅' : '❌'} Timeout/Mute Immunity\n` +
+                    `${record.categories.includes('warn') ? '✅' : '❌'} Warning Immunity`
                 )
+
                 .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
                 .setTimestamp();
 
@@ -251,42 +257,38 @@ export const whitelistCommand: Command = {
                 timestamp: new Date().toISOString()
             };
 
-            const permsEmbed = buildEditorEmbed(selectedUserId, selectedUser.username, record.categories);
+            const permsEmbed = buildEditorEmbed(selectedUserId, selectedUser.username, record.categories, record.addedBy || interaction.user.id);
 
             const permsSelectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
                 new StringSelectMenuBuilder()
                     .setCustomId(`whitelist:perms-select:${selectedUserId}`)
-                    .setPlaceholder('Select bypass permissions...')
-                    .setMinValues(0)
+                    .setPlaceholder('Select immunities to assign...')
+                    .setMinValues(1)
                     .setMaxValues(4)
                     .addOptions([
                         {
-                            label: 'Cuss Word Filter Bypass',
-                            value: 'cuss',
-                            emoji: '🤬',
-                            description: 'Bypass the auto-delete cuss word filter',
-                            default: record.categories.includes('cuss')
+                            label: 'Ban Immunity',
+                            value: 'ban',
+                            description: 'Prevent user from being banned',
+                            default: record.categories.includes('ban')
                         },
                         {
-                            label: 'Link Filter Bypass',
-                            value: 'link',
-                            emoji: '🔗',
-                            description: 'Bypass the link filter',
-                            default: record.categories.includes('link')
+                            label: 'Kick Immunity',
+                            value: 'kick',
+                            description: 'Prevent user from being kicked',
+                            default: record.categories.includes('kick')
                         },
                         {
-                            label: 'Spam Filter Bypass',
-                            value: 'spam',
-                            emoji: '📨',
-                            description: 'Bypass the spam filter',
-                            default: record.categories.includes('spam')
+                            label: 'Timeout/Mute Immunity',
+                            value: 'timeout',
+                            description: 'Prevent user from being timed out',
+                            default: record.categories.includes('timeout')
                         },
                         {
-                            label: 'Caps Filter Bypass',
-                            value: 'caps',
-                            emoji: '🔠',
-                            description: 'Bypass the caps filter',
-                            default: record.categories.includes('caps')
+                            label: 'Warning Immunity',
+                            value: 'warn',
+                            description: 'Prevent user from receiving warnings',
+                            default: record.categories.includes('warn')
                         }
                     ])
             );
@@ -333,48 +335,44 @@ export const whitelistCommand: Command = {
                 whitelistConfig.users.push(record);
             } else {
                 // Keep non-bypass immunities if any, then merge selected values
-                const preservedCategories = record.categories.filter(c => !['cuss', 'link', 'spam', 'caps'].includes(c));
+                const preservedCategories = record.categories.filter(c => !['ban', 'kick', 'timeout', 'warn'].includes(c));
                 record.categories = [...preservedCategories, ...selectedValues];
             }
 
             await whitelistSettings.set(homeGuildId, whitelistConfig);
 
-            const permsEmbed = buildEditorEmbed(selectedUserId, selectedUser.username, record.categories);
+            const permsEmbed = buildEditorEmbed(selectedUserId, selectedUser.username, record.categories, record.addedBy || interaction.user.id);
 
             const permsSelectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
                 new StringSelectMenuBuilder()
                     .setCustomId(`whitelist:perms-select:${selectedUserId}`)
-                    .setPlaceholder('Select bypass permissions...')
-                    .setMinValues(0)
+                    .setPlaceholder('Select immunities to assign...')
+                    .setMinValues(1)
                     .setMaxValues(4)
                     .addOptions([
                         {
-                            label: 'Cuss Word Filter Bypass',
-                            value: 'cuss',
-                            emoji: '🤬',
-                            description: 'Bypass the auto-delete cuss word filter',
-                            default: record.categories.includes('cuss')
+                            label: 'Ban Immunity',
+                            value: 'ban',
+                            description: 'Prevent user from being banned',
+                            default: record.categories.includes('ban')
                         },
                         {
-                            label: 'Link Filter Bypass',
-                            value: 'link',
-                            emoji: '🔗',
-                            description: 'Bypass the link filter',
-                            default: record.categories.includes('link')
+                            label: 'Kick Immunity',
+                            value: 'kick',
+                            description: 'Prevent user from being kicked',
+                            default: record.categories.includes('kick')
                         },
                         {
-                            label: 'Spam Filter Bypass',
-                            value: 'spam',
-                            emoji: '📨',
-                            description: 'Bypass the spam filter',
-                            default: record.categories.includes('spam')
+                            label: 'Timeout/Mute Immunity',
+                            value: 'timeout',
+                            description: 'Prevent user from being timed out',
+                            default: record.categories.includes('timeout')
                         },
                         {
-                            label: 'Caps Filter Bypass',
-                            value: 'caps',
-                            emoji: '🔠',
-                            description: 'Bypass the caps filter',
-                            default: record.categories.includes('caps')
+                            label: 'Warning Immunity',
+                            value: 'warn',
+                            description: 'Prevent user from receiving warnings',
+                            default: record.categories.includes('warn')
                         }
                     ])
             );

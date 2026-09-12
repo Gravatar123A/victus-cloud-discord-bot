@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, StringSelectMenuBuilder, } from 'discord.js';
 import { antiNukeSettings } from '../services/antiNukeSettings.js';
 import { supabase } from '../services/supabase.js';
 import { config } from '../config.js';
@@ -97,53 +97,109 @@ function buildControlPanelEmbed(config, cussFilterEnabled, guildName) {
         .setTimestamp();
 }
 /**
- * Generate Action Rows with Green ON / Gray OFF styled buttons.
+ * Generate components layout with a multi-select dropdown menu and control buttons.
  */
-function buildControlPanelButtons(config, cussFilterEnabled) {
-    const row1 = new ActionRowBuilder().addComponents(new ButtonBuilder()
-        .setCustomId('antinuke:toggle:master')
+function buildControlPanelComponents(config, cussFilterEnabled) {
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('antinuke:select')
+        .setPlaceholder('Select protections to assign...')
+        .setMinValues(0)
+        .setMaxValues(12)
+        .addOptions([
+        {
+            label: 'Anti-Kick',
+            value: 'anti_kick',
+            emoji: '👢',
+            description: 'Prevent excessive kicking of members',
+            default: config.anti_kick,
+        },
+        {
+            label: 'Anti-Ban',
+            value: 'anti_ban',
+            emoji: '🔨',
+            description: 'Prevent excessive banning of members',
+            default: config.anti_ban,
+        },
+        {
+            label: 'Anti-BanRemove',
+            value: 'anti_ban_remove',
+            emoji: '🔓',
+            description: 'Prevent unauthorized unbanning of members',
+            default: config.anti_ban_remove,
+        },
+        {
+            label: 'Anti-ChannelCreate',
+            value: 'anti_channel_create',
+            emoji: '➕',
+            description: 'Prevent unauthorized channel creation',
+            default: config.anti_channel_create,
+        },
+        {
+            label: 'Anti-ChannelDelete',
+            value: 'anti_channel_delete',
+            emoji: '❌',
+            description: 'Prevent unauthorized channel deletion',
+            default: config.anti_channel_delete,
+        },
+        {
+            label: 'Anti-RoleCreate',
+            value: 'anti_role_create',
+            emoji: '🎭',
+            description: 'Prevent unauthorized role creation',
+            default: config.anti_role_create,
+        },
+        {
+            label: 'Anti-RoleDelete',
+            value: 'anti_role_delete',
+            emoji: '🗑️',
+            description: 'Prevent unauthorized role deletion',
+            default: config.anti_role_delete,
+        },
+        {
+            label: 'Anti-RoleUpdate',
+            value: 'anti_role_update',
+            emoji: '📝',
+            description: 'Prevent unauthorized role modifications',
+            default: config.anti_role_update,
+        },
+        {
+            label: 'Anti-EmojiDelete',
+            value: 'anti_emoji_delete',
+            emoji: '😀',
+            description: 'Prevent unauthorized emoji deletion',
+            default: config.anti_emoji_delete,
+        },
+        {
+            label: 'Anti-StickerDelete',
+            value: 'anti_sticker_delete',
+            emoji: '🏷️',
+            description: 'Prevent unauthorized sticker deletion',
+            default: config.anti_sticker_delete,
+        },
+        {
+            label: 'Anti-GuildUpdate',
+            value: 'anti_guild_update',
+            emoji: '🌐',
+            description: 'Prevent unauthorized server modification',
+            default: config.anti_guild_update,
+        },
+        {
+            label: 'Cuss Word Filter',
+            value: 'cuss_filter',
+            emoji: '🤬',
+            description: 'Enable or disable the cuss word filter',
+            default: cussFilterEnabled,
+        },
+    ]);
+    const row1 = new ActionRowBuilder().addComponents(selectMenu);
+    const row2 = new ActionRowBuilder().addComponents(new ButtonBuilder()
+        .setCustomId('antinuke:toggle:enabled')
         .setLabel(`Anti-Nuke: ${config.enabled ? 'ON ✅' : 'OFF ❌'}`)
         .setStyle(config.enabled ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
-        .setCustomId('antinuke:toggle:cuss_filter')
-        .setLabel(`Cuss Filter: ${cussFilterEnabled ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(cussFilterEnabled ? ButtonStyle.Success : ButtonStyle.Secondary));
-    const row2 = new ActionRowBuilder().addComponents(new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_kick')
-        .setLabel(`Kick: ${config.anti_kick ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_kick ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_ban')
-        .setLabel(`Ban: ${config.anti_ban ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_ban ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_ban_remove')
-        .setLabel(`Unban: ${config.anti_ban_remove ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_ban_remove ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_channel_create')
-        .setLabel(`Chan Create: ${config.anti_channel_create ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_channel_create ? ButtonStyle.Success : ButtonStyle.Secondary));
-    const row3 = new ActionRowBuilder().addComponents(new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_channel_delete')
-        .setLabel(`Chan Delete: ${config.anti_channel_delete ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_channel_delete ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_role_create')
-        .setLabel(`Role Create: ${config.anti_role_create ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_role_create ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_role_delete')
-        .setLabel(`Role Delete: ${config.anti_role_delete ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_role_delete ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_role_update')
-        .setLabel(`Role Update: ${config.anti_role_update ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_role_update ? ButtonStyle.Success : ButtonStyle.Secondary));
-    const row4 = new ActionRowBuilder().addComponents(new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_emoji_delete')
-        .setLabel(`Emoji Del: ${config.anti_emoji_delete ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_emoji_delete ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_sticker_delete')
-        .setLabel(`Sticker Del: ${config.anti_sticker_delete ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_sticker_delete ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
-        .setCustomId('antinuke:toggle:anti_guild_update')
-        .setLabel(`Guild Update: ${config.anti_guild_update ? 'ON ✅' : 'OFF ❌'}`)
-        .setStyle(config.anti_guild_update ? ButtonStyle.Success : ButtonStyle.Secondary));
-    return [row1, row2, row3, row4];
+        .setCustomId('antinuke:save')
+        .setLabel('Select ✅')
+        .setStyle(ButtonStyle.Success));
+    return [row1, row2];
 }
 export const antinukeCommand = {
     data: new SlashCommandBuilder()
@@ -171,7 +227,7 @@ export const antinukeCommand = {
         const botSettings = await supabase.getBotSettings(guildId).catch(() => null);
         const cussFilterEnabled = botSettings?.moderation_enabled ?? false;
         const embed = buildControlPanelEmbed(antinukeConfig, cussFilterEnabled, interaction.guild.name);
-        const components = buildControlPanelButtons(antinukeConfig, cussFilterEnabled);
+        const components = buildControlPanelComponents(antinukeConfig, cussFilterEnabled);
         await interaction.reply({
             embeds: [embed],
             components,
@@ -179,7 +235,7 @@ export const antinukeCommand = {
         });
     },
     async handleButton(interaction) {
-        if (!interaction.customId.startsWith('antinuke:toggle:'))
+        if (!interaction.customId.startsWith('antinuke:toggle:') && interaction.customId !== 'antinuke:save')
             return;
         const authorized = await isAuthorized(interaction);
         if (!authorized) {
@@ -190,6 +246,38 @@ export const antinukeCommand = {
             return;
         }
         const guildId = interaction.guildId;
+        if (interaction.customId === 'antinuke:save') {
+            const antinukeConfig = await antiNukeSettings.get(guildId);
+            const botSettings = await supabase.getBotSettings(guildId).catch(() => null);
+            const cussFilterEnabled = botSettings?.moderation_enabled ?? false;
+            const finalEmbed = new EmbedBuilder()
+                .setColor(ICE_PALETTE.frost)
+                .setTitle('🛡️ Victus Anti-Nuke Settings Saved')
+                .setDescription(`Anti-Nuke configuration for **${interaction.guild.name}** has been successfully saved.\n\n` +
+                `### 🎛️ Master Status\n` +
+                `> **System Status:** ${antinukeConfig.enabled ? '🟢 ON' : '⚫ OFF'}\n\n` +
+                `### 🔒 Active Shields\n` +
+                `› **Anti-Kick:** ${antinukeConfig.anti_kick ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-Ban:** ${antinukeConfig.anti_ban ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-BanRemove:** ${antinukeConfig.anti_ban_remove ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-ChannelCreate:** ${antinukeConfig.anti_channel_create ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-ChannelDelete:** ${antinukeConfig.anti_channel_delete ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-RoleCreate:** ${antinukeConfig.anti_role_create ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-RoleDelete:** ${antinukeConfig.anti_role_delete ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-RoleUpdate:** ${antinukeConfig.anti_role_update ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-EmojiDelete:** ${antinukeConfig.anti_emoji_delete ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-StickerDelete:** ${antinukeConfig.anti_sticker_delete ? '✅ ON' : '❌ OFF'}\n` +
+                `› **Anti-GuildUpdate:** ${antinukeConfig.anti_guild_update ? '✅ ON' : '❌ OFF'}\n\n` +
+                `### 🤬 Content Filters\n` +
+                `› **Cuss Word Filter:** ${cussFilterEnabled ? '✅ ON' : '❌ OFF'}`)
+                .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: antinukeConfig.enabled ? 'https://victuscloud.com/favicon.png' : undefined })
+                .setTimestamp();
+            await interaction.update({
+                embeds: [finalEmbed],
+                components: [],
+            });
+            return;
+        }
         const targetToggle = interaction.customId.split(':')[2];
         const antinukeConfig = await antiNukeSettings.get(guildId);
         const botSettings = await supabase.getBotSettings(guildId).catch(() => null);
@@ -213,7 +301,50 @@ export const antinukeCommand = {
         // Rebuild control panel UI
         const updatedConfig = await antiNukeSettings.get(guildId);
         const embed = buildControlPanelEmbed(updatedConfig, cussFilterEnabled, interaction.guild.name);
-        const components = buildControlPanelButtons(updatedConfig, cussFilterEnabled);
+        const components = buildControlPanelComponents(updatedConfig, cussFilterEnabled);
+        await interaction.update({
+            embeds: [embed],
+            components,
+        });
+    },
+    async handleSelectMenu(interaction) {
+        if (interaction.customId !== 'antinuke:select')
+            return;
+        const authorized = await isAuthorized(interaction);
+        if (!authorized) {
+            await interaction.reply({
+                content: '❌ You are not authorized to perform this action.',
+                ephemeral: true,
+            });
+            return;
+        }
+        const guildId = interaction.guildId;
+        const selectedValues = interaction.values;
+        // Set all specific modules based on presence in selectedValues
+        const updatedConfig = {
+            anti_kick: selectedValues.includes('anti_kick'),
+            anti_ban: selectedValues.includes('anti_ban'),
+            anti_ban_remove: selectedValues.includes('anti_ban_remove'),
+            anti_channel_create: selectedValues.includes('anti_channel_create'),
+            anti_channel_delete: selectedValues.includes('anti_channel_delete'),
+            anti_role_create: selectedValues.includes('anti_role_create'),
+            anti_role_delete: selectedValues.includes('anti_role_delete'),
+            anti_role_update: selectedValues.includes('anti_role_update'),
+            anti_emoji_delete: selectedValues.includes('anti_emoji_delete'),
+            anti_sticker_delete: selectedValues.includes('anti_sticker_delete'),
+            anti_guild_update: selectedValues.includes('anti_guild_update'),
+        };
+        // Update AntiNukeConfig
+        await antiNukeSettings.set(guildId, updatedConfig);
+        // Update Cuss filter setting in supabase
+        const cussFilterEnabled = selectedValues.includes('cuss_filter');
+        await supabase.updateBotSettings(guildId, {
+            moderation_enabled: cussFilterEnabled,
+        });
+        // Re-render the control panel with the updated config
+        const currentConfig = await antiNukeSettings.get(guildId);
+        const embed = buildControlPanelEmbed(currentConfig, cussFilterEnabled, interaction.guild.name);
+        const components = buildControlPanelComponents(currentConfig, cussFilterEnabled);
         await interaction.update({
             embeds: [embed],
             components,
