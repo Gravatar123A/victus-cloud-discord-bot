@@ -197,7 +197,7 @@ function buildControlPanelComponents(config, cussFilterEnabled) {
         .setLabel(`Anti-Nuke: ${config.enabled ? 'ON ✅' : 'OFF ❌'}`)
         .setStyle(config.enabled ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder()
         .setCustomId('antinuke:save')
-        .setLabel('Select ✅')
+        .setLabel('Save & Close 🛡️')
         .setStyle(ButtonStyle.Success));
     return [row1, row2];
 }
@@ -282,6 +282,7 @@ export const antinukeCommand = {
         const antinukeConfig = await antiNukeSettings.get(guildId);
         const botSettings = await supabase.getBotSettings(guildId).catch(() => null);
         let cussFilterEnabled = botSettings?.moderation_enabled ?? false;
+        let updatedConfig = antinukeConfig;
         if (targetToggle === 'cuss_filter') {
             // Toggle moderation_enabled in bot_settings table
             cussFilterEnabled = !cussFilterEnabled;
@@ -294,12 +295,10 @@ export const antinukeCommand = {
             const key = targetToggle;
             if (key in antinukeConfig) {
                 const updatedVal = !antinukeConfig[key];
-                await antiNukeSettings.set(guildId, { [key]: updatedVal });
-                antinukeConfig[key] = updatedVal; // reflect locally
+                updatedConfig = await antiNukeSettings.set(guildId, { [key]: updatedVal });
             }
         }
         // Rebuild control panel UI
-        const updatedConfig = await antiNukeSettings.get(guildId);
         const embed = buildControlPanelEmbed(updatedConfig, cussFilterEnabled, interaction.guild.name);
         const components = buildControlPanelComponents(updatedConfig, cussFilterEnabled);
         await interaction.update({
@@ -335,14 +334,13 @@ export const antinukeCommand = {
             anti_guild_update: selectedValues.includes('anti_guild_update'),
         };
         // Update AntiNukeConfig
-        await antiNukeSettings.set(guildId, updatedConfig);
+        const currentConfig = await antiNukeSettings.set(guildId, updatedConfig);
         // Update Cuss filter setting in supabase
         const cussFilterEnabled = selectedValues.includes('cuss_filter');
         await supabase.updateBotSettings(guildId, {
             moderation_enabled: cussFilterEnabled,
         });
         // Re-render the control panel with the updated config
-        const currentConfig = await antiNukeSettings.get(guildId);
         const embed = buildControlPanelEmbed(currentConfig, cussFilterEnabled, interaction.guild.name);
         const components = buildControlPanelComponents(currentConfig, cussFilterEnabled);
         await interaction.update({
