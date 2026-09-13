@@ -231,6 +231,8 @@ export const antinukeCommand: Command = {
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction: ChatInputCommandInteraction) {
+        await interaction.deferReply({ ephemeral: true });
+
         const authorized = await isAuthorized(interaction);
         if (!authorized) {
             const unauthorizedEmbed = new EmbedBuilder()
@@ -240,9 +242,8 @@ export const antinukeCommand: Command = {
                 .setFooter({ text: 'Victus Cloud Staff Operations' })
                 .setTimestamp();
 
-            await interaction.reply({
-                embeds: [unauthorizedEmbed],
-                ephemeral: true,
+            await interaction.editReply({
+                embeds: [unauthorizedEmbed]
             });
             return;
         }
@@ -255,10 +256,9 @@ export const antinukeCommand: Command = {
         const embed = buildControlPanelEmbed(antinukeConfig, cussFilterEnabled, interaction.guild!.name);
         const components = buildControlPanelComponents(antinukeConfig, cussFilterEnabled);
 
-        await interaction.reply({
+        await interaction.editReply({
             embeds: [embed],
-            components,
-            ephemeral: true,
+            components
         });
     },
 
