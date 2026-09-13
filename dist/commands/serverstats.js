@@ -144,6 +144,8 @@ export const serverStatsCommand = {
         }
     },
     async handleButton(interaction) {
+        if (!interaction.customId.startsWith('serverstats:'))
+            return;
         const config = await serverStatsSettings.get(interaction.guildId);
         const action = interaction.customId.split(':')[1];
         if (action === 'toggle') {

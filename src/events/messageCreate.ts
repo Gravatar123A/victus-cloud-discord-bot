@@ -610,7 +610,7 @@ export const messageCreateEvent: Event = {
 
         if (message.channel.type === ChannelType.DM) {
             const prompt = buildPromptFromMessage(message);
-            if (prompt.length < 3) return;
+            if (!prompt || prompt.length < 1) return;
 
             enqueuePerUser(message.author.id, () => replyWithAi(
                 message,
@@ -637,8 +637,11 @@ export const messageCreateEvent: Event = {
         // Strip the bot mention so the AI doesn't see a raw "<@id>" token.
         if (isMentioned && botId) {
             prompt = prompt.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim();
+            if (!prompt) {
+                prompt = 'Hello! Introduce yourself briefly and ask how you can help.';
+            }
         }
-        if (prompt.length < 3) return;
+        if (!prompt || prompt.length < 1) return;
 
         enqueuePerUser(message.author.id, () => replyWithAi(
             message,

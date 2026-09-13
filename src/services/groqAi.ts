@@ -30,10 +30,13 @@ type GroqChatResponse = {
 };
 
 type ChatProvider = {
+    name?: string;
     apiKey: string;
     baseUrl: string;
     apiKeys?: string[];
     model?: string;
+    maxTokens?: number;
+    temperature?: number;
 };
 
 type SearchResult = {
@@ -632,8 +635,13 @@ class GroqAiService {
         provider: ChatProvider = config.ai,
     ): Promise<GroqResponseMessage> {
         const endpoint = normalizeEndpoint(provider.baseUrl);
-        const maxTokens = clampNumber(config.ai.maxTokens, 700, 128, 4000);
-        const temperature = clampNumber(config.ai.temperature, 0.35, 0, 1.5);
+        const isAzure = isAzureEndpoint(endpoint);
+        const isGroq = provider.name === 'groq' || /groq\.com/i.test(provider.baseUrl) || (provider.apiKey || '').startsWith('gsk_');
+        const isOR = !isGroq && !isAzure && isOpenRouter(provider.baseUrl, model);
+        const maxTokens = isGroq
+            ? clampNumber(provider.maxTokens || config.ai.maxTokens, 700, 100, 800)
+            : clampNumber(provider.maxTokens || config.ai.maxTokens, 1000, 100, 4000);
+        const temperature = clampNumber(provider.temperature ?? config.ai.temperature, 0.35, 0, 1.5);
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), ms);
         try {
@@ -643,12 +651,11 @@ class GroqAiService {
                 temperature,
                 max_tokens: maxTokens,
             };
-            if (withTools) {
+            const hasToolHistory = messages.some(m => m.role === 'tool' || (m.role === 'assistant' && Array.isArray((m as any).tool_calls) && (m as any).tool_calls.length > 0));
+            if (withTools || hasToolHistory) {
                 body.tools = AI_TOOLS;
                 body.tool_choice = 'auto';
             }
-            const isAzure = isAzureEndpoint(endpoint);
-            const isOR = isOpenRouter(provider.baseUrl, model);
             if (isOR) {
                 (body as any).reasoning = { effort: 'high', exclude: false };
                 (body as any).top_p = 0.95;
@@ -677,15 +684,18 @@ class GroqAiService {
             clearTimeout(timeout);
         }
     }
+
     private async callChatCompletions(
         messages: ChatMessage[],
         withTools: boolean,
         providerOverride?: ChatProvider,
     ): Promise<GroqResponseMessage> {
-        const provider = providerOverride || config.ai;
+        const provider = providerOverride || (config.ai as any).primaryProvider || config.ai;
         const keys = provider.apiKeys?.length ? provider.apiKeys : [provider.apiKey];
-        const requestedModel = providerOverride?.model;
-        const isOR = isOpenRouter(provider.baseUrl, requestedModel || config.ai.model);
+        const isAzure = isAzureEndpoint(provider.baseUrl);
+        const isGroq = provider.name === 'groq' || /groq\.com/i.test(provider.baseUrl) || (provider.apiKey || '').startsWith('gsk_');
+        const isOR = !isGroq && !isAzure && isOpenRouter(provider.baseUrl, provider.model || config.ai.model);
+
         const tryModel = async (model: string, ms: number): Promise<GroqResponseMessage> => {
             let lastError: unknown;
             for (const apiKey of keys) {
@@ -698,30 +708,52 @@ class GroqAiService {
             throw lastError instanceof Error ? lastError : new Error('AI provider request failed.');
         };
 
-        if (requestedModel) return tryModel(requestedModel, isOR ? 30000 : 25000);
-        if (!isOR) return tryModel(config.ai.model, 25000);
-        const lastUser = [...messages].reverse().find(m => (m as any).role === "user") as any;
-        const text = lastUser?.content || (messages[messages.length-1] as any)?.content || "";
-        const complex = isComplexQuery(String(text));
-        const primary = complex ? 'poolside/laguna-xs-2.1:free' : 'nvidia/nemotron-3.5-lightning:free';
-        const primaryMs = complex ? 12000 : 15000;
-        try {
-            return await tryModel(primary, primaryMs);
-        } catch (e) {
-            console.warn(`${primary} failed, falling back to nemotron-ultra: ${e instanceof Error ? e.message : String(e)}`);
-            return await tryModel('nvidia/nemotron-3-ultra-550b-a55b:free', 40000);
+        if (isGroq) {
+            const requested = providerOverride?.model || provider.model;
+            const modelsToTry = [
+                requested,
+                'openai/gpt-oss-120b',
+                'qwen/qwen3.8-27b',
+                'openai/gpt-oss-20b',
+            ].filter(Boolean) as string[];
+            const uniqueModels = [...new Set(modelsToTry)];
+            let lastErr: unknown;
+            for (const m of uniqueModels) {
+                try {
+                    return await tryModel(m, 25000);
+                } catch (err) {
+                    lastErr = err;
+                    logger.warn(`Groq model "${m}" failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+            }
+            throw lastErr instanceof Error ? lastErr : new Error('All Groq models failed.');
         }
+
+        if (isOR) {
+            const requestedModel = providerOverride?.model || provider.model;
+            if (requestedModel && !requestedModel.includes(':free')) {
+                return tryModel(requestedModel, 30000);
+            }
+            const lastUser = [...messages].reverse().find(m => (m as any).role === "user") as any;
+            const text = lastUser?.content || (messages[messages.length - 1] as any)?.content || "";
+            const complex = isComplexQuery(String(text));
+            const primary = complex ? 'poolside/laguna-xs-2.1:free' : 'nvidia/nemotron-3.5-lightning:free';
+            const primaryMs = complex ? 12000 : 15000;
+            try {
+                return await tryModel(primary, primaryMs);
+            } catch (e) {
+                logger.warn(`${primary} failed, falling back to nemotron-ultra: ${e instanceof Error ? e.message : String(e)}`);
+                return await tryModel('nvidia/nemotron-3-ultra-550b-a55b:free', 40000);
+            }
+        }
+
+        return tryModel(provider.model || config.ai.model, 25000);
     }
 
-    private async callResponsesApi(messages: ChatMessage[], withTools: boolean): Promise<string> {
-        const endpoint = config.ai.baseUrl;
-        // gpt-5.6-sol is a REASONING model: reasoning tokens are billed against
-        // max_output_tokens. Give the visible answer real headroom (default 8000,
-        // never below 2000) and keep reasoning cheap via effort:'low' so it can't
-        // eat the whole budget and leave zero tokens for the actual reply.
-        let maxTokens = clampNumber(config.ai.maxTokens, 8000, 2000, 32000);
-        // Responses API input items: chat turns as {role, content}; tool calls and
-        // their results are appended as function_call / function_call_output items.
+    private async callResponsesApi(messages: ChatMessage[], withTools: boolean, providerOverride?: ChatProvider): Promise<string> {
+        const provider = providerOverride || (config.ai as any).primaryProvider || config.ai;
+        const endpoint = provider.baseUrl;
+        let maxTokens = clampNumber(provider.maxTokens || config.ai.maxTokens, 8000, 2000, 32000);
         const input: Record<string, unknown>[] = messages.map((message) => ({
             role: message.role === 'tool' ? 'assistant' : message.role,
             content: message.content || '',
@@ -736,7 +768,7 @@ class GroqAiService {
             const timeout = setTimeout(() => controller.abort(), 45000);
             try {
                 const body: Record<string, unknown> = {
-                    model: config.ai.model,
+                    model: provider.model || config.ai.model,
                     input,
                     max_output_tokens: maxTokens,
                 };
@@ -750,16 +782,13 @@ class GroqAiService {
 
                 const response = await fetch(endpoint, {
                     method: 'POST',
-                    headers: { 'api-key': config.ai.apiKey, 'Content-Type': 'application/json' },
+                    headers: { 'api-key': provider.apiKey, 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
                     signal: controller.signal,
                 });
 
                 const payload = await response.json().catch(() => null) as any;
                 if (!response.ok) {
-                    // A 400 usually means the deployment rejected an optional param
-                    // (tools or the reasoning field). Degrade gracefully once rather
-                    // than surfacing the fallback to the user.
                     if (response.status === 400 && (attachTools || useReasoning)) {
                         toolsAllowed = false;
                         useReasoning = false;
@@ -783,10 +812,6 @@ class GroqAiService {
                         }
                         input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });
                     }
-                    // If every tool call failed (e.g. web_search is blocked from this
-                    // datacenter IP), stop looping on tools and make the model answer
-                    // from its built-in knowledge base next round instead of burning
-                    // every round re-issuing searches that will never succeed.
                     if (allErrored) {
                         toolsAllowed = false;
                     }
@@ -806,11 +831,6 @@ class GroqAiService {
                     return truncate(text.trim(), 3200);
                 }
 
-                // No usable text. Two recoverable causes, both self-healing:
-                //  1) reasoning consumed the whole budget (status:incomplete,
-                //     incomplete_details.reason === 'max_output_tokens') -> grow it.
-                //  2) a tools-on turn returned only hidden reasoning and no message
-                //     -> drop tools; a tools-off call reliably returns a message.
                 const truncatedByTokens = payload?.status === 'incomplete'
                     && payload?.incomplete_details?.reason === 'max_output_tokens';
                 if (truncatedByTokens && maxTokens < 32000) {
@@ -837,89 +857,88 @@ class GroqAiService {
         allowTools = config.ai.webSearchEnabled,
         logFailure = true,
     ): Promise<string> {
-        if (!config.ai.apiKey) {
-            throw new Error('AI is not configured. Set OPENROUTER_API_KEY (or AI_API_KEY) in the bot environment.');
+        const providers: ChatProvider[] = (config.ai as any).providers?.length
+            ? (config.ai as any).providers
+            : (config.ai.apiKey ? [{
+                name: 'default',
+                apiKey: config.ai.apiKey,
+                apiKeys: config.ai.apiKeys || [config.ai.apiKey],
+                baseUrl: config.ai.baseUrl,
+                model: config.ai.model,
+                maxTokens: config.ai.maxTokens,
+                temperature: config.ai.temperature,
+            }] : []);
+
+        if (providers.length === 0) {
+            throw new Error('AI is not configured. Set GROQ_API_KEY (or OPENROUTER_API_KEY / AI_API_KEY) in the bot environment.');
         }
 
-        if (isAzureResponsesApi(config.ai.baseUrl)) {
+        let lastError: unknown = null;
+
+        for (let pIdx = 0; pIdx < providers.length; pIdx++) {
+            const provider = providers[pIdx];
             try {
-                return await this.callResponsesApi(messages, allowTools);
-            } catch (e) {
-                const msg = e instanceof Error ? e.message : String(e);
-                const isAuth = /401|403|invalid subscription key|unauthorized/i.test(msg);
-                const hasFallback = Boolean(config.ai.fallbackBaseUrl && config.ai.fallbackApiKeys.length);
-                if (hasFallback) {
-                    logger.warn(`Primary AI request failed (${msg}) — trying configured fallback provider`);
-                    try {
-                        const fallback = await this.callChatCompletions(messages, allowTools, {
-                            apiKey: config.ai.fallbackApiKeys[0],
-                            apiKeys: config.ai.fallbackApiKeys,
-                            baseUrl: config.ai.fallbackBaseUrl,
-                            model: config.ai.fallbackModel,
-                        });
-                        return fallback.content ?? '';
-                    } catch (fallbackErr) {
-                        logger.error('Configured AI fallback also failed:', fallbackErr);
-                    }
+                if (isAzureResponsesApi(provider.baseUrl)) {
+                    return await this.callResponsesApi(messages, allowTools, provider);
                 }
-                if (isAuth && !hasFallback) {
-                    logger.warn(`Azure AI auth failed (${msg}) — trying fallback`);
-                    const hasOrKey = !!process.env.OPENROUTER_API_KEY;
-                    if (hasOrKey) {
-                        try {
-                            const fallback = await this.callChatCompletions(messages, allowTools);
-                            return typeof fallback === 'string' ? fallback : (fallback.content ?? '');
-                        } catch (fallbackErr) {
-                            logger.error('OpenRouter fallback also failed:', fallbackErr);
-                        }
-                    }
-                    throw new Error('AI is temporarily unavailable (Azure subscription key invalid). Staff has been notified — please try again later or open a ticket.');
-                }
-                if (logFailure) logger.error('Groq AI request failed:', e);
-                throw e;
-            }
-        }
 
-        const withTools = allowTools;
-        const conversation: ChatMessage[] = [...messages];
+                const withTools = allowTools;
+                const conversation: ChatMessage[] = [...messages];
 
-        try {
-            for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-                const allowTools = withTools && round < MAX_TOOL_ROUNDS;
-                const response = await this.callChatCompletions(conversation, allowTools);
+                for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+                    const allowToolsRound = withTools && round < MAX_TOOL_ROUNDS;
+                    const response = await this.callChatCompletions(conversation, allowToolsRound, provider);
 
-                const toolCalls = response.tool_calls;
-                if (allowTools && Array.isArray(toolCalls) && toolCalls.length > 0) {
-                    conversation.push({
-                        role: 'assistant',
-                        content: response.content ?? null,
-                        tool_calls: toolCalls,
-                    });
-
-                    for (const toolCall of toolCalls) {
-                        const result = await runTool(toolCall.function.name, toolCall.function.arguments);
+                    const toolCalls = response.tool_calls;
+                    if (allowToolsRound && Array.isArray(toolCalls) && toolCalls.length > 0) {
                         conversation.push({
-                            role: 'tool',
-                            tool_call_id: toolCall.id,
-                            content: JSON.stringify(result),
+                            role: 'assistant',
+                            content: response.content ?? null,
+                            tool_calls: toolCalls,
                         });
+
+                        for (const toolCall of toolCalls) {
+                            const result = await runTool(toolCall.function.name, toolCall.function.arguments);
+                            conversation.push({
+                                role: 'tool',
+                                tool_call_id: toolCall.id,
+                                content: JSON.stringify(result),
+                            });
+                        }
+                        if (round + 1 >= MAX_TOOL_ROUNDS) {
+                            conversation.push({
+                                role: 'system',
+                                content: 'Tool execution is complete. Synthesize the final answer for the user based on the tool results above. Do not output any tool calls.',
+                            });
+                        }
+                        continue;
                     }
-                    continue;
+
+                    const rawAnswer = (response.content || '')
+                        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                        .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+                        .trim();
+
+                    if (!rawAnswer) {
+                        throw new Error('AI returned an empty response.');
+                    }
+
+                    return truncate(rawAnswer, 3200);
                 }
 
-                const answer = response.content;
-                if (typeof answer !== 'string' || !answer.trim()) {
-                    throw new Error('AI returned an empty response.');
+                throw new Error('AI returned an empty response after max tool rounds.');
+            } catch (err: any) {
+                lastError = err;
+                const msg = err instanceof Error ? err.message : String(err);
+                logger.warn(`AI provider "${provider.name || provider.baseUrl}" failed: ${msg}`);
+                if (pIdx + 1 < providers.length) {
+                    logger.info(`Failing over to next provider: ${providers[pIdx + 1].name || providers[pIdx + 1].baseUrl}...`);
                 }
-
-                return truncate(answer.trim(), 3200);
             }
-
-            throw new Error('AI returned an empty response.');
-        } catch (error) {
-            if (logFailure) logger.error('Groq AI request failed:', error);
-            throw error;
         }
+
+        if (logFailure) logger.error('All configured AI providers failed. Last error:', lastError);
+        throw lastError instanceof Error ? lastError : new Error('All configured AI providers failed.');
     }
 }
 

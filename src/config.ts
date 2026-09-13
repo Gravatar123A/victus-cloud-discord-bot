@@ -9,20 +9,129 @@ function splitApiKeys(...names: string[]): string[] {
     return [...new Set(keys.map((key) => key.trim()).filter(Boolean))];
 }
 
-const openRouterKeys = splitApiKeys('OPENROUTER_API_KEYS', 'OPENROUTER_API_KEY');
-const primaryAiKeys = openRouterKeys.length
-    ? openRouterKeys
-    : splitApiKeys('AI_API_KEYS', 'AI_API_KEY', 'GROQ_API_KEYS', 'GROQ_API_KEY');
-const primaryAiBaseUrl = openRouterKeys.length
-    ? (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1')
-    : (process.env.AI_BASE_URL || process.env.GROQ_BASE_URL || 'https://openrouter.ai/api/v1');
-const explicitFallbackKeys = splitApiKeys('AI_FALLBACK_API_KEYS', 'VICTUS_AI_API_KEYS');
-const fallbackAiKeys = explicitFallbackKeys.length
-    ? explicitFallbackKeys
-    : (/cognitiveservices\.azure\.com/i.test(primaryAiBaseUrl) ? primaryAiKeys : []);
-const fallbackAiBaseUrl = process.env.AI_FALLBACK_BASE_URL || (fallbackAiKeys.length
-    ? (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1')
-    : '');
+export interface AiProviderConfig {
+    name: 'groq' | 'openrouter' | 'azure' | 'custom';
+    apiKey: string;
+    apiKeys: string[];
+    baseUrl: string;
+    model: string;
+    maxTokens: number;
+    temperature: number;
+}
+
+function normalizeGroqUrl(raw?: string): string {
+    const val = (raw || '').trim();
+    if (!val || /cognitiveservices\.azure\.com/i.test(val)) return 'https://api.groq.com/openai/v1';
+    let url = val.replace(/\/+$/, '');
+    if (url.endsWith('/openai')) url += '/v1';
+    else if (!url.endsWith('/v1') && !url.includes('/v1/')) url += '/v1';
+    return url;
+}
+
+function normalizeGroqModel(raw?: string): string {
+    const val = (raw || '').trim();
+    if (!val || val === 'gpt-5.6-sol' || val === 'llama-3.1-8b-instant' || val === 'llama-3.3-70b-versatile' || val === 'mixtral-8x7b-32768') {
+        return 'openai/gpt-oss-120b';
+    }
+    return val;
+}
+
+const rawGroqKeys = splitApiKeys('GROQ_API_KEYS', 'GROQ_API_KEY');
+const rawOpenRouterKeys = splitApiKeys('OPENROUTER_API_KEYS', 'OPENROUTER_API_KEY');
+const rawAzureKeys = splitApiKeys('AI_API_KEYS', 'AI_API_KEY');
+const fallbackEnvKeys = splitApiKeys('AI_FALLBACK_API_KEYS', 'VICTUS_AI_API_KEYS');
+
+const groqKeys: string[] = [];
+const azureKeys: string[] = [...rawAzureKeys];
+const openRouterKeys: string[] = [...rawOpenRouterKeys];
+
+for (const key of rawGroqKeys) {
+    if (key.startsWith('gsk_')) {
+        groqKeys.push(key);
+    } else if (key.startsWith('sk-or-')) {
+        openRouterKeys.push(key);
+    } else if (/cognitiveservices\.azure\.com/i.test(process.env.GROQ_BASE_URL || '') || key.length > 50) {
+        azureKeys.push(key);
+    } else {
+        groqKeys.push(key);
+    }
+}
+
+for (const key of rawAzureKeys) {
+    if (key.startsWith('gsk_')) {
+        groqKeys.push(key);
+    } else if (key.startsWith('sk-or-')) {
+        openRouterKeys.push(key);
+    }
+}
+
+const aiProviders: AiProviderConfig[] = [];
+
+if (groqKeys.length > 0) {
+    aiProviders.push({
+        name: 'groq',
+        apiKey: groqKeys[0],
+        apiKeys: groqKeys,
+        baseUrl: normalizeGroqUrl(process.env.GROQ_BASE_URL),
+        model: normalizeGroqModel(process.env.GROQ_MODEL),
+        maxTokens: Math.min(800, Math.max(100, parseInt(process.env.GROQ_MAX_TOKENS || '700', 10))),
+        temperature: Number(process.env.GROQ_TEMPERATURE || process.env.AI_TEMPERATURE || '0.35'),
+    });
+}
+
+if (openRouterKeys.length > 0) {
+    aiProviders.push({
+        name: 'openrouter',
+        apiKey: openRouterKeys[0],
+        apiKeys: openRouterKeys,
+        baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+        model: process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-lightning:free',
+        maxTokens: parseInt(process.env.OPENROUTER_MAX_TOKENS || '1000', 10),
+        temperature: Number(process.env.AI_TEMPERATURE || '0.4'),
+    });
+}
+
+const azureBaseUrl = process.env.AI_BASE_URL || (/cognitiveservices\.azure\.com/i.test(process.env.GROQ_BASE_URL || '') ? process.env.GROQ_BASE_URL : '');
+if (azureKeys.length > 0 && azureBaseUrl) {
+    aiProviders.push({
+        name: 'azure',
+        apiKey: azureKeys[0],
+        apiKeys: azureKeys,
+        baseUrl: azureBaseUrl,
+        model: process.env.AI_MODEL || (process.env.GROQ_MODEL === 'gpt-5.6-sol' ? 'gpt-5.6-sol' : 'gpt-5.6-sol'),
+        maxTokens: parseInt(process.env.AI_MAX_TOKENS || '8000', 10),
+        temperature: Number(process.env.AI_TEMPERATURE || '0.4'),
+    });
+}
+
+const preferredProviderName = (process.env.AI_PROVIDER || '').trim().toLowerCase();
+if (preferredProviderName) {
+    const idx = aiProviders.findIndex(p => p.name === preferredProviderName);
+    if (idx > 0) {
+        const [preferred] = aiProviders.splice(idx, 1);
+        aiProviders.unshift(preferred);
+    }
+}
+
+if (aiProviders.length === 0 && (fallbackEnvKeys.length > 0 || azureKeys.length > 0)) {
+    const key = fallbackEnvKeys[0] || azureKeys[0] || '';
+    const isGroq = key.startsWith('gsk_');
+    aiProviders.push({
+        name: isGroq ? 'groq' : 'openrouter',
+        apiKey: key,
+        apiKeys: [key],
+        baseUrl: isGroq ? 'https://api.groq.com/openai/v1' : 'https://openrouter.ai/api/v1',
+        model: isGroq ? 'openai/gpt-oss-120b' : 'nvidia/nemotron-3.5-lightning:free',
+        maxTokens: 700,
+        temperature: 0.35,
+    });
+}
+
+const primaryAiProvider = aiProviders[0] || null;
+const primaryAiKeys = primaryAiProvider ? primaryAiProvider.apiKeys : [];
+const primaryAiBaseUrl = primaryAiProvider ? primaryAiProvider.baseUrl : '';
+const fallbackAiKeys = aiProviders.slice(1).flatMap(p => p.apiKeys);
+const fallbackAiBaseUrl = aiProviders[1]?.baseUrl || '';
 
 // Validate required environment variables
 const requiredEnvVars = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY'];
@@ -83,20 +192,19 @@ export const config = {
     // GROQ_* names still work. The API KEY is a secret and is NEVER committed — set
     // AI_API_KEY (or GROQ_API_KEY) in the bot's .env on the host.
     ai: {
-        apiKey: primaryAiKeys[0] || '',
+        providers: aiProviders,
+        primaryProvider: primaryAiProvider,
+        apiKey: primaryAiProvider?.apiKey || '',
         apiKeys: primaryAiKeys,
         baseUrl: primaryAiBaseUrl,
-        model: openRouterKeys.length
-            ? (process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-lightning:free')
-            : (process.env.AI_MODEL || process.env.GROQ_MODEL || 'nvidia/nemotron-3.5-lightning:free'),
+        model: primaryAiProvider?.model || 'openai/gpt-oss-120b',
         fallbackApiKeys: fallbackAiKeys,
         fallbackBaseUrl: fallbackAiBaseUrl,
-        fallbackModel: process.env.AI_FALLBACK_MODEL || process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-lightning:free',
-        temperature: Number(process.env.AI_TEMPERATURE || process.env.GROQ_TEMPERATURE || '0.4'),
-        // Higher default: Laguna + gpt-5.6 can spend output on reasoning, small cap yields empty reply. Clamped downstream.
-        maxTokens: Number(process.env.OPENROUTER_MAX_TOKENS || process.env.AI_MAX_TOKENS || process.env.GROQ_MAX_TOKENS || '4000'),
+        fallbackModel: aiProviders[1]?.model || '',
+        temperature: primaryAiProvider?.temperature ?? 0.35,
+        maxTokens: primaryAiProvider?.maxTokens ?? 700,
         systemPrompt: process.env.VICTUS_AI_SYSTEM_PROMPT || '',
-        enabled: primaryAiKeys.length > 0,
+        enabled: aiProviders.length > 0,
         // Keyless web access (DuckDuckGo HTML scrape) exposed to the AI as tools.
         // Defaults to true unless AI_WEB_SEARCH is explicitly set to "false".
         webSearchEnabled: process.env.AI_WEB_SEARCH !== 'false',

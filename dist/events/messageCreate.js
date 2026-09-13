@@ -543,7 +543,7 @@ export const messageCreateEvent = {
             return;
         if (message.channel.type === ChannelType.DM) {
             const prompt = buildPromptFromMessage(message);
-            if (prompt.length < 3)
+            if (!prompt || prompt.length < 1)
                 return;
             enqueuePerUser(message.author.id, () => replyWithAi(message, prompt, false, 'Victus AI could not answer your DM right now. Please try again in a moment or open a support ticket.'));
             return;
@@ -563,8 +563,11 @@ export const messageCreateEvent = {
         // Strip the bot mention so the AI doesn't see a raw "<@id>" token.
         if (isMentioned && botId) {
             prompt = prompt.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim();
+            if (!prompt) {
+                prompt = 'Hello! Introduce yourself briefly and ask how you can help.';
+            }
         }
-        if (prompt.length < 3)
+        if (!prompt || prompt.length < 1)
             return;
         enqueuePerUser(message.author.id, () => replyWithAi(message, prompt, true, 'Victus AI could not answer this message right now. A staff member can still help here.'));
     },

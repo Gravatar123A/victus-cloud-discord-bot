@@ -237,9 +237,11 @@ export const antinukeCommand = {
     async handleButton(interaction) {
         if (!interaction.customId.startsWith('antinuke:toggle:') && interaction.customId !== 'antinuke:save')
             return;
+        // Defer update immediately to prevent 3-second timeouts
+        await interaction.deferUpdate();
         const authorized = await isAuthorized(interaction);
         if (!authorized) {
-            await interaction.reply({
+            await interaction.followUp({
                 content: '❌ You are not authorized to perform this action.',
                 ephemeral: true,
             });
@@ -272,7 +274,7 @@ export const antinukeCommand = {
                 `› **Cuss Word Filter:** ${cussFilterEnabled ? '✅ ON' : '❌ OFF'}`)
                 .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: antinukeConfig.enabled ? 'https://victuscloud.com/favicon.png' : undefined })
                 .setTimestamp();
-            await interaction.update({
+            await interaction.editReply({
                 embeds: [finalEmbed],
                 components: [],
             });
@@ -301,7 +303,7 @@ export const antinukeCommand = {
         // Rebuild control panel UI
         const embed = buildControlPanelEmbed(updatedConfig, cussFilterEnabled, interaction.guild.name);
         const components = buildControlPanelComponents(updatedConfig, cussFilterEnabled);
-        await interaction.update({
+        await interaction.editReply({
             embeds: [embed],
             components,
         });
@@ -309,9 +311,11 @@ export const antinukeCommand = {
     async handleSelectMenu(interaction) {
         if (interaction.customId !== 'antinuke:select')
             return;
+        // Defer update immediately to prevent 3-second timeouts
+        await interaction.deferUpdate();
         const authorized = await isAuthorized(interaction);
         if (!authorized) {
-            await interaction.reply({
+            await interaction.followUp({
                 content: '❌ You are not authorized to perform this action.',
                 ephemeral: true,
             });
@@ -343,7 +347,7 @@ export const antinukeCommand = {
         // Re-render the control panel with the updated config
         const embed = buildControlPanelEmbed(currentConfig, cussFilterEnabled, interaction.guild.name);
         const components = buildControlPanelComponents(currentConfig, cussFilterEnabled);
-        await interaction.update({
+        await interaction.editReply({
             embeds: [embed],
             components,
         });
