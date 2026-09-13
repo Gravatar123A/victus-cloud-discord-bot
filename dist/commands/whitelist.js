@@ -100,6 +100,7 @@ export const whitelistCommand = {
         .setDescription('Manage bypass permissions and filters for users')
         .setDMPermission(true),
     async execute(interaction) {
+        await interaction.deferReply({ ephemeral: true });
         const authorized = await isAuthorized(interaction);
         if (!authorized) {
             const unauthorizedEmbed = new EmbedBuilder()
@@ -108,9 +109,8 @@ export const whitelistCommand = {
                 .setDescription('You do not have permission to run this command. This command is restricted to authorized staff.')
                 .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
                 .setTimestamp();
-            await interaction.reply({
-                embeds: [unauthorizedEmbed],
-                ephemeral: true,
+            await interaction.editReply({
+                embeds: [unauthorizedEmbed]
             });
             return;
         }
@@ -125,16 +125,18 @@ export const whitelistCommand = {
             .setPlaceholder('Select a user to whitelist')
             .setMinValues(1)
             .setMaxValues(1));
-        await interaction.reply({
+        await interaction.editReply({
             embeds: [initialEmbed],
-            components: [userSelectRow],
-            ephemeral: true,
+            components: [userSelectRow]
         });
     },
     async handleButton(interaction) {
+        if (!interaction.customId.startsWith('whitelist:'))
+            return;
+        await interaction.deferUpdate();
         const authorized = await isAuthorized(interaction);
         if (!authorized) {
-            await interaction.reply({
+            await interaction.followUp({
                 content: '❌ You are not authorized to perform this action.',
                 ephemeral: true
             });
@@ -164,7 +166,7 @@ export const whitelistCommand = {
                 `${record.categories.includes('warn') ? '✅' : '❌'} Warning Immunity`)
                 .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
                 .setTimestamp();
-            await interaction.update({
+            await interaction.editReply({
                 embeds: [finalEmbed],
                 components: []
             });
@@ -182,16 +184,19 @@ export const whitelistCommand = {
                 `This user is no longer on the whitelist and will no longer bypass any active server filters or anti-nuke protections.`)
                 .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
                 .setTimestamp();
-            await interaction.update({
+            await interaction.editReply({
                 embeds: [removalEmbed],
                 components: []
             });
         }
     },
     async handleSelectMenu(interaction) {
+        if (!interaction.customId.startsWith('whitelist:'))
+            return;
+        await interaction.deferUpdate();
         const authorized = await isAuthorized(interaction);
         if (!authorized) {
-            await interaction.reply({
+            await interaction.followUp({
                 content: '❌ You are not authorized to perform this action.',
                 ephemeral: true
             });
@@ -202,7 +207,7 @@ export const whitelistCommand = {
             const selectedUserId = interaction.values[0];
             const selectedUser = await interaction.client.users.fetch(selectedUserId).catch(() => null);
             if (!selectedUser) {
-                await interaction.reply({
+                await interaction.followUp({
                     content: '❌ Could not find the selected user.',
                     ephemeral: true
                 });
@@ -255,7 +260,7 @@ export const whitelistCommand = {
                 .setCustomId(`whitelist:remove:${selectedUserId}`)
                 .setLabel('Remove Whitelist 🗑️')
                 .setStyle(ButtonStyle.Danger));
-            await interaction.update({
+            await interaction.editReply({
                 embeds: [permsEmbed],
                 components: [permsSelectRow, saveButtonRow]
             });
@@ -264,7 +269,7 @@ export const whitelistCommand = {
             const selectedUserId = interaction.customId.split(':')[2];
             const selectedUser = await interaction.client.users.fetch(selectedUserId).catch(() => null);
             if (!selectedUser) {
-                await interaction.reply({
+                await interaction.followUp({
                     content: '❌ Could not find the selected user.',
                     ephemeral: true
                 });
@@ -328,7 +333,7 @@ export const whitelistCommand = {
                 .setCustomId(`whitelist:remove:${selectedUserId}`)
                 .setLabel('Remove Whitelist 🗑️')
                 .setStyle(ButtonStyle.Danger));
-            await interaction.update({
+            await interaction.editReply({
                 embeds: [permsEmbed],
                 components: [permsSelectRow, saveButtonRow]
             });

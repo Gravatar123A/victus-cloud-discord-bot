@@ -156,6 +156,8 @@ export const whitelistCommand: Command = {
     },
 
     async handleButton(interaction: ButtonInteraction) {
+        if (!interaction.customId.startsWith('whitelist:')) return;
+
         await interaction.deferUpdate();
         
         const authorized = await isAuthorized(interaction);
@@ -227,6 +229,8 @@ export const whitelistCommand: Command = {
     },
 
     async handleSelectMenu(interaction: any) {
+        if (!interaction.customId.startsWith('whitelist:')) return;
+
         await interaction.deferUpdate();
         
         const authorized = await isAuthorized(interaction);
@@ -245,7 +249,7 @@ export const whitelistCommand: Command = {
             const selectedUser = await interaction.client.users.fetch(selectedUserId).catch(() => null);
 
             if (!selectedUser) {
-                await interaction.reply({
+                await interaction.followUp({
                     content: '❌ Could not find the selected user.',
                     ephemeral: true
                 });
