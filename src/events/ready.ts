@@ -19,6 +19,7 @@ import { restoreVoiceXpSessions } from './voiceStateUpdate.js';
 import { syncEntitlementRoles } from '../services/entitlementRoles.js';
 import { leaderboardService } from '../services/leaderboardService.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
+import { forumDirectoryService } from '../services/forumDirectoryService.js';
 
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
@@ -359,6 +360,9 @@ export const readyEvent: Event = {
 
         // Viral Expansion Engine initialization
         viralExpansionService.init(client);
+
+        // Live Minecraft Server Discovery Forum Directory initialization
+        forumDirectoryService.start(client);
 
         await processNotificationQueue(client);
         setInterval(() => {

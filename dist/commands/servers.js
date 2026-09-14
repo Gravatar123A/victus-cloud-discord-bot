@@ -7,10 +7,29 @@ import { pterodactyl } from '../services/pterodactyl.js';
 import { formatBytes } from '../utils/pagination.js';
 import { compactId, decodeDisplayText, Icons, statusIcon, statusLabel } from '../utils/premium.js';
 import { logger } from '../utils/logger.js';
+import { browseCommand } from './browse.js';
 export const serversCommand = {
     data: new SlashCommandBuilder()
         .setName('servers')
-        .setDescription('View and manage your game servers')
+        .setDescription('View, browse, and manage Minecraft servers')
+        .addSubcommand((sub) => sub
+        .setName('browse')
+        .setDescription('Interactive server browser for Victus Cloud Minecraft servers')
+        .addStringOption((opt) => opt.setName('search').setDescription('Search servers by name, description, or IP'))
+        .addStringOption((opt) => opt.setName('category').setDescription('Filter by gameplay category').setAutocomplete(true))
+        .addStringOption((opt) => opt
+        .setName('sort')
+        .setDescription('Sort results')
+        .addChoices({ name: '👥 Most Players (Default)', value: 'players_desc' }, { name: '👤 Least Players', value: 'players_asc' }, { name: '⚡ Highest Uptime', value: 'uptime_desc' }, { name: '✨ Newest Added', value: 'newest' }, { name: '🔤 Alphabetical (A-Z)', value: 'alpha' }))
+        .addStringOption((opt) => opt
+        .setName('status')
+        .setDescription('Status filter')
+        .addChoices({ name: '🌐 All Statuses', value: 'all' }, { name: '🟢 Online Only', value: 'online_only' }))
+        .addStringOption((opt) => opt
+        .setName('tier')
+        .setDescription('Hosting tier filter')
+        .addChoices({ name: '🌐 All Tiers', value: 'all' }, { name: '⚡ Free Tier', value: 'free' }, { name: '💎 Paid Cloud', value: 'paid' }))
+        .addBooleanOption((opt) => opt.setName('ephemeral').setDescription('Make response ephemeral')))
         .addSubcommand((sub) => sub
         .setName('list')
         .setDescription('List your Victus Cloud servers'))
@@ -35,9 +54,13 @@ export const serversCommand = {
         .setDescription('Power action')
         .setRequired(true)
         .setChoices({ name: 'Start', value: 'start' }, { name: 'Stop', value: 'stop' }, { name: 'Restart', value: 'restart' }, { name: 'Kill', value: 'kill' }))),
-    requiresLink: true,
-    cooldown: 5,
+    requiresLink: false,
+    cooldown: 3,
     async autocomplete(interaction) {
+        const sub = interaction.options.getSubcommand(false);
+        if (sub === 'browse' || interaction.options.getFocused(true).name === 'category') {
+            return browseCommand.autocomplete?.(interaction);
+        }
         const focused = interaction.options.getFocused().toLowerCase();
         try {
             const linked = await supabase.getLinkedAccount(interaction.user.id);
@@ -56,10 +79,13 @@ export const serversCommand = {
         }
     },
     async execute(interaction) {
+        const subcommand = interaction.options.getSubcommand();
+        if (subcommand === 'browse') {
+            return browseCommand.execute(interaction);
+        }
         const linked = await requireLinkedAccount(interaction);
         if (!linked)
             return;
-        const subcommand = interaction.options.getSubcommand();
         await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
         try {
             switch (subcommand) {

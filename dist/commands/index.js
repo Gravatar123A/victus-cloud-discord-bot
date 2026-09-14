@@ -60,6 +60,9 @@ import { staffaiCommand } from './staffai.js';
 import { pingCommand } from './ping.js';
 import { pingAdminCommand } from './ping-admin.js';
 import { antinukeCommand } from './antinuke.js';
+import { browseCommand } from './browse.js';
+import { statusCommand } from './status.js';
+import { setupCommand } from './setup.js';
 // Viral Expansion Engine commands
 import { ownerStatsCommand } from './ownerStats.js';
 import { hostPromoCommand, freeServerCommand } from './hostPromo.js';
@@ -163,6 +166,9 @@ const allCommands = [
     claimAirDropCommand,
     smpNetworkCommand,
     warCommand,
+    browseCommand,
+    statusCommand,
+    setupCommand,
     ...musicCommands,
 ];
 for (const command of allCommands) {
@@ -188,6 +194,8 @@ export const GLOBAL_COMMAND_NAMES = [
     'link',
     'unlink',
     'servers',
+    'browse',
+    'status',
     'services',
     'invoices',
     'ask',

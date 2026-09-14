@@ -17,6 +17,7 @@ import { restoreVoiceXpSessions } from './voiceStateUpdate.js';
 import { syncEntitlementRoles } from '../services/entitlementRoles.js';
 import { leaderboardService } from '../services/leaderboardService.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
+import { forumDirectoryService } from '../services/forumDirectoryService.js';
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
 /**
@@ -294,6 +295,8 @@ export const readyEvent = {
         logger.info('Live Leaderboard 1-minute auto-update scheduler started');
         // Viral Expansion Engine initialization
         viralExpansionService.init(client);
+        // Live Minecraft Server Discovery Forum Directory initialization
+        forumDirectoryService.start(client);
         await processNotificationQueue(client);
         setInterval(() => {
             processNotificationQueue(client).catch((error) => logger.error('DM queue interval failed:', error));

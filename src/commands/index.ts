@@ -62,6 +62,9 @@ import { staffaiCommand } from './staffai.js';
 import { pingCommand } from './ping.js';
 import { pingAdminCommand } from './ping-admin.js';
 import { antinukeCommand } from './antinuke.js';
+import { browseCommand } from './browse.js';
+import { statusCommand } from './status.js';
+import { setupCommand } from './setup.js';
 
 
 
@@ -170,6 +173,9 @@ const allCommands: Command[] = [
     claimAirDropCommand,
     smpNetworkCommand,
     warCommand,
+    browseCommand,
+    statusCommand,
+    setupCommand,
     ...musicCommands,
 ];
 
@@ -199,6 +205,8 @@ export const GLOBAL_COMMAND_NAMES = [
     'link',
     'unlink',
     'servers',
+    'browse',
+    'status',
     'services',
     'invoices',
     'ask',
