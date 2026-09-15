@@ -125,7 +125,7 @@ export class ForumDirectoryService {
      * Compute a state hash to detect if server details changed
      */
     computeServerHash(server) {
-        return `${server.status}:${server.currentPlayerCount}:${server.maxPlayers}:${server.category}:${server.serverName}:${server.ip}:${server.description.slice(0, 50)}`;
+        return `${server.status}:${server.currentPlayerCount}:${server.maxPlayers}:${server.category}:${server.serverName}:${server.ip}:${server.ratingAvg}:${server.ratingCount}:${server.description.slice(0, 50)}`;
     }
     /**
      * Queue a server for sync to prevent hammering Discord API
@@ -280,7 +280,20 @@ export class ForumDirectoryService {
         this.isSyncing = true;
         try {
             const servers = await discoveryService.fetchServers();
-            for (const server of servers) {
+            const sorted = [...servers].sort((a, b) => {
+                if (a.featured !== b.featured)
+                    return a.featured ? -1 : 1;
+                if (a.status === 'online' && b.status !== 'online')
+                    return -1;
+                if (a.status !== 'online' && b.status === 'online')
+                    return 1;
+                if (b.ratingAvg !== a.ratingAvg)
+                    return b.ratingAvg - a.ratingAvg;
+                if (b.ratingCount !== a.ratingCount)
+                    return b.ratingCount - a.ratingCount;
+                return b.currentPlayerCount - a.currentPlayerCount;
+            });
+            for (const server of sorted) {
                 const hash = this.computeServerHash(server);
                 // If never synced or hash changed, queue update
                 if (!server.forumThreadId || server.lastLiveUpdateHash !== hash) {
@@ -322,6 +335,20 @@ export class ForumDirectoryService {
         // Force fetch discovery servers
         const servers = await discoveryService.fetchServers(true);
         const active = servers.filter((s) => s.discoveryEnabled && !s.suspended);
+        // Prioritize online servers and top rated servers first in queue
+        active.sort((a, b) => {
+            if (a.featured !== b.featured)
+                return a.featured ? -1 : 1;
+            if (a.status === 'online' && b.status !== 'online')
+                return -1;
+            if (a.status !== 'online' && b.status === 'online')
+                return 1;
+            if (b.ratingAvg !== a.ratingAvg)
+                return b.ratingAvg - a.ratingAvg;
+            if (b.ratingCount !== a.ratingCount)
+                return b.ratingCount - a.ratingCount;
+            return b.currentPlayerCount - a.currentPlayerCount;
+        });
         for (const s of active) {
             // Invalidate hash to force re-render
             s.lastLiveUpdateHash = undefined;

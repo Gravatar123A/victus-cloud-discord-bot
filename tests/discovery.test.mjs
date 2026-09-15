@@ -87,13 +87,30 @@ async function runTests() {
     }
     console.log(`  ✔ Status filter passed (${onlineResult.totalItems} online servers)`);
 
+    // Default sort: rating_desc (Top Rated + Online priority)
+    const defaultSortResult = await discoveryService.getFilteredServers({ pageSize: 10 });
+    let seenOffline = false;
+    for (const s of defaultSortResult.items) {
+        if (s.status !== 'online') {
+            seenOffline = true;
+        } else if (seenOffline) {
+            assert.fail('Online servers must always appear before offline servers');
+        }
+    }
+    console.log('  ✔ Online priority in default sort verified');
+
     // Sort by players descending
-    const sortedResult = await discoveryService.getFilteredServers({ sort: 'players_desc', limit: 10 });
+    const sortedResult = await discoveryService.getFilteredServers({ sort: 'players_desc', pageSize: 10 });
+    let seenOfflineInPlayers = false;
     for (let i = 0; i < sortedResult.items.length - 1; i++) {
-        assert.ok(
-            sortedResult.items[i].currentPlayerCount >= sortedResult.items[i + 1].currentPlayerCount,
-            'Players desc sort should be in descending order'
-        );
+        const cur = sortedResult.items[i];
+        const next = sortedResult.items[i + 1];
+        if (cur.status === 'online' && next.status === 'online') {
+            assert.ok(
+                cur.currentPlayerCount >= next.currentPlayerCount,
+                'Players desc sort should be in descending order among online servers'
+            );
+        }
     }
     console.log('  ✔ Sort by players descending verified');
 

@@ -21,7 +21,7 @@ export function createBrowserSession(userId, initial = {}) {
         page: initial.page || 1,
         search: initial.search,
         category: initial.category,
-        sort: initial.sort || 'players_desc',
+        sort: initial.sort || 'rating_desc',
         status: initial.status || 'all',
         tier: initial.tier || 'all',
         expiresAt: Date.now() + 15 * 60 * 1000,
@@ -48,7 +48,7 @@ export const browseCommand = {
         .addStringOption((opt) => opt
         .setName('sort')
         .setDescription('Sort results')
-        .addChoices({ name: '👥 Most Players (Default)', value: 'players_desc' }, { name: '👤 Least Players', value: 'players_asc' }, { name: '⚡ Highest Uptime', value: 'uptime_desc' }, { name: '✨ Newest Added', value: 'newest' }, { name: '🔤 Alphabetical (A-Z)', value: 'alpha' }))
+        .addChoices({ name: '⭐ Top Rated (Default)', value: 'rating_desc' }, { name: '👥 Most Players', value: 'players_desc' }, { name: '👤 Least Players', value: 'players_asc' }, { name: '⚡ Highest Uptime', value: 'uptime_desc' }, { name: '✨ Newest Added', value: 'newest' }, { name: '🔤 Alphabetical (A-Z)', value: 'alpha' }))
         .addStringOption((opt) => opt
         .setName('status')
         .setDescription('Status filter')
@@ -74,7 +74,7 @@ export const browseCommand = {
         const isEphemeral = interaction.options.getBoolean('ephemeral') ?? false;
         const search = interaction.options.getString('search')?.trim();
         const category = interaction.options.getString('category')?.trim();
-        const sort = interaction.options.getString('sort') || 'players_desc';
+        const sort = interaction.options.getString('sort') || 'rating_desc';
         const status = interaction.options.getString('status') || 'all';
         const tier = interaction.options.getString('tier') || 'all';
         const flags = ComponentsV2.IS_COMPONENTS_V2 | (isEphemeral ? MessageFlags.Ephemeral : 0);

@@ -33,7 +33,8 @@ export const serversCommand: Command = {
                         .setName('sort')
                         .setDescription('Sort results')
                         .addChoices(
-                            { name: '👥 Most Players (Default)', value: 'players_desc' },
+                            { name: '⭐ Top Rated (Default)', value: 'rating_desc' },
+                            { name: '👥 Most Players', value: 'players_desc' },
                             { name: '👤 Least Players', value: 'players_asc' },
                             { name: '⚡ Highest Uptime', value: 'uptime_desc' },
                             { name: '✨ Newest Added', value: 'newest' },

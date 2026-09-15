@@ -54,7 +54,7 @@ export interface DiscoveredServer {
 export interface ServerFilterOptions {
     search?: string;
     category?: string;
-    sort?: 'players_desc' | 'players_asc' | 'newest' | 'oldest' | 'alpha' | 'uptime_desc';
+    sort?: 'rating_desc' | 'players_desc' | 'players_asc' | 'newest' | 'oldest' | 'alpha' | 'uptime_desc';
     status?: 'online_only' | 'all';
     tier?: 'all' | 'free' | 'paid';
     page?: number;
@@ -170,6 +170,16 @@ export class DiscoveryService {
             iconUrl = categoryMeta.icon;
         }
 
+        const rawRating = raw.rating_avg ?? raw.ratingAvg ?? raw.rating ?? raw.stars;
+        const parsedRatingAvg = typeof rawRating === 'number'
+            ? rawRating
+            : (parseFloat(String(rawRating ?? 0)) || 0);
+
+        const rawCount = raw.rating_count ?? raw.ratingCount ?? raw.ratings_count ?? raw.reviews_count ?? (Array.isArray(raw.ratings) ? raw.ratings.length : undefined);
+        const parsedRatingCount = typeof rawCount === 'number'
+            ? rawCount
+            : (parseInt(String(rawCount ?? 0), 10) || 0);
+
         return {
             serverId,
             serverName,
@@ -201,8 +211,8 @@ export class DiscoveryService {
             bannerImageUrl: raw.banner_image_url || raw.bannerUrl || null,
             featured: Boolean(raw.featured),
             boostLevel: Number(raw.boost_level || 0),
-            ratingAvg: Number(raw.rating_avg || 0),
-            ratingCount: Number(raw.rating_count || 0),
+            ratingAvg: Number(parsedRatingAvg.toFixed(1)),
+            ratingCount: Math.max(0, parsedRatingCount),
             whitelist: Boolean(raw.whitelist),
             suspended: Boolean(raw.suspended),
             discoveryEnabled: raw.discovery_enabled !== false,
@@ -405,30 +415,67 @@ export class DiscoveryService {
             );
         }
 
-        // Sorting
-        const sort = options.sort || 'players_desc';
+        // Sorting: default to 'rating_desc' (highest rated & online prioritized)
+        const sort = options.sort || 'rating_desc';
         list.sort((a, b) => {
             // Featured servers always appear at the top
             if (a.featured !== b.featured) return a.featured ? -1 : 1;
 
+            // Universal online priority: online servers always get higher priority at the top
+            if (a.status === 'online' && b.status !== 'online') return -1;
+            if (a.status !== 'online' && b.status === 'online') return 1;
+
             switch (sort) {
-                case 'players_desc':
-                    if (a.status === 'online' && b.status !== 'online') return -1;
-                    if (a.status !== 'online' && b.status === 'online') return 1;
+                case 'rating_desc':
+                    // Highest rating average first
+                    if (b.ratingAvg !== a.ratingAvg) {
+                        return b.ratingAvg - a.ratingAvg;
+                    }
+                    // More reviews/ratings first
+                    if (b.ratingCount !== a.ratingCount) {
+                        return b.ratingCount - a.ratingCount;
+                    }
+                    // Highest player count next
                     if (b.currentPlayerCount !== a.currentPlayerCount) {
                         return b.currentPlayerCount - a.currentPlayerCount;
                     }
+                    // Boost level
+                    if (b.boostLevel !== a.boostLevel) {
+                        return b.boostLevel - a.boostLevel;
+                    }
+                    // Uptime reliability
+                    return b.uptimePercent.last7d - a.uptimePercent.last7d;
+
+                case 'players_desc':
+                    if (b.currentPlayerCount !== a.currentPlayerCount) {
+                        return b.currentPlayerCount - a.currentPlayerCount;
+                    }
+                    if (b.ratingAvg !== a.ratingAvg) {
+                        return b.ratingAvg - a.ratingAvg;
+                    }
+                    if (b.ratingCount !== a.ratingCount) {
+                        return b.ratingCount - a.ratingCount;
+                    }
                     return b.boostLevel - a.boostLevel;
+
                 case 'players_asc':
                     return a.currentPlayerCount - b.currentPlayerCount;
+
                 case 'newest':
                     return (b.createdAt || '').localeCompare(a.createdAt || '');
+
                 case 'oldest':
                     return (a.createdAt || '').localeCompare(b.createdAt || '');
+
                 case 'alpha':
                     return a.serverName.localeCompare(b.serverName);
+
                 case 'uptime_desc':
-                    return b.uptimePercent.last7d - a.uptimePercent.last7d;
+                    if (b.uptimePercent.last7d !== a.uptimePercent.last7d) {
+                        return b.uptimePercent.last7d - a.uptimePercent.last7d;
+                    }
+                    return b.ratingAvg - a.ratingAvg;
+
                 default:
                     return 0;
             }
@@ -466,16 +513,19 @@ export class DiscoveryService {
                 s.ip.toLowerCase().includes(clean)
             );
 
-        // Sort: online first, highest player count first
+        // Sort: online first, highest rating first, then highest player count
         matches.sort((a, b) => {
             if (a.status === 'online' && b.status !== 'online') return -1;
             if (a.status !== 'online' && b.status === 'online') return 1;
+            if (b.ratingAvg !== a.ratingAvg) return b.ratingAvg - a.ratingAvg;
+            if (b.ratingCount !== a.ratingCount) return b.ratingCount - a.ratingCount;
             return b.currentPlayerCount - a.currentPlayerCount;
         });
 
         return matches.slice(0, 25).map((s) => {
             const statusDot = s.status === 'online' ? '🟢' : '🔴';
-            const info = `${statusDot} ${s.serverName} (${s.currentPlayerCount}/${s.maxPlayers} • ${s.categoryLabel})`;
+            const ratingPart = s.ratingCount > 0 ? ` • ⭐ ${s.ratingAvg.toFixed(1)}` : '';
+            const info = `${statusDot} ${s.serverName} (${s.currentPlayerCount}/${s.maxPlayers} • ${s.categoryLabel}${ratingPart})`;
             const truncatedName = info.length > 100 ? `${info.slice(0, 97)}...` : info;
             return {
                 name: truncatedName,
@@ -517,6 +567,15 @@ export class DiscoveryService {
         if (matches.length === 1) {
             return { exact: matches[0], matches };
         }
+
+        // Sort disambiguation matches: online priority & highest rating first
+        matches.sort((a, b) => {
+            if (a.status === 'online' && b.status !== 'online') return -1;
+            if (a.status !== 'online' && b.status === 'online') return 1;
+            if (b.ratingAvg !== a.ratingAvg) return b.ratingAvg - a.ratingAvg;
+            if (b.ratingCount !== a.ratingCount) return b.ratingCount - a.ratingCount;
+            return b.currentPlayerCount - a.currentPlayerCount;
+        });
 
         return { exact: null, matches };
     }

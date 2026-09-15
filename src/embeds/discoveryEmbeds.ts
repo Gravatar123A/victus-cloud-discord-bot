@@ -17,7 +17,7 @@ export interface BrowserSessionState {
     token: string;
     search?: string;
     category?: string;
-    sort?: 'players_desc' | 'players_asc' | 'newest' | 'oldest' | 'alpha' | 'uptime_desc';
+    sort?: 'rating_desc' | 'players_desc' | 'players_asc' | 'newest' | 'oldest' | 'alpha' | 'uptime_desc';
     status?: 'online_only' | 'all';
     tier?: 'all' | 'free' | 'paid';
     page: number;
@@ -87,10 +87,11 @@ export class DiscoveryEmbeds {
 
                 const tierBadge = server.planTier === 'paid' ? '💎 Premium' : '⚡ Free';
                 const featuredBadge = server.featured ? '⭐ Featured • ' : '';
+                const ratingBadge = server.ratingCount > 0 ? ` • ⭐ \`${server.ratingAvg.toFixed(1)}\` (${server.ratingCount})` : '';
 
                 const content =
                     `**${statusMeta.dot} ${server.serverName}**\n` +
-                    `-# ${featuredBadge}👥 \`${server.currentPlayerCount}/${server.maxPlayers}\` • 🏷️ ${server.categoryLabel} • ${tierBadge} • ⚡ \`${server.uptimePercent.last7d}%\`\n` +
+                    `-# ${featuredBadge}👥 \`${server.currentPlayerCount}/${server.maxPlayers}\` • 🏷️ ${server.categoryLabel} • ${tierBadge} • ⚡ \`${server.uptimePercent.last7d}%\`${ratingBadge}\n` +
                     `${desc}\n` +
                     `-# 🔗 \`${server.ip}\``;
 
@@ -142,11 +143,17 @@ export class DiscoveryEmbeds {
             .setPlaceholder('Sort servers by...')
             .addOptions(
                 new StringSelectMenuOptionBuilder()
-                    .setLabel('Most Players (Default)')
+                    .setLabel('Top Rated (Default)')
+                    .setValue('rating_desc')
+                    .setDescription('Highest rated community servers with online priority')
+                    .setEmoji('⭐')
+                    .setDefault(!state.sort || state.sort === 'rating_desc'),
+                new StringSelectMenuOptionBuilder()
+                    .setLabel('Most Players')
                     .setValue('players_desc')
                     .setDescription('Servers with highest online player count first')
                     .setEmoji('👥')
-                    .setDefault(!state.sort || state.sort === 'players_desc'),
+                    .setDefault(state.sort === 'players_desc'),
                 new StringSelectMenuOptionBuilder()
                     .setLabel('Least Players')
                     .setValue('players_asc')
@@ -250,8 +257,13 @@ export class DiscoveryEmbeds {
             ? `<t:${Math.floor(new Date(server.createdAt).getTime() / 1000)}:D> (<t:${Math.floor(new Date(server.createdAt).getTime() / 1000)}:R>)`
             : 'Long-standing community node';
 
+        const ratingText = server.ratingCount > 0
+            ? `\`${server.ratingAvg.toFixed(1)} / 5.0\` (${server.ratingCount} ${server.ratingCount === 1 ? 'review' : 'reviews'})`
+            : '*Unrated* (Be the first to rate!)';
+
         const telemetryText =
             `### 📊 Live Telemetry & Metrics\n\n` +
+            `› ⭐ **Community Rating:** ${ratingText}\n` +
             `› 👥 **Active Players:** \`${server.currentPlayerCount} / ${server.maxPlayers}\` live\n` +
             `› 📈 **Activity Trends:** \`${server.averagePlayerCount.last24h} avg (24h)\` • \`${server.averagePlayerCount.last7d} avg (7d)\`\n` +
             `› ⚡ **Uptime Reliability:** \`${server.uptimePercent.last7d}%\` (7-day) • \`${server.uptimePercent.last30d}%\` (30-day)\n` +
