@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 type LocalBotSettings = {
     guilds?: Record<string, {
         ai_channel_id?: string | null;
+        suggestion_channel_id?: string | null;
     }>;
 };
 
@@ -43,6 +44,25 @@ class LocalSettingsService {
             return true;
         } catch (error) {
             logger.error('Failed to write local bot settings fallback:', error);
+            return false;
+        }
+    }
+
+    async getSuggestionChannelId(guildId: string): Promise<string | null> {
+        const settings = await readSettings();
+        return settings.guilds?.[guildId]?.suggestion_channel_id || null;
+    }
+
+    async setSuggestionChannelId(guildId: string, channelId: string | null): Promise<boolean> {
+        try {
+            const settings = await readSettings();
+            settings.guilds ||= {};
+            settings.guilds[guildId] ||= {};
+            settings.guilds[guildId].suggestion_channel_id = channelId;
+            await writeSettings(settings);
+            return true;
+        } catch (error) {
+            logger.error('Failed to write local suggestion channel fallback:', error);
             return false;
         }
     }

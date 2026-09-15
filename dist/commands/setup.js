@@ -33,6 +33,14 @@ export const setupCommand = {
         .setName('channel')
         .setDescription('Select the text channel for Minecraft chat & join/leave broadcasts')
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(true)))
+        .addSubcommand((sub) => sub
+        .setName('suggestion-forum')
+        .setDescription('Set the target Forum channel for user suggestions and auto-provision tags')
+        .addChannelOption((opt) => opt
+        .setName('channel')
+        .setDescription('Select the target Forum channel')
+        .addChannelTypes(ChannelType.GuildForum)
         .setRequired(true))),
     cooldown: 5,
     async execute(interaction) {
@@ -143,6 +151,25 @@ export const setupCommand = {
                         components: [container],
                         flags: ComponentsV2.IS_COMPONENTS_V2,
                     });
+                    break;
+                }
+                case 'suggestion-forum': {
+                    const channel = interaction.options.getChannel('channel', true);
+                    if (channel.type !== ChannelType.GuildForum) {
+                        const err = ComponentsV2.errorContainer('Invalid Channel Type', `Channel <#${channel.id}> is not a **Forum Channel**.`);
+                        await interaction.editReply({ components: [err], flags: ComponentsV2.IS_COMPONENTS_V2 });
+                        return;
+                    }
+                    const { suggestionService } = await import('../services/suggestionService.js');
+                    const { supabase } = await import('../services/supabase.js');
+                    await supabase.updateBotSettings(interaction.guild.id, {
+                        suggestion_channel_id: channel.id,
+                    });
+                    const tagMap = await suggestionService.reconcileForumTags(channel);
+                    const success = ComponentsV2.successContainer('Suggestions Forum Configured', `✅ Target forum channel set to <#${channel.id}>.\n\n` +
+                        `• **Auto-Provisioned Tags:** ${Object.keys(tagMap).length}/12 tags configured\n` +
+                        `• Members can now run \`/suggest\` anywhere to draft suggestions directly into this forum channel!`);
+                    await interaction.editReply({ components: [success], flags: ComponentsV2.IS_COMPONENTS_V2 });
                     break;
                 }
             }

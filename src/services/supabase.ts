@@ -581,9 +581,11 @@ class SupabaseService {
             }
 
             const fallbackAiChannelId = await localSettings.getAiChannelId(guildId);
-            const resolvedSettings = (!fallbackAiChannelId && data) ? (data as BotSettings) : {
+            const fallbackSuggestionChannelId = await localSettings.getSuggestionChannelId(guildId);
+            const resolvedSettings = {
                 ...(data || { guild_id: guildId }),
                 ai_channel_id: data?.ai_channel_id || fallbackAiChannelId,
+                suggestion_channel_id: data?.suggestion_channel_id || fallbackSuggestionChannelId,
             } as BotSettings;
 
             this.botSettingsCache.set(guildId, {
@@ -607,11 +609,15 @@ class SupabaseService {
         // Invalidate in-memory cache
         this.botSettingsCache.delete(guildId);
 
+        if ('suggestion_channel_id' in settings) {
+            await localSettings.setSuggestionChannelId(guildId, settings.suggestion_channel_id ?? null);
+        }
+
         if (!this.isAvailable()) {
             if ('ai_channel_id' in settings) {
                 await localSettings.setAiChannelId(guildId, settings.ai_channel_id ?? null);
             }
-            return false;
+            return 'suggestion_channel_id' in settings;
         }
 
         const { error } = await this.client

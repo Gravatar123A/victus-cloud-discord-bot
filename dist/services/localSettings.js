@@ -37,5 +37,23 @@ class LocalSettingsService {
             return false;
         }
     }
+    async getSuggestionChannelId(guildId) {
+        const settings = await readSettings();
+        return settings.guilds?.[guildId]?.suggestion_channel_id || null;
+    }
+    async setSuggestionChannelId(guildId, channelId) {
+        try {
+            const settings = await readSettings();
+            settings.guilds ||= {};
+            settings.guilds[guildId] ||= {};
+            settings.guilds[guildId].suggestion_channel_id = channelId;
+            await writeSettings(settings);
+            return true;
+        }
+        catch (error) {
+            logger.error('Failed to write local suggestion channel fallback:', error);
+            return false;
+        }
+    }
 }
 export const localSettings = new LocalSettingsService();

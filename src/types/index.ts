@@ -151,17 +151,32 @@ export interface EmbedSettings {
     updated_at: string;
 }
 
+export type SuggestionCategoryKey =
+    | 'control_panel'
+    | 'website'
+    | 'discord_server'
+    | 'discord_bot'
+    | 'mc_free'
+    | 'mc_premium'
+    | 'bot_hosting'
+    | 'general';
+
 export interface Suggestion {
     id: number;
     guild_id: string;
     channel_id: string;
+    thread_id?: string;
     message_id: string;
     user_id: string;
     author_tag: string;
     title: string;
     content: string;
+    impact?: string;
+    categories?: string[];
     status: 'pending' | 'approved' | 'denied' | 'implemented';
     locked: boolean;
+    staff_reviewer_id?: string;
+    staff_response?: string;
     created_at: string;
     updated_at: string;
 }
