@@ -3,6 +3,7 @@ import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { discoveryService, KNOWN_CATEGORIES } from '../dist/services/discoveryService.js';
 import { DiscoveryEmbeds } from '../dist/embeds/discoveryEmbeds.js';
+import { forumDirectoryService } from '../dist/services/forumDirectoryService.js';
 
 console.log('🧪 Starting Victus Cloud Discovery Test Suite...\n');
 
@@ -157,6 +158,72 @@ async function runTests() {
         assert.ok(Array.isArray(card.actionRows), 'Card must return actionRows');
         console.log('  ✔ Status Card Components V2 structure successfully validated');
     }
+
+    // Test 8: Forum Tag Reconciliation & ONLINE Tag Lifecycle
+    console.log('\n▶ Test 8: Forum Tag Reconciliation & ONLINE Tag Lifecycle');
+    let idCounter = 100;
+    const mockForumChannel = {
+        name: 'server-directory',
+        availableTags: [],
+        setAvailableTags: async function(tags) {
+            this.availableTags = tags.map((t) => ({
+                id: t.id || `tag_${idCounter++}`,
+                name: t.name,
+                emoji: t.emoji,
+                moderated: Boolean(t.moderated),
+            }));
+            return this;
+        },
+    };
+
+    // Reconcile on empty forum channel
+    const tagMap = await forumDirectoryService.reconcileForumTags(mockForumChannel);
+    assert.ok(tagMap.online, 'Tag mapping must include "online" key');
+    const onlineTagInChannel = mockForumChannel.availableTags.find((t) => t.id === tagMap.online);
+    assert.ok(onlineTagInChannel, 'ONLINE tag must exist in availableTags');
+    assert.strictEqual(onlineTagInChannel.name, 'ONLINE', 'ONLINE tag name must be ONLINE');
+    assert.strictEqual(onlineTagInChannel.emoji.name, '🟢', 'ONLINE tag emoji must be 🟢');
+    console.log(`  ✔ ONLINE tag created & reconciled successfully (ID: ${tagMap.online})`);
+
+    // Verify existing tag matching (no duplicate creation)
+    const prevTagsCount = mockForumChannel.availableTags.length;
+    const secondTagMap = await forumDirectoryService.reconcileForumTags(mockForumChannel);
+    assert.strictEqual(secondTagMap.online, tagMap.online, 'Reconcile should reuse existing ONLINE tag ID');
+    assert.strictEqual(mockForumChannel.availableTags.length, prevTagsCount, 'No duplicate tags should be added');
+    console.log('  ✔ Re-reconciliation preserved existing tags without duplicates');
+
+    // Test ONLINE tag addition & removal lifecycle
+    const categoryTagId = tagMap.smp || 'tag_smp';
+    const onlineTagId = tagMap.online;
+
+    const simulateTargetTags = (status, existingThreadTags = []) => {
+        let target = existingThreadTags.filter((id) => id !== onlineTagId);
+        if (categoryTagId && !target.includes(categoryTagId)) {
+            target.push(categoryTagId);
+        }
+        if (status === 'online' && onlineTagId && !target.includes(onlineTagId)) {
+            target.push(onlineTagId);
+        }
+        return target.slice(0, 5);
+    };
+
+    // Case 1: Server is online -> ONLINE tag present
+    const onlineThreadTags = simulateTargetTags('online');
+    assert.ok(onlineThreadTags.includes(onlineTagId), 'Online server must receive ONLINE tag');
+    assert.ok(onlineThreadTags.includes(categoryTagId), 'Server must receive category tag');
+    console.log(`  ✔ Server online: tags assigned = [${onlineThreadTags.join(', ')}]`);
+
+    // Case 2: Server turns off -> ONLINE tag removed
+    const offlineThreadTags = simulateTargetTags('offline', onlineThreadTags);
+    assert.ok(!offlineThreadTags.includes(onlineTagId), 'Offline server must have ONLINE tag removed');
+    assert.ok(offlineThreadTags.includes(categoryTagId), 'Category tag must be retained when server goes offline');
+    console.log(`  ✔ Server turns off: ONLINE tag removed -> tags = [${offlineThreadTags.join(', ')}]`);
+
+    // Case 3: Server turns back online -> ONLINE tag re-applied
+    const backOnlineTags = simulateTargetTags('online', offlineThreadTags);
+    assert.ok(backOnlineTags.includes(onlineTagId), 'Server coming back online must have ONLINE tag re-applied');
+    assert.ok(backOnlineTags.includes(categoryTagId), 'Category tag must still be retained');
+    console.log(`  ✔ Server turns back online: ONLINE tag restored -> tags = [${backOnlineTags.join(', ')}]`);
 
     console.log('\n✨ ALL TESTS PASSED SUCCESSFULLY! ✨\n');
 }

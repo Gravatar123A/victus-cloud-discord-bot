@@ -56,9 +56,9 @@ export const setupCommand = {
                     // Trigger immediate sync
                     const res = await forumDirectoryService.resyncGuild(interaction.guild.id);
                     const success = ComponentsV2.successContainer('Forum Directory Configured', `✅ Successfully linked live discovery forum directory to <#${forumChannel.id}>!\n\n` +
-                        `• **Category Tags Reconciled:** ${Object.keys(tagMap).length} categories mapped\n` +
+                        `• **Category & Status Tags:** ${Object.keys(tagMap).length} tags mapped (including \`ONLINE\`)\n` +
                         `• **Synchronizing Servers:** ${res.total} active community nodes queued\n` +
-                        `• **Auto-Updater:** Paced updates will run automatically every 30–60 seconds per server.`);
+                        `• **Live Status Sync:** Automatically applies \`ONLINE\` tag to active servers and removes it when offline.`);
                     await interaction.editReply({ components: [success], flags: ComponentsV2.IS_COMPONENTS_V2 });
                     break;
                 }

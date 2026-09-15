@@ -74,13 +74,25 @@ export class ForumDirectoryService {
         return updated;
     }
     /**
-     * Auto-reconcile forum category tags without deleting existing tags
+     * Auto-reconcile forum category tags and ONLINE status tag without deleting existing tags
      */
     async reconcileForumTags(forumChannel) {
         const existingTags = [...forumChannel.availableTags];
         const tagMap = {};
         const tagsToAdd = [];
-        // Match existing tags first
+        // 1. Reconcile ONLINE status tag (highest priority so it is always present)
+        const existingOnlineTag = existingTags.find((t) => t.name.trim().toUpperCase() === 'ONLINE' || t.name.toLowerCase().includes('online'));
+        if (existingOnlineTag) {
+            tagMap['online'] = existingOnlineTag.id;
+        }
+        else {
+            tagsToAdd.push({
+                name: 'ONLINE',
+                emoji: { name: '🟢' },
+                moderated: false,
+            });
+        }
+        // 2. Match existing category tags
         for (const [catKey, meta] of Object.entries(KNOWN_CATEGORIES)) {
             const found = existingTags.find((t) => t.name.toLowerCase() === meta.label.toLowerCase() ||
                 t.name.toLowerCase() === catKey.toLowerCase() ||
@@ -100,20 +112,27 @@ export class ForumDirectoryService {
         if (tagsToAdd.length > 0 && existingTags.length < 20) {
             const allowedToAdd = tagsToAdd.slice(0, 20 - existingTags.length);
             try {
-                const updatedTags = await forumChannel.setAvailableTags([
+                const updatedChannel = await forumChannel.setAvailableTags([
                     ...existingTags,
                     ...allowedToAdd,
                 ]);
+                // Match online tag from updated available tags
+                if (!tagMap['online']) {
+                    const matchedOnline = updatedChannel.availableTags.find((t) => t.name.trim().toUpperCase() === 'ONLINE' || t.name.toLowerCase().includes('online'));
+                    if (matchedOnline)
+                        tagMap['online'] = matchedOnline.id;
+                }
+                // Match newly created category tags
                 for (const [catKey, meta] of Object.entries(KNOWN_CATEGORIES)) {
                     if (!tagMap[catKey]) {
-                        const matched = updatedTags.availableTags.find((t) => t.name.toLowerCase() === meta.label.toLowerCase() ||
+                        const matched = updatedChannel.availableTags.find((t) => t.name.toLowerCase() === meta.label.toLowerCase() ||
                             t.name.toLowerCase() === catKey.toLowerCase() ||
                             t.name.toLowerCase().includes(catKey.toLowerCase()));
                         if (matched)
                             tagMap[catKey] = matched.id;
                     }
                 }
-                logger.info(`🏷️ Reconciled forum tags for #${forumChannel.name}: added ${allowedToAdd.length} tags.`);
+                logger.info(`🏷️ Reconciled forum tags for #${forumChannel.name}: added ${allowedToAdd.length} tags (including ONLINE status tag).`);
             }
             catch (err) {
                 logger.warn(`Could not update forum tags for #${forumChannel.name}:`, err);
@@ -125,7 +144,7 @@ export class ForumDirectoryService {
      * Compute a state hash to detect if server details changed
      */
     computeServerHash(server) {
-        return `${server.status}:${server.currentPlayerCount}:${server.maxPlayers}:${server.category}:${server.serverName}:${server.ip}:${server.ratingAvg}:${server.ratingCount}:${server.description.slice(0, 50)}`;
+        return `v2:${server.status}:${server.currentPlayerCount}:${server.maxPlayers}:${server.category}:${server.serverName}:${server.ip}:${server.ratingAvg}:${server.ratingCount}:${server.description.slice(0, 50)}`;
     }
     /**
      * Queue a server for sync to prevent hammering Discord API
@@ -179,9 +198,31 @@ export class ForumDirectoryService {
                 const forumChannel = channel;
                 const statusDot = server.status === 'online' ? '🟢' : '🔴';
                 const threadTitle = `[${statusDot}] ${server.serverName}`.slice(0, 100);
-                // Check tag ID
-                const tagId = cfg.tagMapping[server.category] || null;
-                const appliedTags = tagId ? [tagId] : [];
+                // Auto-heal / fetch ONLINE tag ID in guild config
+                let onlineTagId = cfg.tagMapping['online'] || null;
+                if (!onlineTagId) {
+                    const existingOnlineTag = forumChannel.availableTags.find((t) => t.name.trim().toUpperCase() === 'ONLINE' || t.name.toLowerCase().includes('online'));
+                    if (existingOnlineTag) {
+                        onlineTagId = existingOnlineTag.id;
+                        cfg.tagMapping['online'] = onlineTagId;
+                        await this.saveConfig(guild.id, { tagMapping: cfg.tagMapping }).catch(() => { });
+                    }
+                    else if (forumChannel.availableTags.length < 20) {
+                        const updatedMap = await this.reconcileForumTags(forumChannel);
+                        onlineTagId = updatedMap['online'] || null;
+                        cfg.tagMapping = { ...cfg.tagMapping, ...updatedMap };
+                        await this.saveConfig(guild.id, { tagMapping: cfg.tagMapping }).catch(() => { });
+                    }
+                }
+                // Check category tag ID
+                const categoryTagId = cfg.tagMapping[server.category] || null;
+                // Tags for new threads: category tag + ONLINE tag (if currently online)
+                const appliedTags = [];
+                if (categoryTagId)
+                    appliedTags.push(categoryTagId);
+                if (server.status === 'online' && onlineTagId) {
+                    appliedTags.push(onlineTagId);
+                }
                 const { container, actionRows } = DiscoveryEmbeds.buildServerStatusCard(server);
                 const currentHash = this.computeServerHash(server);
                 // Case 1: Server has discovery enabled
@@ -194,20 +235,45 @@ export class ForumDirectoryService {
                             .catch(() => null);
                     }
                     if (existingThread) {
-                        // Thread exists — check if state changed
-                        if (server.lastLiveUpdateHash !== currentHash) {
+                        // Calculate target tags preserving any non-bot custom tags
+                        let targetTags = [];
+                        if (existingThread.appliedTags && existingThread.appliedTags.length > 0) {
+                            // Strip any existing online tag
+                            targetTags = existingThread.appliedTags.filter((id) => id !== onlineTagId);
+                            // Ensure category tag is included if mapped
+                            if (categoryTagId && !targetTags.includes(categoryTagId)) {
+                                targetTags.push(categoryTagId);
+                            }
+                            // Add ONLINE tag if currently online
+                            if (server.status === 'online' && onlineTagId && !targetTags.includes(onlineTagId)) {
+                                targetTags.push(onlineTagId);
+                            }
+                        }
+                        else {
+                            targetTags = [...appliedTags];
+                        }
+                        targetTags = targetTags.slice(0, 5);
+                        const currentTagsSorted = [...(existingThread.appliedTags || [])].sort().join(',');
+                        const targetTagsSorted = [...targetTags].sort().join(',');
+                        const tagsDiffer = currentTagsSorted !== targetTagsSorted;
+                        const nameDiffers = existingThread.name !== threadTitle;
+                        // Thread exists — check if state changed, tags need updating, or title changed
+                        if (server.lastLiveUpdateHash !== currentHash || tagsDiffer || nameDiffers) {
                             // 1. Unarchive if was archived
                             if (existingThread.archived) {
                                 await existingThread.setArchived(false).catch(() => { });
                             }
-                            // 2. Update thread title & tags if needed
-                            if (existingThread.name !== threadTitle) {
+                            // 2. Update thread title if needed
+                            if (nameDiffers) {
                                 await existingThread.setName(threadTitle).catch(() => { });
                             }
-                            if (appliedTags.length > 0 && existingThread.appliedTags.toString() !== appliedTags.toString()) {
-                                await existingThread.setAppliedTags(appliedTags).catch(() => { });
+                            // 3. Update applied tags (adds ONLINE tag when online, removes when turned off)
+                            if (tagsDiffer) {
+                                await existingThread.setAppliedTags(targetTags).catch((err) => {
+                                    logger.warn(`Failed to set applied tags on thread #${existingThread.name}:`, err);
+                                });
                             }
-                            // 3. Edit starter post in-place
+                            // 4. Edit starter post in-place
                             try {
                                 const starterMessage = await existingThread.fetchStarterMessage();
                                 if (starterMessage) {
@@ -223,39 +289,44 @@ export class ForumDirectoryService {
                             await discoveryService.updateForumMetadata(server.serverId, {
                                 forumGuildId: guild.id,
                                 forumThreadId: existingThread.id,
+                                assignedTagIds: targetTags,
                                 lastLiveUpdateHash: currentHash,
                             });
                         }
                     }
                     else {
-                        // Thread does not exist — create new thread!
+                        // Thread does not exist — create new thread with category & ONLINE tag!
                         const newThread = await forumChannel.threads.create({
                             name: threadTitle,
                             message: {
                                 components: [container, ...actionRows],
                                 flags: ComponentsV2.IS_COMPONENTS_V2,
                             },
-                            appliedTags,
+                            appliedTags: appliedTags.slice(0, 5),
                         });
                         const starterMessage = await newThread.fetchStarterMessage().catch(() => null);
                         await discoveryService.updateForumMetadata(server.serverId, {
                             forumGuildId: guild.id,
                             forumThreadId: newThread.id,
                             forumMessageId: starterMessage?.id ?? null,
-                            assignedTagIds: appliedTags,
+                            assignedTagIds: appliedTags.slice(0, 5),
                             lastLiveUpdateHash: currentHash,
                         });
                         logger.info(`✨ Created directory forum thread for server ${server.serverName} (#${newThread.name}).`);
                     }
                 }
                 else {
-                    // Case 2: Server disabled discovery or removed -> Archive thread!
+                    // Case 2: Server disabled discovery or removed -> Archive thread & remove ONLINE tag!
                     if (server.forumThreadId) {
                         const existingThread = await guild.channels
                             .fetch(server.forumThreadId)
                             .then((c) => (c?.isThread() ? c : null))
                             .catch(() => null);
                         if (existingThread && !existingThread.archived) {
+                            if (onlineTagId && existingThread.appliedTags.includes(onlineTagId)) {
+                                const remainingTags = existingThread.appliedTags.filter((id) => id !== onlineTagId);
+                                await existingThread.setAppliedTags(remainingTags).catch(() => { });
+                            }
                             await existingThread.send({
                                 content: `⚠️ **This server is no longer publicly listed in the Victus Cloud directory.**\nThis thread has been archived.`,
                             }).catch(() => { });
