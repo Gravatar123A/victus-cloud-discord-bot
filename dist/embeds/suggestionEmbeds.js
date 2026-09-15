@@ -1,4 +1,5 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, } from 'discord.js';
+import { ButtonStyle } from 'discord-api-types/v10';
 import { ComponentsV2 } from './componentsV2.js';
 import { SUGGESTION_CATEGORIES, } from '../services/suggestionService.js';
 export class SuggestionEmbeds {

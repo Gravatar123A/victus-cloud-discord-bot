@@ -1,7 +1,6 @@
 import {
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle,
     ContainerBuilder,
     StringSelectMenuBuilder,
     StringSelectMenuOptionBuilder,
@@ -9,6 +8,7 @@ import {
     SeparatorBuilder,
     MessageFlags,
 } from 'discord.js';
+import { ButtonStyle } from 'discord-api-types/v10';
 import { ComponentsV2 } from './componentsV2.js';
 import {
     SUGGESTION_CATEGORIES,
