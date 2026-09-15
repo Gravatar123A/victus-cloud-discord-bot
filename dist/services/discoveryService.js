@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { supabase } from './supabase.js';
 import { logger } from '../utils/logger.js';
+import { pingServerWithFallback, runWithConcurrency } from '../utils/minecraftPing.js';
 const LOCAL_STORE_PATH = join(process.cwd(), 'data', 'discovered-servers.json');
 const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 export const KNOWN_CATEGORIES = {
@@ -133,6 +134,7 @@ export class DiscoveryService {
             whitelist: Boolean(raw.whitelist),
             suspended: Boolean(raw.suspended),
             discoveryEnabled: raw.discovery_enabled !== false,
+            playerSample: existing?.playerSample || [],
             // Preserve Discord forum link state
             forumGuildId: existing?.forumGuildId ?? null,
             forumThreadId: existing?.forumThreadId ?? null,
@@ -268,6 +270,34 @@ export class DiscoveryService {
                             s.discoveryEnabled = false;
                         }
                     }
+                    // Real-time Minecraft Server List Ping (SLP) for all online servers
+                    const onlineServers = Array.from(this.servers.values()).filter((s) => s.discoveryEnabled && !s.suspended && s.status === 'online');
+                    if (onlineServers.length > 0) {
+                        let pingedOnlineCount = 0;
+                        let activePlayerSum = 0;
+                        await runWithConcurrency(onlineServers, 10, async (s) => {
+                            try {
+                                const pingRes = await pingServerWithFallback(s, 2500);
+                                if (pingRes && pingRes.online) {
+                                    s.currentPlayerCount = pingRes.playersOnline;
+                                    if (pingRes.playersMax > 0)
+                                        s.maxPlayers = pingRes.playersMax;
+                                    s.playerSample = pingRes.playerSample;
+                                    if (pingRes.versionName)
+                                        s.version = pingRes.versionName;
+                                    activePlayerSum += pingRes.playersOnline;
+                                    pingedOnlineCount++;
+                                }
+                                else {
+                                    s.currentPlayerCount = 0;
+                                }
+                            }
+                            catch {
+                                s.currentPlayerCount = 0;
+                            }
+                        });
+                        logger.info(`🎮 Real-time SLP ping completed: ${pingedOnlineCount}/${onlineServers.length} servers responding, ${activePlayerSum} active players online.`);
+                    }
                     this.lastFetchTime = now;
                     await this.persist();
                     logger.info(`✅ Synced discovery catalog: ${this.servers.size} total servers (${seenIds.size} active).`);
@@ -285,6 +315,37 @@ export class DiscoveryService {
             return Array.from(this.servers.values());
         })();
         return this.fetchPromise;
+    }
+    /**
+     * Perform an on-demand live SLP ping for a single server to get fresh real-time player counts
+     */
+    async refreshServerLiveStatus(serverId) {
+        await this.ensureLoaded();
+        const server = this.servers.get(serverId);
+        if (!server)
+            return null;
+        if (!server.discoveryEnabled || server.suspended) {
+            return server;
+        }
+        try {
+            const pingRes = await pingServerWithFallback(server, 2500);
+            if (pingRes && pingRes.online) {
+                server.status = 'online';
+                server.currentPlayerCount = pingRes.playersOnline;
+                if (pingRes.playersMax > 0)
+                    server.maxPlayers = pingRes.playersMax;
+                server.playerSample = pingRes.playerSample;
+                if (pingRes.versionName)
+                    server.version = pingRes.versionName;
+            }
+            else if (server.status === 'online') {
+                server.currentPlayerCount = 0;
+            }
+        }
+        catch {
+            // Keep existing state
+        }
+        return server;
     }
     /**
      * Get filtered and paginated servers for the /servers / /browse browser

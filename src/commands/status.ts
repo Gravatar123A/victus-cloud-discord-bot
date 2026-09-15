@@ -44,6 +44,7 @@ export const statusCommand: Command = {
         const { exact, matches } = await discoveryService.getServer(query);
 
         if (exact) {
+            await discoveryService.refreshServerLiveStatus(exact.serverId).catch(() => {});
             const { container, actionRows } = DiscoveryEmbeds.buildServerStatusCard(exact);
             await interaction.editReply({
                 components: [container, ...actionRows],
@@ -112,6 +113,7 @@ export const statusCommand: Command = {
             return;
         }
 
+        await discoveryService.refreshServerLiveStatus(exact.serverId).catch(() => {});
         const { container, actionRows } = DiscoveryEmbeds.buildServerStatusCard(exact);
         await interaction.update({
             components: [container, ...actionRows],

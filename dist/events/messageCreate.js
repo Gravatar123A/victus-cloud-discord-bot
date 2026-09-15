@@ -22,6 +22,7 @@ import { antigravityPipeline } from '../services/antigravityPipeline.js';
 import { createProcessingEmbed, createResultEmbeds } from '../embeds/antigravityEmbeds.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
 import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
+import { hubBridgeService } from '../services/hubBridgeService.js';
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
 const aiChannelCache = new Map();
@@ -181,6 +182,8 @@ export const messageCreateEvent = {
         // Mirror the public #general channel to the website public chat.
         // Fire-and-forget; the bridge self-guards against bot/webhook echo.
         void bridgeDiscordMessageToWeb(message);
+        // Mirror Discord chat messages in the linked hub channel to the Minecraft Main Hub.
+        void hubBridgeService.relayDiscordToMinecraft(message);
         if (message.author.bot)
             return;
         if (message.inGuild()) {

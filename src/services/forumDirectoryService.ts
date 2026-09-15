@@ -228,8 +228,15 @@ export class ForumDirectoryService {
     public async syncSingleServer(serverId: string): Promise<boolean> {
         if (!this.client) return false;
 
-        const { exact: server } = await discoveryService.getServer(serverId);
+        let { exact: server } = await discoveryService.getServer(serverId);
         if (!server) return false;
+
+        // Live SLP ping check if server is marked online
+        if (server.discoveryEnabled && !server.suspended && server.status === 'online') {
+            await discoveryService.refreshServerLiveStatus(serverId).catch(() => {});
+            const refreshed = await discoveryService.getServer(serverId);
+            if (refreshed.exact) server = refreshed.exact;
+        }
 
         // Find which guilds have forum directory enabled
         for (const guild of this.client.guilds.cache.values()) {

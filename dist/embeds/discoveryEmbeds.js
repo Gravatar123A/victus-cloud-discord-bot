@@ -184,9 +184,15 @@ export class DiscoveryEmbeds {
         const ratingText = server.ratingCount > 0
             ? `\`${server.ratingAvg.toFixed(1)} / 5.0\` (${server.ratingCount} ${server.ratingCount === 1 ? 'review' : 'reviews'})`
             : '*Unrated* (Be the first to rate!)';
+        let playersLine = `› 👥 **Active Players:** \`${server.currentPlayerCount} / ${server.maxPlayers}\` live`;
+        if (server.currentPlayerCount > 0 && server.playerSample && server.playerSample.length > 0) {
+            const sampleNames = server.playerSample.slice(0, 5).map((n) => `\`${n}\``).join(', ');
+            const extraCount = server.playerSample.length > 5 ? ` +${server.playerSample.length - 5} more` : '';
+            playersLine += `\n-# 🎮 Online now: ${sampleNames}${extraCount}`;
+        }
         const telemetryText = `### 📊 Live Telemetry & Metrics\n\n` +
             `› ⭐ **Community Rating:** ${ratingText}\n` +
-            `› 👥 **Active Players:** \`${server.currentPlayerCount} / ${server.maxPlayers}\` live\n` +
+            `${playersLine}\n` +
             `› 📈 **Activity Trends:** \`${server.averagePlayerCount.last24h} avg (24h)\` • \`${server.averagePlayerCount.last7d} avg (7d)\`\n` +
             `› ⚡ **Uptime Reliability:** \`${server.uptimePercent.last7d}%\` (7-day) • \`${server.uptimePercent.last30d}%\` (30-day)\n` +
             `› 📦 **Minecraft Engine:** \`${server.software || 'Paper'} ${server.version || '1.21.4'}\`\n` +

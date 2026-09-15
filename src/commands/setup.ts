@@ -3,12 +3,15 @@ import {
     ChannelType,
     PermissionFlagsBits,
     ForumChannel,
+    TextChannel,
+    NewsChannel,
     AttachmentBuilder,
     MessageFlags,
 } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { forumDirectoryService } from '../services/forumDirectoryService.js';
 import { discoveryService } from '../services/discoveryService.js';
+import { hubBridgeService } from '../services/hubBridgeService.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
 
@@ -43,6 +46,18 @@ export const setupCommand: Command = {
             sub
                 .setName('dump-json')
                 .setDescription('Export JSON dump of all currently discoverable servers (Section 0 check)')
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('hub-bridge')
+                .setDescription('Link a Discord channel to the Main Hub Minecraft server chat and join/leave bridge')
+                .addChannelOption((opt) =>
+                    opt
+                        .setName('channel')
+                        .setDescription('Select the text channel for Minecraft chat & join/leave broadcasts')
+                        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+                        .setRequired(true)
+                )
         ),
 
     cooldown: 5,
@@ -157,6 +172,46 @@ export const setupCommand: Command = {
                     await interaction.editReply({
                         components: [container],
                         files: [attachment],
+                        flags: ComponentsV2.IS_COMPONENTS_V2,
+                    });
+                    break;
+                }
+
+                case 'hub-bridge': {
+                    const channel = interaction.options.getChannel('channel', true);
+                    if (channel.type !== ChannelType.GuildText && channel.type !== ChannelType.GuildAnnouncement) {
+                        const err = ComponentsV2.errorContainer(
+                            'Invalid Channel Type',
+                            `Channel <#${channel.id}> is not a text or announcement channel. Please select a standard text channel.`
+                        );
+                        await interaction.editReply({ components: [err], flags: ComponentsV2.IS_COMPONENTS_V2 });
+                        return;
+                    }
+
+                    const { webhookUrl, hubConnected } = await hubBridgeService.setupChannel(
+                        interaction.guild,
+                        channel as TextChannel | NewsChannel
+                    );
+
+                    const container = ComponentsV2.baseContainer(ComponentsV2.Accents.success)
+                        .addTextDisplayComponents(
+                            ComponentsV2.text(
+                                `# 🌉 Main Hub Discord Bridge Connected\n\n` +
+                                `### 🔗 Channel Link Established\n\n` +
+                                `› **Linked Channel:** <#${channel.id}>\n` +
+                                `› **Minecraft Server:** \`Victus Main Hub (Lobby #344)\`\n` +
+                                `› **Bridge Status:** ${hubConnected ? '🟢 `ACTIVE & SYNCHRONIZED`' : '🟡 `CONFIGURED (PENDING HUB RELOAD)`'}\n` +
+                                `› **Player Avatar Webhook:** \`Configured (Victus Hub Bridge)\`\n\n` +
+                                `### ⚡ Active Features:\n` +
+                                `• **Minecraft -> Discord Chat:** Real-time messages with player skins and usernames\n` +
+                                `• **Discord -> Minecraft Chat:** Relayed instantly as \`[Discord] Author » Message\`\n` +
+                                `• **Join & Leave Logs:** \`📥 Player joined\` and \`📤 Player left\` notifications\n` +
+                                `• **In-game Command:** \`/hubdiscord status\` available to server operators`
+                            )
+                        );
+
+                    await interaction.editReply({
+                        components: [container],
                         flags: ComponentsV2.IS_COMPONENTS_V2,
                     });
                     break;
