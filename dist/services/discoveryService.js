@@ -232,7 +232,7 @@ export class DiscoveryService {
                     }
                 }
                 // 2. Fall back to Supabase Edge Function `community-servers`
-                if (rawList.length === 0) {
+                if (rawList.length === 0 && supabase.isAvailable()) {
                     const { data, error } = await supabase.client.functions.invoke('community-servers', {
                         method: 'GET',
                     });
@@ -240,7 +240,8 @@ export class DiscoveryService {
                         rawList = data.servers;
                     }
                     else if (error) {
-                        logger.warn('Supabase community-servers fetch error:', error);
+                        const msg = error instanceof Error ? error.message : String(error);
+                        logger.warn(`Supabase community-servers fetch failed: ${msg}`);
                     }
                 }
                 if (rawList.length > 0) {

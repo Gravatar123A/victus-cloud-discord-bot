@@ -17,6 +17,11 @@ export function cleanLogText(text: unknown): string {
     if (str.includes('504: Gateway Timeout') || str.includes('"message":"Gateway Timeout"')) {
         return 'Supabase 504: Gateway Timeout';
     }
+    if (str.includes('FunctionsHttpError') || str.includes('Edge Function returned a non-2xx status code')) {
+        const detailMatch = str.match(/status \d+\)?(?::\s*(\{.*\}|[^\n]+))?/i);
+        const detail = detailMatch ? ` (${detailMatch[0]})` : '';
+        return `Supabase Edge Function error${detail}`;
+    }
 
     return str;
 }

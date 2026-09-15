@@ -458,11 +458,15 @@ class SupabaseService {
      * Get all linked accounts (for startup role sync)
      */
     async getAllLinkedAccounts() {
+        if (!this.isAvailable())
+            return [];
         const { data, error } = await this.client
             .from('discord_linked_accounts')
             .select('discord_id, user_id');
         if (error) {
-            logger.error('Failed to get all linked accounts:', error);
+            if (error.code !== 'CIRCUIT_BREAKER_OPEN') {
+                logger.error('Failed to get all linked accounts:', error);
+            }
             return [];
         }
         return data || [];
@@ -816,12 +820,18 @@ class SupabaseService {
         // API can expose summed/legacy credit rows while the mutation route
         // operates on the active COINS row, which makes an absolute sync unsafe.
         const internalCoins = await this.getPaymenterInternalCoins(email);
+        if (!this.isAvailable()) {
+            return { coins: internalCoins ?? 0, credits: 0, found: internalCoins !== null };
+        }
         try {
             const { data, error } = await this.client.functions.invoke('admin-paymenter', {
                 body: { endpoint: 'credits.balance', email },
             });
             if (error) {
-                logger.warn(`getPaymenterBalances edge function failed: ${await describeFunctionError(error)}`);
+                const detail = await describeFunctionError(error);
+                if (!detail.includes('CIRCUIT_BREAKER_OPEN')) {
+                    logger.warn(`getPaymenterBalances edge function failed: ${detail}`);
+                }
             }
             else if (data && data.found) {
                 return {
@@ -1094,6 +1104,9 @@ class SupabaseService {
     async adjustPaymenterCredits(input) {
         if ((process.env.PAYMENTER_AUDIT_MODE === 'true' || process.env.PAYMENTER_BALANCE_FREEZE === 'true') && (input.mode === 'add' || input.mode === 'set')) {
             throw new Error('Paymenter balance increases are temporarily disabled while balances are audited');
+        }
+        if (!this.isAvailable()) {
+            throw new Error('Supabase circuit breaker is open. Origin database is currently unreachable.');
         }
         const { data, error } = await this.client.functions.invoke('admin-paymenter', {
             body: {
@@ -1480,6 +1493,9 @@ class SupabaseService {
      * Call Pterodactyl API through edge function
      */
     async pterodactylApi(endpoint, method = 'GET', body) {
+        if (!this.isAvailable()) {
+            throw new Error('Supabase circuit breaker is open. Origin database is currently unreachable.');
+        }
         let lastError = null;
         for (let attempt = 1; attempt <= 4; attempt++) {
             const { data, error } = await this.client.functions.invoke('admin-pterodactyl', {
@@ -1490,6 +1506,11 @@ class SupabaseService {
             lastError = error;
             const detail = await describeFunctionError(error);
             const rateLimited = /\b429\b|too many attempts|rate.?limit/i.test(detail);
+            const circuitOpen = /CIRCUIT_BREAKER_OPEN|unreachable/i.test(detail);
+            if (circuitOpen) {
+                logger.warn(`Pterodactyl API call deferred (${endpoint}): database circuit breaker is open`);
+                throw new Error('Supabase circuit breaker is open. Origin database is currently unreachable.');
+            }
             if (!rateLimited || attempt === 4) {
                 logger.error(`Pterodactyl API call failed (${endpoint}): ${detail}`);
                 throw error;
@@ -1504,12 +1525,16 @@ class SupabaseService {
      * Get all servers
      */
     async getServers() {
+        if (!this.isAvailable())
+            return [];
         try {
             const result = await this.pterodactylApi('servers');
             return result?.data || [];
         }
         catch (error) {
-            logger.error('Failed to get servers:', error);
+            if (!String(error?.message || '').includes('circuit breaker')) {
+                logger.error('Failed to get servers:', error);
+            }
             return [];
         }
     }
@@ -1538,12 +1563,16 @@ class SupabaseService {
      * Get Pterodactyl users
      */
     async getPterodactylUsers() {
+        if (!this.isAvailable())
+            return [];
         try {
             const result = await this.pterodactylApi('users');
             return result?.data || [];
         }
         catch (error) {
-            logger.error('Failed to get Pterodactyl users:', error);
+            if (!String(error?.message || '').includes('circuit breaker')) {
+                logger.error('Failed to get Pterodactyl users:', error);
+            }
             return [];
         }
     }
@@ -1606,12 +1635,16 @@ class SupabaseService {
      * Get nodes
      */
     async getNodes() {
+        if (!this.isAvailable())
+            return [];
         try {
             const result = await this.pterodactylApi('nodes');
             return result?.data || [];
         }
         catch (error) {
-            logger.error('Failed to get nodes:', error);
+            if (!String(error?.message || '').includes('circuit breaker')) {
+                logger.error('Failed to get nodes:', error);
+            }
             return [];
         }
     }
@@ -1622,11 +1655,19 @@ class SupabaseService {
      * Call Paymenter API through edge function
      */
     async paymenterApi(endpoint, method = 'GET', body) {
+        if (!this.isAvailable()) {
+            throw new Error('Supabase circuit breaker is open. Origin database is currently unreachable.');
+        }
         const { data, error } = await this.client.functions.invoke('admin-paymenter', {
             body: { endpoint, method, body },
         });
         if (error) {
-            logger.error(`Paymenter API call failed (${endpoint}): ${await describeFunctionError(error)}`);
+            const detail = await describeFunctionError(error);
+            if (/CIRCUIT_BREAKER_OPEN|unreachable/i.test(detail)) {
+                logger.warn(`Paymenter API call deferred (${endpoint}): database circuit breaker is open`);
+                throw new Error('Supabase circuit breaker is open. Origin database is currently unreachable.');
+            }
+            logger.error(`Paymenter API call failed (${endpoint}): ${detail}`);
             throw error;
         }
         return data;
@@ -1635,19 +1676,40 @@ class SupabaseService {
      * Get all orders
      */
     async getOrders() {
-        const result = await this.paymenterApi('orders');
-        return result?.data || [];
+        if (!this.isAvailable())
+            return [];
+        try {
+            const result = await this.paymenterApi('orders');
+            return result?.data || [];
+        }
+        catch {
+            return [];
+        }
     }
     /**
      * Get all invoices
      */
     async getInvoices() {
-        const result = await this.paymenterApi('invoices');
-        return result?.data || [];
+        if (!this.isAvailable())
+            return [];
+        try {
+            const result = await this.paymenterApi('invoices');
+            return result?.data || [];
+        }
+        catch {
+            return [];
+        }
     }
     async getPaymenterServices() {
-        const result = await this.paymenterApi('services');
-        return result?.data || [];
+        if (!this.isAvailable())
+            return [];
+        try {
+            const result = await this.paymenterApi('services');
+            return result?.data || [];
+        }
+        catch {
+            return [];
+        }
     }
     /**
      * Get the billing services (Paymenter) belonging to a user, by email.
@@ -1694,8 +1756,15 @@ class SupabaseService {
      * Get billing users
      */
     async getBillingUsers() {
-        const result = await this.paymenterApi('users');
-        return result?.data || [];
+        if (!this.isAvailable())
+            return [];
+        try {
+            const result = await this.paymenterApi('users');
+            return result?.data || [];
+        }
+        catch {
+            return [];
+        }
     }
     async getBillingUserByEmail(email) {
         if (!email)

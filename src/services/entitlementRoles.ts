@@ -96,6 +96,11 @@ export async function syncEntitlementRoles(client: Client, discordId?: string): 
         return 0;
     }
 
+    if (!supabase.isAvailable()) {
+        logger.warn('Entitlement role sync skipped: database is currently unreachable (circuit breaker open)');
+        return 0;
+    }
+
     const [records, panelUsers, panelServers, billingUsers, billingServices] = await Promise.all([
         loadRoleSyncRecords(),
         supabase.getPterodactylUsers(),
