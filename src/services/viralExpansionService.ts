@@ -241,8 +241,11 @@ export class ViralExpansionService {
                 .setStyle(ButtonStyle.Success)
         );
 
+        if (roleMention) {
+            await targetChannel.send({ content: roleMention }).catch(() => null);
+        }
+
         const sentMsg = await targetChannel.send({
-            content: roleMention ? roleMention : undefined,
             components: [container, btnRow],
             flags: ComponentsV2.IS_COMPONENTS_V2,
         }).catch(() => null);

@@ -423,17 +423,21 @@ export const suggestCommand: Command = {
                     0
                 );
 
-                // Create the forum thread/post
+                // Create the forum thread/post (Components V2 does not allow legacy content field)
                 const thread = await forumChannel.threads.create({
                     name: `💡 [Pending] ${title.slice(0, 80)}`,
                     autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
                     appliedTags: appliedTags.slice(0, 5),
                     message: {
-                        content: `💡 **New Suggestion from** <@${interaction.user.id}>! Join the discussion below or cast your vote with the buttons.`,
                         components: [initialCard, ...initialRows],
                         flags: V2,
                     },
                 });
+
+                // Send notification and ping author in the forum thread
+                await thread.send({
+                    content: `💡 **New Suggestion from** <@${interaction.user.id}>! Join the discussion below or cast your vote with the buttons.`,
+                }).catch(() => {});
 
                 // Fetch starter message
                 const starterMessage = await thread.fetchStarterMessage().catch(() => null);

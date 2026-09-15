@@ -648,7 +648,6 @@ export const embedCommand = {
             else if (action === 'test_preview') {
                 const previewPayload = buildFinalEmbedPayload(session);
                 await interaction.reply({
-                    content: '👁️ **Live Template Preview:**',
                     components: [previewPayload],
                     flags: V2 | EPH
                 });
