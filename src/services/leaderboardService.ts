@@ -400,6 +400,7 @@ class LeaderboardService {
         explicitView?: LeaderboardCategory,
         explicitPage?: number
     ): Promise<boolean> {
+        if (!supabase.isAvailable()) return false;
         try {
             const config = await this.getConfig(guildId);
             if (!config.channelId) return false;
@@ -430,8 +431,8 @@ class LeaderboardService {
                         });
                         return true;
                     }
-                } catch (editError) {
-                    logger.warn(`Failed to edit existing leaderboard message, will post a fresh one:`, editError);
+                } catch (fetchErr) {
+                    logger.debug(`Could not edit existing leaderboard message: ${fetchErr}`);
                 }
             }
 
@@ -451,7 +452,7 @@ class LeaderboardService {
 
             return true;
         } catch (error) {
-            logger.error(`Error updating leaderboard for guild ${guildId}:`, error);
+            logger.warn(`Error updating leaderboard for guild ${guildId}:`, error);
             return false;
         }
     }
@@ -460,6 +461,8 @@ class LeaderboardService {
      * Periodic 1-minute ticker: updates leaderboards in all configured guilds
      */
     async updateAllLeaderboards(client: Client): Promise<void> {
+        if (!supabase.isAvailable()) return;
+
         // Also check any guilds in client cache if not yet loaded
         for (const guild of client.guilds.cache.values()) {
             await this.getConfig(guild.id);
@@ -467,7 +470,7 @@ class LeaderboardService {
 
         for (const guildId of this.activeGuildIds) {
             await this.updateGuildLeaderboard(client, guildId).catch((err) => {
-                logger.error(`Failed 1-minute leaderboard update for guild ${guildId}:`, err);
+                logger.warn(`Failed 1-minute leaderboard update for guild ${guildId}:`, err);
             });
         }
     }

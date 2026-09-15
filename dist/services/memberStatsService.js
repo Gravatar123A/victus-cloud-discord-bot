@@ -140,16 +140,7 @@ class MemberStatsService {
                 plainObj[userId] = s;
             }
             const jsonStr = JSON.stringify(plainObj);
-            // 1. Save to Supabase custom_embeds
-            try {
-                await supabase.saveCustomEmbed(guildId, '_member_stats', {
-                    description: jsonStr,
-                });
-            }
-            catch (err) {
-                logger.warn(`Failed to save member stats to Supabase for ${guildId}:`, err);
-            }
-            // 2. Save to local disk fallback
+            // 1. Save to local disk first (guaranteed reliability)
             try {
                 const filePath = this.getFilePath(guildId);
                 await mkdir(dirname(filePath), { recursive: true });
@@ -157,6 +148,17 @@ class MemberStatsService {
             }
             catch (err) {
                 logger.warn(`Failed to save local member stats file for ${guildId}:`, err);
+            }
+            // 2. Best-effort save to Supabase custom_embeds if online
+            if (supabase.isAvailable()) {
+                try {
+                    await supabase.saveCustomEmbed(guildId, '_member_stats', {
+                        description: jsonStr,
+                    });
+                }
+                catch (err) {
+                    logger.debug(`Failed to save member stats to Supabase for ${guildId}:`, err);
+                }
             }
         }
     }

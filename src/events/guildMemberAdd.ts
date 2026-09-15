@@ -10,6 +10,7 @@ import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
 import { supabase } from '../services/supabase.js';
 import { getGuildInvites, setGuildInvites, type CachedInvite } from '../services/inviteCache.js';
+import { inviteService } from '../services/inviteService.js';
 import { syncEntitlementRoles } from '../services/entitlementRoles.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -128,6 +129,7 @@ export const guildMemberAddEvent: Event = {
         await handleInviteAttribution(member).catch((error) => {
             logger.error('Error during invite attribution:', error);
         });
+        inviteService.invalidateCache(member.guild.id);
 
         try {
             // Send welcome DM to new member

@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import type { Command } from '../types/index.js';
-import { supabase } from '../services/supabase.js';
+import { afkService } from '../services/afkService.js';
 import { logger } from '../utils/logger.js';
 
 export const afkCommand: Command = {
@@ -16,20 +16,9 @@ export const afkCommand: Command = {
         const reason = interaction.options.getString('reason') || 'AFK';
         const guildId = interaction.guildId!;
         const userId = interaction.user.id;
-        const timestamp = new Date().toISOString();
 
         try {
-            // Save AFK status to Supabase using custom_embeds table
-            // Storing: reason, timestamp, and an empty mentions array
-            const afkData = {
-                reason,
-                timestamp,
-                mentions: []
-            };
-
-            await supabase.saveCustomEmbed(guildId, `_afk_${userId}`, {
-                description: JSON.stringify(afkData)
-            });
+            await afkService.setAfk(guildId, userId, reason);
 
             const embed = new EmbedBuilder()
                 .setColor(0x2b2d31)

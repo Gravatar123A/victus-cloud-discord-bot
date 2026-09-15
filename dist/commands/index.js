@@ -56,6 +56,7 @@ import { currencyCommand } from './currency.js';
 import { pricingCommand } from './pricing.js';
 import { leaderboardCommand } from './leaderboard.js';
 import { levelChannelCommand } from './levelChannel.js';
+import { invitesCommand } from './invites.js';
 import { staffaiCommand } from './staffai.js';
 import { pingCommand } from './ping.js';
 import { pingAdminCommand } from './ping-admin.js';
@@ -140,6 +141,7 @@ const allCommands = [
     rankCommand,
     levelChannelCommand,
     leaderboardCommand,
+    invitesCommand,
     ownerStatsCommand,
     hostPromoCommand,
     freeServerCommand,

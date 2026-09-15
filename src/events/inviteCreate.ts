@@ -2,6 +2,7 @@ import { Events } from 'discord.js';
 import type { Invite } from 'discord.js';
 import type { Event } from '../types/index.js';
 import { upsertInvite } from '../services/inviteCache.js';
+import { inviteService } from '../services/inviteService.js';
 import { logger } from '../utils/logger.js';
 
 export const inviteCreateEvent: Event = {
@@ -13,6 +14,7 @@ export const inviteCreateEvent: Event = {
                 uses: invite.uses ?? 0,
                 inviterId: invite.inviterId ?? invite.inviter?.id ?? null,
             });
+            inviteService.invalidateCache(invite.guild.id);
         } catch (error) {
             logger.error('Error executing inviteCreate event:', error);
         }

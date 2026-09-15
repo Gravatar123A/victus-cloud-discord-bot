@@ -61,7 +61,7 @@ async function seedInviteCache(client: Client<true>): Promise<void> {
  */
 async function processInviteCredits(client: Client<true>): Promise<void> {
     if (!config.economy.invite.enabled) return;
-    if (inviteCreditsProcessing) return;
+    if (inviteCreditsProcessing || !supabase.isAvailable()) return;
     inviteCreditsProcessing = true;
 
     try {
@@ -185,7 +185,7 @@ function buildNotificationContainer(job: any): any {
 }
 
 async function processNotificationQueue(client: Client<true>) {
-    if (dmQueueProcessing) return;
+    if (dmQueueProcessing || !supabase.isAvailable()) return;
     dmQueueProcessing = true;
 
     try {
@@ -254,6 +254,7 @@ export const readyEvent: Event = {
         // pass repairs historical missed rewards; later passes recover from
         // transient billing/API failures without blocking Discord commands.
         const reconcileCoins = (reason: string) => {
+            if (!supabase.isAvailable()) return;
             supabase.reconcilePaymenterCoins(reason).catch((error) => {
                 logger.error(`Paymenter COINS reconciliation failed (${reason}):`, error);
             });

@@ -108,11 +108,23 @@ async function main() {
         }
     });
 
-    // Login
-    try {
-        await client.login(config.discord.token);
-    } catch (error) {
-        logger.error('Failed to login to Discord:', error);
+    // Login with exponential retry
+    let loggedIn = false;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+            await client.login(config.discord.token);
+            loggedIn = true;
+            break;
+        } catch (error) {
+            logger.error(`Failed to login to Discord (attempt ${attempt}/5):`, error);
+            if (attempt < 5) {
+                const waitSec = attempt * 3;
+                logger.info(`Retrying Discord login in ${waitSec}s...`);
+                await new Promise((resolve) => setTimeout(resolve, waitSec * 1000));
+            }
+        }
+    }
+    if (!loggedIn) {
         process.exit(1);
     }
 }

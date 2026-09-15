@@ -135,12 +135,12 @@ async function processOne(client: Client<true>): Promise<boolean> {
 }
 
 export async function processLevelUps(client: Client<true>): Promise<void> {
-    if (processing) return;
+    if (processing || !supabase.isAvailable()) return;
     processing = true;
     try {
         for (let i = 0; i < 25; i++) if (!(await processOne(client))) break;
     } catch (error) {
-        logger.error('Level-up worker cycle failed:', error);
+        logger.warn('Level-up worker cycle deferred:', error);
     } finally {
         processing = false;
     }

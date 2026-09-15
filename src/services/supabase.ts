@@ -112,14 +112,147 @@ class RobustWebSocket extends ws {
     }
 }
 
+// ============================================
+// Supabase Circuit Breaker & Resilient Fetch
+// ============================================
+
+let circuitOpenUntil = 0;
+let consecutiveFailures = 0;
+let lastFailureLogTime = 0;
+
+export function isSupabaseCircuitOpen(): boolean {
+    return Date.now() < circuitOpenUntil;
+}
+
+export function tripSupabaseCircuit(reason: string): void {
+    consecutiveFailures++;
+    const backoffSec = Math.min(120, 15 * Math.pow(2, Math.min(consecutiveFailures - 1, 3))); // 15s, 30s, 60s, 120s
+    circuitOpenUntil = Date.now() + backoffSec * 1000;
+    const now = Date.now();
+    if (now - lastFailureLogTime > 30_000) {
+        lastFailureLogTime = now;
+        logger.warn(`⚠️ [Supabase Circuit Breaker] Tripped (${reason}). Pausing direct queries for ${backoffSec}s.`);
+    }
+}
+
+export function resetSupabaseCircuit(): void {
+    if (consecutiveFailures > 0 || circuitOpenUntil > 0) {
+        consecutiveFailures = 0;
+        circuitOpenUntil = 0;
+        logger.info('✅ [Supabase Circuit Breaker] Connection restored. Resuming normal operations.');
+    }
+}
+
+async function resilientFetch(input: any, init?: any): Promise<Response> {
+    const isProbe = (init as any)?.__isProbe === true;
+
+    if (isSupabaseCircuitOpen() && !isProbe) {
+        // Fast-fail: return clean synthesized 503 response so caller fails gracefully without hanging
+        return new Response(
+            JSON.stringify({
+                code: 'CIRCUIT_BREAKER_OPEN',
+                message: 'Supabase circuit breaker is open. Origin database is currently unreachable.',
+                details: null,
+                hint: null,
+            }),
+            {
+                status: 503,
+                statusText: 'Service Unavailable',
+                headers: { 'Content-Type': 'application/json' },
+            }
+        );
+    }
+
+    // Explicit 10-second timeout controller
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
+    let signal = controller.signal;
+    if (init?.signal) {
+        const extSignal = init.signal;
+        if (extSignal.aborted) {
+            clearTimeout(timeoutId);
+            throw new Error('Aborted');
+        }
+        extSignal.addEventListener('abort', () => controller.abort());
+    }
+
+    try {
+        const response = await fetch(input, {
+            ...init,
+            signal,
+        });
+        clearTimeout(timeoutId);
+
+        const contentType = response.headers.get('content-type') || '';
+        const isHtml = contentType.includes('text/html');
+
+        if (!response.ok && (response.status >= 500 || isHtml)) {
+            let errorMsg = `HTTP ${response.status} ${response.statusText}`;
+            if (response.status === 522 || isHtml) {
+                errorMsg = 'Cloudflare 522: Connection timed out to Supabase origin';
+            } else if (response.status === 504) {
+                errorMsg = 'Supabase 504: Gateway Timeout';
+            } else if (response.status === 544) {
+                errorMsg = 'Supabase 544: Database Connection Timed Out';
+            }
+
+            tripSupabaseCircuit(errorMsg);
+
+            // Intercept HTML bodies and replace with clean JSON so PostgREST doesn't choke or dump HTML
+            return new Response(
+                JSON.stringify({
+                    code: `SUPABASE_${response.status}`,
+                    message: errorMsg,
+                    details: 'Supabase origin server is currently unreachable or overloaded.',
+                    hint: null,
+                }),
+                {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: { 'Content-Type': 'application/json' },
+                }
+            );
+        }
+
+        resetSupabaseCircuit();
+        return response;
+    } catch (err: any) {
+        clearTimeout(timeoutId);
+        const isTimeout = err.name === 'AbortError' || String(err.message || '').includes('timeout');
+        const reason = isTimeout ? 'Supabase request timeout (>10s)' : `Supabase network error: ${err.message || 'Unknown'}`;
+        tripSupabaseCircuit(reason);
+
+        // Return a clean synthetic 504 Response instead of crashing or leaking raw stack
+        return new Response(
+            JSON.stringify({
+                code: 'SUPABASE_FETCH_TIMEOUT',
+                message: reason,
+                details: null,
+                hint: null,
+            }),
+            {
+                status: 504,
+                statusText: 'Gateway Timeout',
+                headers: { 'Content-Type': 'application/json' },
+            }
+        );
+    }
+}
+
 class SupabaseService {
     private readonly paymenterSyncLocks = new Map<string, Promise<boolean>>();
     private paymenterReconciliationRunning = false;
+    private botSettingsCache = new Map<string, { settings: BotSettings | null; expiresAt: number }>();
 
     public client: SupabaseClient;
 
+    public isAvailable(): boolean {
+        return !isSupabaseCircuitOpen();
+    }
+
     constructor() {
-        // Create client with service role key and auth bypass
+        // Create client with service role key, auth bypass, and resilient fetch
         this.client = createClient(config.supabase.url, config.supabase.serviceKey, {
             auth: {
                 autoRefreshToken: false,
@@ -127,6 +260,9 @@ class SupabaseService {
             },
             db: {
                 schema: 'public',
+            },
+            global: {
+                fetch: resilientFetch,
             },
             realtime: {
                 params: {
@@ -417,25 +553,45 @@ class SupabaseService {
     // ============================================
 
     /**
-     * Get bot settings for a guild
+     * Get bot settings for a guild (with in-memory cache and offline resiliency)
      */
     async getBotSettings(guildId: string): Promise<BotSettings | null> {
-        const { data, error } = await this.client
-            .from('bot_settings')
-            .select('*')
-            .eq('guild_id', guildId)
-            .single();
-
-        if (error && error.code !== 'PGRST116') {
-            logger.error(`Failed to get bot settings for ${guildId}:`, error);
+        const now = Date.now();
+        const cached = this.botSettingsCache.get(guildId);
+        if (cached && now < cached.expiresAt) {
+            return cached.settings;
         }
 
-        const fallbackAiChannelId = await localSettings.getAiChannelId(guildId);
-        if (!fallbackAiChannelId) return data as BotSettings | null;
-        return {
-            ...(data || { guild_id: guildId }),
-            ai_channel_id: data?.ai_channel_id || fallbackAiChannelId,
-        } as BotSettings;
+        if (!this.isAvailable()) {
+            return cached ? cached.settings : null;
+        }
+
+        try {
+            const { data, error } = await this.client
+                .from('bot_settings')
+                .select('*')
+                .eq('guild_id', guildId)
+                .single();
+
+            if (error && error.code !== 'PGRST116' && error.code !== 'CIRCUIT_BREAKER_OPEN') {
+                logger.warn(`Failed to get bot settings for ${guildId}: ${error.message || error}`);
+            }
+
+            const fallbackAiChannelId = await localSettings.getAiChannelId(guildId);
+            const resolvedSettings = (!fallbackAiChannelId && data) ? (data as BotSettings) : {
+                ...(data || { guild_id: guildId }),
+                ai_channel_id: data?.ai_channel_id || fallbackAiChannelId,
+            } as BotSettings;
+
+            this.botSettingsCache.set(guildId, {
+                settings: resolvedSettings,
+                expiresAt: now + 60_000, // 60s TTL
+            });
+
+            return resolvedSettings;
+        } catch (err: any) {
+            return cached ? cached.settings : null;
+        }
     }
 
     /**
@@ -445,6 +601,16 @@ class SupabaseService {
         guildId: string,
         settings: Partial<Omit<BotSettings, 'guild_id' | 'updated_at'>>
     ): Promise<boolean> {
+        // Invalidate in-memory cache
+        this.botSettingsCache.delete(guildId);
+
+        if (!this.isAvailable()) {
+            if ('ai_channel_id' in settings) {
+                await localSettings.setAiChannelId(guildId, settings.ai_channel_id ?? null);
+            }
+            return false;
+        }
+
         const { error } = await this.client
             .from('bot_settings')
             .upsert({
@@ -463,7 +629,9 @@ class SupabaseService {
                 logger.warn('bot_settings.ai_channel_id is missing in Supabase; using local file fallback. Apply the migration when possible.');
                 return localSettings.setAiChannelId(guildId, settings.ai_channel_id ?? null);
             }
-            logger.error(`Failed to update bot settings for ${guildId}:`, error);
+            if (error.code !== 'CIRCUIT_BREAKER_OPEN') {
+                logger.warn(`Failed to update bot settings for ${guildId}: ${error.message || error}`);
+            }
             return false;
         }
 
@@ -588,26 +756,51 @@ class SupabaseService {
     }
 
     async claimLevelUpEvent(): Promise<any | null> {
-        const { data, error } = await this.client.rpc('claim_level_up_event');
-        if (error) throw new Error(`claim_level_up_event failed: ${error.message}`);
-        return Array.isArray(data) ? (data[0] ?? null) : data;
+        if (!this.isAvailable()) return null;
+        try {
+            const { data, error } = await this.client.rpc('claim_level_up_event');
+            if (error) {
+                if (error.code !== 'CIRCUIT_BREAKER_OPEN' && error.code !== 'SUPABASE_FETCH_TIMEOUT') {
+                    logger.warn(`claim_level_up_event failed: ${error.message || error}`);
+                }
+                return null;
+            }
+            return Array.isArray(data) ? (data[0] ?? null) : data;
+        } catch {
+            return null;
+        }
     }
 
     async applyLevelXpReward(eventId: string, amount: number): Promise<any> {
-        const { data, error } = await this.client.rpc('apply_level_xp_reward', {
-            p_event_id: eventId,
-            p_amount: Math.floor(amount),
-        });
-        if (error) throw new Error(`apply_level_xp_reward failed: ${error.message}`);
-        return data;
+        if (!this.isAvailable()) return null;
+        try {
+            const { data, error } = await this.client.rpc('apply_level_xp_reward', {
+                p_event_id: eventId,
+                p_amount: Math.floor(amount),
+            });
+            if (error) {
+                logger.warn(`apply_level_xp_reward failed: ${error.message || error}`);
+                return null;
+            }
+            return data;
+        } catch {
+            return null;
+        }
     }
 
     async updateLevelUpEvent(eventId: string, fields: Record<string, unknown>): Promise<void> {
-        const { error } = await this.client
-            .from('level_up_events')
-            .update({ ...fields, updated_at: new Date().toISOString() })
-            .eq('id', eventId);
-        if (error) throw new Error(`level_up_events update failed: ${error.message}`);
+        if (!this.isAvailable()) return;
+        try {
+            const { error } = await this.client
+                .from('level_up_events')
+                .update({ ...fields, updated_at: new Date().toISOString() })
+                .eq('id', eventId);
+            if (error && error.code !== 'CIRCUIT_BREAKER_OPEN') {
+                logger.warn(`level_up_events update failed: ${error.message || error}`);
+            }
+        } catch {
+            // Silently defer
+        }
     }
 
     /** Total CP ledger entries for a user (for pagination). */
@@ -1336,18 +1529,25 @@ class SupabaseService {
 
     /** Pending credits whose qualify_at has passed — the scheduler's work queue. */
     async getDueInviteCredits(limit = 50): Promise<InviteCredit[]> {
-        const { data, error } = await this.client
-            .from('discord_invite_credits')
-            .select('*')
-            .eq('status', 'pending')
-            .lte('qualify_at', new Date().toISOString())
-            .order('qualify_at', { ascending: true })
-            .limit(limit);
-        if (error) {
-            logger.error('getDueInviteCredits failed:', error);
+        if (!this.isAvailable()) return [];
+        try {
+            const { data, error } = await this.client
+                .from('discord_invite_credits')
+                .select('*')
+                .eq('status', 'pending')
+                .lte('qualify_at', new Date().toISOString())
+                .order('qualify_at', { ascending: true })
+                .limit(limit);
+            if (error) {
+                if (error.code !== 'CIRCUIT_BREAKER_OPEN' && error.code !== 'SUPABASE_FETCH_TIMEOUT') {
+                    logger.warn(`getDueInviteCredits failed: ${error.message || error}`);
+                }
+                return [];
+            }
+            return (data as InviteCredit[]) || [];
+        } catch {
             return [];
         }
-        return (data as InviteCredit[]) || [];
     }
 
     /** Count an inviter's pending+confirmed credits since `sinceIso` (rate cap). */
@@ -1363,6 +1563,49 @@ class SupabaseService {
             return 0;
         }
         return count ?? 0;
+    }
+
+    /** Get all invite credits attributed to a specific inviter in a guild */
+    async getInviterCredits(guildId: string, inviterDiscordId: string): Promise<InviteCredit[]> {
+        if (!this.isAvailable()) return [];
+        try {
+            const { data, error } = await this.client
+                .from('discord_invite_credits')
+                .select('*')
+                .eq('guild_id', guildId)
+                .eq('inviter_discord_id', inviterDiscordId)
+                .order('joined_at', { ascending: false });
+            if (error) {
+                if (error.code !== 'CIRCUIT_BREAKER_OPEN' && error.code !== 'SUPABASE_FETCH_TIMEOUT') {
+                    logger.warn(`getInviterCredits failed: ${error.message || error}`);
+                }
+                return [];
+            }
+            return (data as InviteCredit[]) || [];
+        } catch {
+            return [];
+        }
+    }
+
+    /** Get all invite credits for a guild to aggregate stats and historical joins */
+    async getGuildInviteCredits(guildId: string): Promise<InviteCredit[]> {
+        if (!this.isAvailable()) return [];
+        try {
+            const { data, error } = await this.client
+                .from('discord_invite_credits')
+                .select('*')
+                .eq('guild_id', guildId)
+                .order('joined_at', { ascending: false });
+            if (error) {
+                if (error.code !== 'CIRCUIT_BREAKER_OPEN' && error.code !== 'SUPABASE_FETCH_TIMEOUT') {
+                    logger.warn(`getGuildInviteCredits failed: ${error.message || error}`);
+                }
+                return [];
+            }
+            return (data as InviteCredit[]) || [];
+        } catch {
+            return [];
+        }
     }
 
     /**
@@ -2176,18 +2419,25 @@ class SupabaseService {
     // ============================================
 
     async getPendingDiscordDms(limit = 10): Promise<any[]> {
-        const { data, error } = await this.client
-            .from('discord_dm_queue')
-            .select('*')
-            .eq('status', 'pending')
-            .order('created_at', { ascending: true })
-            .limit(limit);
+        if (!this.isAvailable()) return [];
+        try {
+            const { data, error } = await this.client
+                .from('discord_dm_queue')
+                .select('*')
+                .eq('status', 'pending')
+                .order('created_at', { ascending: true })
+                .limit(limit);
 
-        if (error) {
-            logger.error('Failed to get pending Discord DMs:', error);
+            if (error) {
+                if (error.code !== 'CIRCUIT_BREAKER_OPEN' && error.code !== 'SUPABASE_FETCH_TIMEOUT') {
+                    logger.warn(`Failed to get pending Discord DMs: ${error.message || error}`);
+                }
+                return [];
+            }
+            return data || [];
+        } catch {
             return [];
         }
-        return data || [];
     }
 
     async claimDiscordDm(id: string): Promise<any | null> {
@@ -2274,67 +2524,90 @@ class SupabaseService {
     // ============================================
 
     async getCustomEmbed(guildId: string, name: string): Promise<CustomEmbed | null> {
-        const { data, error } = await this.client
-            .from('custom_embeds')
-            .select('*')
-            .eq('guild_id', guildId)
-            .eq('name', name)
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+        if (!this.isAvailable()) return null;
+        try {
+            const { data, error } = await this.client
+                .from('custom_embeds')
+                .select('*')
+                .eq('guild_id', guildId)
+                .eq('name', name)
+                .order('updated_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
 
-        if (error) {
-            logger.error(`Failed to get custom embed ${name} for ${guildId}:`, error);
+            if (error) {
+                if (error.code !== 'CIRCUIT_BREAKER_OPEN' && error.code !== 'SUPABASE_FETCH_TIMEOUT') {
+                    logger.warn(`Failed to get custom embed ${name} for ${guildId}: ${error.message || error}`);
+                }
+                return null;
+            }
+            return data;
+        } catch {
             return null;
         }
-        return data;
     }
 
     async saveCustomEmbed(guildId: string, name: string, embed: Partial<CustomEmbed>): Promise<boolean> {
-        const existing = await this.getCustomEmbed(guildId, name);
-        if (existing) {
-            const { error } = await this.client
-                .from('custom_embeds')
-                .update({
-                    ...embed,
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', existing.id);
+        if (!this.isAvailable()) return false;
+        try {
+            const existing = await this.getCustomEmbed(guildId, name);
+            if (existing) {
+                const { error } = await this.client
+                    .from('custom_embeds')
+                    .update({
+                        ...embed,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', existing.id);
 
-            if (error) {
-                logger.error(`Failed to update custom embed ${name} for ${guildId}:`, error);
-                return false;
-            }
-        } else {
-            const { error } = await this.client
-                .from('custom_embeds')
-                .insert({
-                    guild_id: guildId,
-                    name: name,
-                    ...embed,
-                    updated_at: new Date().toISOString()
-                });
+                if (error) {
+                    if (error.code !== 'CIRCUIT_BREAKER_OPEN' && error.code !== 'SUPABASE_FETCH_TIMEOUT') {
+                        logger.warn(`Failed to update custom embed ${name} for ${guildId}: ${error.message || error}`);
+                    }
+                    return false;
+                }
+            } else {
+                const { error } = await this.client
+                    .from('custom_embeds')
+                    .insert({
+                        guild_id: guildId,
+                        name: name,
+                        ...embed,
+                        updated_at: new Date().toISOString()
+                    });
 
-            if (error) {
-                logger.error(`Failed to insert custom embed ${name} for ${guildId}:`, error);
-                return false;
+                if (error) {
+                    if (error.code !== 'CIRCUIT_BREAKER_OPEN' && error.code !== 'SUPABASE_FETCH_TIMEOUT') {
+                        logger.warn(`Failed to insert custom embed ${name} for ${guildId}: ${error.message || error}`);
+                    }
+                    return false;
+                }
             }
+            return true;
+        } catch {
+            return false;
         }
-        return true;
     }
 
     async deleteCustomEmbed(guildId: string, name: string): Promise<boolean> {
-        const { error } = await this.client
-            .from('custom_embeds')
-            .delete()
-            .eq('guild_id', guildId)
-            .eq('name', name);
+        if (!this.isAvailable()) return false;
+        try {
+            const { error } = await this.client
+                .from('custom_embeds')
+                .delete()
+                .eq('guild_id', guildId)
+                .eq('name', name);
 
-        if (error) {
-            logger.error(`Failed to delete custom embed ${name} for ${guildId}:`, error);
+            if (error) {
+                if (error.code !== 'CIRCUIT_BREAKER_OPEN' && error.code !== 'SUPABASE_FETCH_TIMEOUT') {
+                    logger.warn(`Failed to delete custom embed ${name} for ${guildId}: ${error.message || error}`);
+                }
+                return false;
+            }
+            return true;
+        } catch {
             return false;
         }
-        return true;
     }
 
     async listCustomEmbeds(guildId: string): Promise<CustomEmbed[]> {

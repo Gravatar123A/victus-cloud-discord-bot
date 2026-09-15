@@ -58,7 +58,7 @@ async function seedInviteCache(client) {
 async function processInviteCredits(client) {
     if (!config.economy.invite.enabled)
         return;
-    if (inviteCreditsProcessing)
+    if (inviteCreditsProcessing || !supabase.isAvailable())
         return;
     inviteCreditsProcessing = true;
     try {
@@ -146,7 +146,7 @@ function buildNotificationContainer(job) {
     }
 }
 async function processNotificationQueue(client) {
-    if (dmQueueProcessing)
+    if (dmQueueProcessing || !supabase.isAvailable())
         return;
     dmQueueProcessing = true;
     try {
@@ -211,6 +211,8 @@ export const readyEvent = {
         // pass repairs historical missed rewards; later passes recover from
         // transient billing/API failures without blocking Discord commands.
         const reconcileCoins = (reason) => {
+            if (!supabase.isAvailable())
+                return;
             supabase.reconcilePaymenterCoins(reason).catch((error) => {
                 logger.error(`Paymenter COINS reconciliation failed (${reason}):`, error);
             });

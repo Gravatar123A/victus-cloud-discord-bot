@@ -1,5 +1,7 @@
 import { ChannelType, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, } from 'discord.js';
 import { leaderboardService } from '../services/leaderboardService.js';
+import { inviteService } from '../services/inviteService.js';
+import { InviteEmbeds } from '../embeds/inviteEmbeds.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
 export const leaderboardCommand = {
@@ -27,7 +29,7 @@ export const leaderboardCommand = {
         .setName('category')
         .setDescription('Category to display')
         .setRequired(false)
-        .addChoices({ name: '🏆 Overview (Top 3 of all categories)', value: 'overview' }, { name: '🪙 Top Coins', value: 'coins' }, { name: '⚡ Top XP & Tiers', value: 'xp' }, { name: '💬 Top Messages', value: 'messages' }, { name: '🎙️ Top Voice Minutes', value: 'voice' }))),
+        .addChoices({ name: '🏆 Overview (Top 3 of all categories)', value: 'overview' }, { name: '🪙 Top Coins', value: 'coins' }, { name: '⚡ Top XP & Tiers', value: 'xp' }, { name: '💬 Top Messages', value: 'messages' }, { name: '🎙️ Top Voice Minutes', value: 'voice' }, { name: '📨 Top Invites', value: 'invites' }))),
     cooldown: 5,
     async execute(interaction) {
         if (!interaction.inGuild() || !interaction.guild) {
@@ -41,10 +43,26 @@ export const leaderboardCommand = {
         const guildId = interaction.guildId;
         // 1. View (Public)
         if (subcommand === 'view') {
+            const rawCategory = interaction.options.getString('category');
+            if (rawCategory === 'invites') {
+                await interaction.deferReply({
+                    flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+                });
+                const [lbData, userStats] = await Promise.all([
+                    inviteService.getLeaderboardPage(interaction.guild, 1, 10),
+                    inviteService.getUserStats(interaction.guild, interaction.user.id),
+                ]);
+                const { container, actionRows } = InviteEmbeds.buildLeaderboardCard(lbData, interaction.guild, interaction.user.id, userStats);
+                await interaction.editReply({
+                    components: [container, ...actionRows],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
             await interaction.deferReply({
                 flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
             });
-            const category = interaction.options.getString('category') || 'overview';
+            const category = rawCategory || 'overview';
             const container = await leaderboardService.buildLeaderboardContainer(guildId, category);
             await interaction.editReply({
                 components: [container],

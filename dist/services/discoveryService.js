@@ -165,7 +165,7 @@ export class DiscoveryService {
             // Local file doesn't exist yet
         }
         // 2. Try Supabase custom embed backup if local was empty
-        if (this.servers.size === 0) {
+        if (this.servers.size === 0 && supabase.isAvailable()) {
             try {
                 const embed = await supabase.getCustomEmbed('global', '_discovered_servers_directory');
                 if (embed?.description) {
@@ -184,20 +184,16 @@ export class DiscoveryService {
         this.loaded = true;
     }
     /**
-     * Persist current in-memory servers to disk and Supabase backup
+     * Persist current in-memory servers to disk storage
      */
     async persist() {
         try {
             const list = Array.from(this.servers.values());
             await mkdir(dirname(LOCAL_STORE_PATH), { recursive: true });
             await writeFile(LOCAL_STORE_PATH, JSON.stringify(list, null, 2), 'utf8');
-            // Backup forum mappings and metadata to Supabase custom embed
-            await supabase.saveCustomEmbed('global', '_discovered_servers_directory', {
-                description: JSON.stringify(list),
-            }).catch(() => { });
         }
         catch (err) {
-            logger.error('Failed to persist discovered servers:', err);
+            logger.error('Failed to persist discovered servers to disk:', err);
         }
     }
     /**

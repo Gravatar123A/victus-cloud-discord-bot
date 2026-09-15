@@ -19,6 +19,7 @@ import { memberStatsService } from '../services/memberStatsService.js';
 import { ticketTranslationService } from '../services/ticketTranslationService.js';
 import { levelSettings } from '../services/levelSettings.js';
 import { antigravityPipeline } from '../services/antigravityPipeline.js';
+import { afkService } from '../services/afkService.js';
 import { createProcessingEmbed, createResultEmbeds } from '../embeds/antigravityEmbeds.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
 import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
@@ -196,15 +197,13 @@ export const messageCreateEvent = {
             // Viral Expansion: Record message for chat velocity, airdrops, wild mobs & Guild Battle Pass XP
             viralExpansionService.recordChatMessage(message).catch(() => { });
         }
-        // --- AFK System ---
+        // --- AFK System (Fast In-Memory, Zero Supabase Overhead) ---
         if (message.inGuild()) {
             const guildId = message.guildId;
             // 1. Check if the message sender is returning from AFK
             try {
-                const authorAfkEmbed = await supabase.getCustomEmbed(guildId, `_afk_${message.author.id}`);
-                if (authorAfkEmbed?.description) {
-                    const afkData = JSON.parse(authorAfkEmbed.description);
-                    await supabase.deleteCustomEmbed(guildId, `_afk_${message.author.id}`);
+                const afkData = await afkService.removeAfk(guildId, message.author.id);
+                if (afkData) {
                     const durationMs = Date.now() - new Date(afkData.timestamp).getTime();
                     const durationStr = formatDurationMs(durationMs);
                     const welcomeEmbed = new EmbedBuilder()
@@ -236,27 +235,21 @@ export const messageCreateEvent = {
                     if (mentionedId === message.author.id || mentionedUser.bot)
                         continue;
                     try {
-                        const targetAfkEmbed = await supabase.getCustomEmbed(guildId, `_afk_${mentionedId}`);
-                        if (targetAfkEmbed?.description) {
-                            const afkData = JSON.parse(targetAfkEmbed.description);
+                        const afkData = afkService.getAfk(guildId, mentionedId);
+                        if (afkData) {
                             // Send AFK notification in the channel
                             const afkEmbed = new EmbedBuilder()
                                 .setColor(0x6366f1)
                                 .setDescription(`🔍 **${mentionedUser.username}** is currently AFK: **${afkData.reason || 'AFK'}** (<t:${Math.floor(new Date(afkData.timestamp).getTime() / 1000)}:R>)`);
                             await message.reply({ embeds: [afkEmbed] }).catch(() => { });
                             // Log the mention into their AFK data
-                            const loggedMentions = afkData.mentions || [];
-                            loggedMentions.push({
+                            afkService.addMention(guildId, mentionedId, {
                                 authorTag: message.author.tag || message.author.username,
                                 username: message.author.username,
                                 content: message.content.slice(0, 100),
                                 channelId: message.channelId,
                                 messageId: message.id,
                                 timestamp: new Date().toISOString()
-                            });
-                            afkData.mentions = loggedMentions;
-                            await supabase.saveCustomEmbed(guildId, `_afk_${mentionedId}`, {
-                                description: JSON.stringify(afkData)
                             });
                         }
                     }

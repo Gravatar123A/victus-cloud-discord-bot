@@ -6,6 +6,7 @@ import { antiNukeService } from '../services/antiNukeService.js';
 import { logger } from '../utils/logger.js';
 import { config as botConfig } from '../config.js';
 import { supabase } from '../services/supabase.js';
+import { inviteService } from '../services/inviteService.js';
 
 /**
  * If the leaving member has a PENDING invite credit, void it — they left before
@@ -43,6 +44,7 @@ export const guildMemberRemoveEvent: Event = {
         await voidInviteCreditOnLeave(member).catch((error) => {
             logger.error('Error voiding invite credit on leave:', error);
         });
+        inviteService.invalidateCache(member.guild.id);
 
         // Discord link COINS revocation
         await supabase.revokeDiscordLinkCoins(member.id).then((revoked) => {

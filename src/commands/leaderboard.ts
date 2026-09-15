@@ -11,6 +11,8 @@ import {
 } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { leaderboardService, LeaderboardCategory } from '../services/leaderboardService.js';
+import { inviteService } from '../services/inviteService.js';
+import { InviteEmbeds } from '../embeds/inviteEmbeds.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
 
@@ -54,7 +56,8 @@ export const leaderboardCommand: Command = {
                             { name: '🪙 Top Coins', value: 'coins' },
                             { name: '⚡ Top XP & Tiers', value: 'xp' },
                             { name: '💬 Top Messages', value: 'messages' },
-                            { name: '🎙️ Top Voice Minutes', value: 'voice' }
+                            { name: '🎙️ Top Voice Minutes', value: 'voice' },
+                            { name: '📨 Top Invites', value: 'invites' }
                         )
                 )
         ),
@@ -75,11 +78,37 @@ export const leaderboardCommand: Command = {
 
         // 1. View (Public)
         if (subcommand === 'view') {
+            const rawCategory = interaction.options.getString('category');
+
+            if (rawCategory === 'invites') {
+                await interaction.deferReply({
+                    flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+                });
+
+                const [lbData, userStats] = await Promise.all([
+                    inviteService.getLeaderboardPage(interaction.guild, 1, 10),
+                    inviteService.getUserStats(interaction.guild, interaction.user.id),
+                ]);
+
+                const { container, actionRows } = InviteEmbeds.buildLeaderboardCard(
+                    lbData,
+                    interaction.guild,
+                    interaction.user.id,
+                    userStats
+                );
+
+                await interaction.editReply({
+                    components: [container, ...actionRows],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
+                });
+                return;
+            }
+
             await interaction.deferReply({
                 flags: (ComponentsV2 as any).IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
             });
 
-            const category = (interaction.options.getString('category') as LeaderboardCategory) || 'overview';
+            const category = (rawCategory as LeaderboardCategory) || 'overview';
             const container = await leaderboardService.buildLeaderboardContainer(guildId, category);
 
             await interaction.editReply({

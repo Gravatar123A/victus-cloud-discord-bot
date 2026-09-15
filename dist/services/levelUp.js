@@ -125,7 +125,7 @@ async function processOne(client) {
     return true;
 }
 export async function processLevelUps(client) {
-    if (processing)
+    if (processing || !supabase.isAvailable())
         return;
     processing = true;
     try {
@@ -134,7 +134,7 @@ export async function processLevelUps(client) {
                 break;
     }
     catch (error) {
-        logger.error('Level-up worker cycle failed:', error);
+        logger.warn('Level-up worker cycle deferred:', error);
     }
     finally {
         processing = false;
