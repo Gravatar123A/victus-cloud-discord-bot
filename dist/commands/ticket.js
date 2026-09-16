@@ -66,7 +66,7 @@ function memberHasAnyRole(member, roleIds) {
         return roleIds.some((roleId) => member.roles.includes(roleId));
     return false;
 }
-function memberHasTicketStaffAccess(interaction, settings, category) {
+export function memberHasTicketStaffAccess(interaction, settings, category) {
     const member = interaction.member;
     if (!member)
         return false;
@@ -415,45 +415,69 @@ export const ticketCommand = {
 // ============================================
 // Panel Management
 // ============================================
-async function handlePanelSpawn(interaction) {
+export async function handlePanelSpawn(interaction, customTargetChannel) {
     const guildId = interaction.guildId;
     const categories = await supabase.getTicketCategories(guildId);
     const settings = await supabase.getBotSettings(guildId).catch(() => null);
     if (categories.length === 0) {
         const container = ComponentsV2.warningContainer('No Categories', 'You need to create ticket categories first.\n\n' +
             'Use `/ticket category add` to create categories.');
-        await interaction.editReply({
-            components: [container],
-            flags: ComponentsV2.IS_COMPONENTS_V2,
-        });
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({
+                components: [container],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+        }
+        else {
+            await interaction.reply({
+                components: [container],
+                flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+            });
+        }
         return;
     }
     // Create the premium ticket panel
     const panel = createTicketPanel(categories);
     const configuredChannelId = settings?.ticket_panel_channel_id;
-    const targetChannel = configuredChannelId
+    const targetChannel = customTargetChannel || (configuredChannelId
         ? await interaction.guild.channels.fetch(configuredChannelId).catch(() => null)
-        : interaction.channel;
+        : interaction.channel);
     if (!targetChannel || !targetChannel.isTextBased?.()) {
-        const container = ComponentsV2.errorContainer('Invalid Panel Channel', 'The configured ticket panel channel ID is missing or is not a text channel.');
-        await interaction.editReply({
-            components: [container],
-            flags: ComponentsV2.IS_COMPONENTS_V2,
-        });
+        const container = ComponentsV2.errorContainer('Invalid Panel Channel', 'The target ticket panel channel is missing or is not a text channel.');
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({
+                components: [container],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+        }
+        else {
+            await interaction.reply({
+                components: [container],
+                flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+            });
+        }
         return;
     }
-    // Send to configured channel (not ephemeral)
+    // Send to target channel (not ephemeral)
     await targetChannel.send({
         components: [panel],
         flags: ComponentsV2.IS_COMPONENTS_V2,
     });
     const container = ComponentsV2.successContainer('Panel Created', `The premium ticket panel has been spawned in <#${targetChannel.id}>.`);
-    await interaction.editReply({
-        components: [container],
-        flags: ComponentsV2.IS_COMPONENTS_V2,
-    });
+    if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
+    }
+    else {
+        await interaction.reply({
+            components: [container],
+            flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+        });
+    }
 }
-function createTicketPanel(categories) {
+export function createTicketPanel(categories) {
     const sections = categories
         .map(c => `### ${c.emoji} ${c.name} Ticket:\n\n${c.description || 'No description available.'}`)
         .join('\n\n');
@@ -634,12 +658,34 @@ async function handleCreateTicketButton(interaction) {
 async function handleCategorySelect(interaction) {
     const categoryId = interaction.values[0];
     logger.info(`🔍 [CategorySelect] ID: ${categoryId} by ${interaction.user.tag}`);
-    const category = await supabase.getTicketCategory(categoryId);
+    let category = await supabase.getTicketCategory(categoryId, interaction.guildId || undefined);
+    if (!category && interaction.guildId) {
+        const categories = await supabase.getTicketCategories(interaction.guildId);
+        if (categories.length > 0) {
+            category = categories.find((c) => c.id === categoryId ||
+                c.name?.toLowerCase().includes(categoryId.toLowerCase()) ||
+                categoryId.toLowerCase().includes(c.name?.toLowerCase()) ||
+                (c.discord_category_id && c.discord_category_id === categoryId)) || categories[0];
+            logger.info(`🔄 [CategorySelect] Recovered category fallback: ${category?.name} (${category?.id})`);
+        }
+    }
     if (!category) {
-        const container = ComponentsV2.errorContainer('Error', 'Category not found. Please try again.');
-        await interaction.update({
-            components: [container],
-        });
+        const container = ComponentsV2.errorContainer('Category Unavailable', 'This ticket category could not be resolved. Please ask staff to refresh the ticket panel with `/ticketpanel`.');
+        // CRITICAL FIX: NEVER call interaction.update() here!
+        // Calling interaction.update() on a channel message overwrites the public ticket panel in the channel!
+        // Always reply ephemerally so the public channel panel remains intact.
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({
+                components: [container],
+                flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+            }).catch(() => undefined);
+        }
+        else {
+            await interaction.reply({
+                components: [container],
+                flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+            }).catch(() => undefined);
+        }
         return;
     }
     // Store pending ticket data

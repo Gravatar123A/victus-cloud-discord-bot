@@ -1885,18 +1885,73 @@ class SupabaseService {
         return true;
     }
     /**
-     * Get category by ID
+     * Get category by ID, name, or guild fallback
      */
-    async getTicketCategory(id) {
-        const { data, error } = await this.client
-            .from('ticket_categories')
-            .select('*')
-            .eq('id', id)
-            .single();
-        if (error && error.code !== 'PGRST116') {
-            logger.error('Failed to get ticket category:', error);
+    async getTicketCategory(id, guildId) {
+        if (!id)
+            return null;
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        if (isUuid) {
+            const { data, error } = await this.client
+                .from('ticket_categories')
+                .select('*')
+                .eq('id', id)
+                .single();
+            if (data)
+                return data;
+            if (error && error.code !== 'PGRST116') {
+                logger.error('Failed to get ticket category by ID:', error);
+            }
         }
-        return data;
+        // Try searching by name (case-insensitive substring)
+        try {
+            const { data: byName } = await this.client
+                .from('ticket_categories')
+                .select('*')
+                .ilike('name', `%${id}%`)
+                .limit(1);
+            if (byName && byName.length > 0) {
+                return byName[0];
+            }
+        }
+        catch {
+            // Ignore error and proceed to fallbacks
+        }
+        // Try searching by discord_category_id
+        try {
+            const { data: byDiscordCat } = await this.client
+                .from('ticket_categories')
+                .select('*')
+                .eq('discord_category_id', id)
+                .limit(1);
+            if (byDiscordCat && byDiscordCat.length > 0) {
+                return byDiscordCat[0];
+            }
+        }
+        catch {
+            // Ignore error and proceed
+        }
+        // Fallback to guild enabled categories if guildId provided
+        if (guildId) {
+            try {
+                const { data: guildCats } = await this.client
+                    .from('ticket_categories')
+                    .select('*')
+                    .eq('guild_id', guildId)
+                    .eq('enabled', true)
+                    .order('position', { ascending: true });
+                if (guildCats && guildCats.length > 0) {
+                    const match = guildCats.find((c) => c.id === id ||
+                        c.name?.toLowerCase().includes(id.toLowerCase()) ||
+                        id.toLowerCase().includes(c.name?.toLowerCase()));
+                    return match || guildCats[0];
+                }
+            }
+            catch {
+                // Ignore
+            }
+        }
+        return null;
     }
     // ============================================
     // Tickets

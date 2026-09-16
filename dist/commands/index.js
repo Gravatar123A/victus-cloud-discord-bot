@@ -11,6 +11,7 @@ import { adminCommand } from './admin/index.js';
 import { configCommand } from './config.js';
 import { userCommand } from './user.js';
 import { ticketCommand } from './ticket.js';
+import { ticketPanelCommand, ticketPanelAliasCommand } from './ticket-panel.js';
 import { preferencesCommand } from './preferences.js';
 import { announceCommand } from './announce.js';
 import { anncCommand } from './annc.js';
@@ -97,6 +98,8 @@ const allCommands = [
     configCommand,
     userCommand,
     ticketCommand,
+    ticketPanelCommand,
+    ticketPanelAliasCommand,
     preferencesCommand,
     announceCommand,
     anncCommand,
