@@ -956,8 +956,8 @@ class SupabaseService {
         if (current === desired)
             return true;
         if (internalCurrent === null && live && !live.found) {
-            logger.debug(`setPaymenterCoins skipped for ${email}: no Paymenter account`);
-            return false;
+            logger.info(`setPaymenterCoins: no Paymenter account for ${email} — will auto-create via grant`);
+            // Do not skip; mutatePaymenterCoins will auto-create the user on first grant
         }
         let after = current;
         let part = 0;
