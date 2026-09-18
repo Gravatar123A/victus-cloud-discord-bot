@@ -11,42 +11,11 @@ const SUSPENSION_LIMIT = 3;
 const SUSPENSION_MS = 24 * 60 * 60 * 1000;
 const settingsCache = new Map();
 const activeChecks = new Set();
-const EXPLICIT_ABUSE = [
-    /\bf+u+c+k+\b/i,
-    /\bs+h+i+t+\b/i,
-    /\bb+i+t+c+h+\b/i,
-    /\ba+s+s+h+o+l+e\b/i,
-    /\bd+i+c+k+h+e+a+d\b/i,
-    /\bc+u+n+t\b/i,
-    /\bkill yourself\b/i,
-    /\bgo die\b/i,
-];
-// Script detection handles Hindi and other languages written in native script.
-// Romanized Hindi needs a conservative phrase/token detector because it uses
-// the same Latin alphabet as English (for example, "baat sun").
-const NON_ENGLISH_SCRIPT = /[\u0900-\u097F\u0980-\u09FF\u0600-\u06FF\u0400-\u04FF\u3040-\u30FF\uAC00-\uD7AF\u4E00-\u9FFF]/u;
-const ROMANIZED_HINDI_WORDS = new Set([
-    'baat', 'bhai', 'bhaiya', 'kya', 'kyun', 'hai', 'hain', 'nahi', 'nahin',
-    'tum', 'aap', 'aapka', 'mera', 'mujhe', 'tujhe', 'yeh', 'woh', 'kaise',
-    'karo', 'karna', 'bata', 'bolo', 'suno', 'sun', 'yaar', 'chal', 'ruko',
-    'dekh', 'theek', 'thik', 'mila', 'chahiye', 'kaam', 'raha', 'rahi',
-    'kuch', 'abhi', 'idhar', 'udhar', 'pakka', 'sach', 'galat', 'acha',
-    'accha', 'shukriya', 'namaste', 'namaskar', 'zara', 'jaldi', 'oye',
-]);
+// Profanity detection is now STRICTLY based on the multilingual bad-words database.
+// Language detection has been REMOVED per operator request — only actual bad words trigger warnings.
+import { containsProfanity } from '../data/badWords.js';
 function hasExplicitAbuse(content) {
-    return EXPLICIT_ABUSE.some((pattern) => pattern.test(content));
-}
-function detectNonEnglishLocally(content) {
-    if (NON_ENGLISH_SCRIPT.test(content)) {
-        return { language: 'non-English script', reason: 'Non-English writing system detected.' };
-    }
-    const tokens = content.toLowerCase().match(/[a-z]+/g) || [];
-    const hits = new Set(tokens.filter((token) => ROMANIZED_HINDI_WORDS.has(token)));
-    const strongPhrase = /\b(?:baat\s+sun|oye\s+(?:sun|suno|bhai)|kya\s+(?:hai|kar)|mujhe\s+(?:bata|chahiye))\b/i.test(content);
-    if (strongPhrase || hits.size >= 2) {
-        return { language: 'Hindi (Romanized)', reason: 'Romanized Hindi language markers detected.' };
-    }
-    return null;
+    return containsProfanity(content).matched;
 }
 async function classifyWithTimeout(content) {
     return Promise.race([
@@ -54,10 +23,8 @@ async function classifyWithTimeout(content) {
         new Promise((resolve) => setTimeout(() => resolve(null), 6_000)),
     ]);
 }
-function policyText(otherLanguageChannelId) {
-    return otherLanguageChannelId
-        ? `Please use English here. Other languages belong in <#${otherLanguageChannelId}>.`
-        : 'Please use English in this channel.';
+function policyText() {
+    return 'Please keep conversations respectful. Avoid profanity and harassment.';
 }
 async function getSettings(guildId) {
     const cached = settingsCache.get(guildId);
@@ -155,9 +122,7 @@ async function recordAutomaticWarning(message, reason, category, deleteMessage) 
         `> **Warning ID:** \`${warningId}\`\n` +
         `> **Reason:** ${reason}\n\n` +
         `**Active warnings:** ${warnings.length}/${WARNING_LIMIT}`);
-    const dmText = category === 'language'
-        ? policyText(settings?.moderation_other_languages_channel_id)
-        : `Please keep conversations respectful. ${reason}`;
+    const dmText = `Please keep conversations respectful. ${reason}`;
     await message.author.send({
         embeds: [new EmbedBuilder()
                 .setColor(0xf59e0b)
@@ -165,10 +130,8 @@ async function recordAutomaticWarning(message, reason, category, deleteMessage) 
                 .setDescription(`${dmText}\n\n**Warning:** ${warnings.length}/${WARNING_LIMIT}\n\n3 warnings = service suspension. 3 suspensions = ban.`)
                 .setFooter({ text: `Warning ID: ${warningId}` })],
     }).catch(() => undefined);
-    const publicDescription = category === 'language'
-        ? policyText(settings?.moderation_other_languages_channel_id)
-        : `This message was removed because it violated the server conduct policy. ${reason}`;
-    const notice = ComponentsV2.moderationWarningContainer(category === 'language' ? 'English is required here' : 'Message removed', publicDescription, message.guild.id, category === 'language' ? settings?.moderation_other_languages_channel_id : null);
+    const publicDescription = `This message was removed because it violated the server conduct policy. ${reason}`;
+    const notice = ComponentsV2.moderationWarningContainer('Message removed', publicDescription, message.guild.id, null);
     if (message.channel.isTextBased() && 'send' in message.channel) {
         const sent = await message.channel.send({
             components: [notice],
@@ -183,6 +146,7 @@ async function recordAutomaticWarning(message, reason, category, deleteMessage) 
     }
 }
 export async function inspectModerationMessage(message) {
+    // Language detection has been DISABLED — only actual profanity (multilingual bad-words DB) triggers a warning.
     if (!message.inGuild() || message.author.bot || !message.content.trim())
         return false;
     const settings = await getSettings(message.guildId);
@@ -193,17 +157,6 @@ export async function inspectModerationMessage(message) {
         return false;
     if (message.content.startsWith('/'))
         return false;
-    const languageChannelId = settings.moderation_language_channel_id;
-    const otherLanguageChannelId = settings.moderation_other_languages_channel_id;
-    // If an English-only channel has not been selected yet, check all guild
-    // channels except the explicitly configured other-language channel. This
-    // prevents an enabled system from appearing silently inactive.
-    const languageCheck = languageChannelId
-        ? message.channelId === languageChannelId
-        : message.channelId !== otherLanguageChannelId;
-    const abuseCheck = true;
-    if (!languageCheck && !abuseCheck)
-        return false;
     const key = `${message.guildId}:${message.id}`;
     if (activeChecks.has(key))
         return false;
@@ -212,16 +165,15 @@ export async function inspectModerationMessage(message) {
         const content = message.content.trim().slice(0, 1800);
         const explicitAbuse = hasExplicitAbuse(content);
         const classification = content.length >= 4 ? await classifyWithTimeout(content) : null;
-        const localLanguage = languageCheck ? detectNonEnglishLocally(content) : null;
         const isCussImmune = await whitelistSettings.isImmune(message.guildId, message.author.id, 'cuss').catch(() => false);
-        const abusive = !isCussImmune && (explicitAbuse || Boolean(classification?.abusive && (classification.abuseConfidence >= 0.88)));
-        const nonEnglish = languageCheck && Boolean(localLanguage || (classification && !classification.english && classification.languageConfidence >= 0.86));
+        // Only actual bad words (local DB) OR high-confidence AI abuse. Language signals are ignored.
+        const profanity = containsProfanity(content);
+        const abusive = !isCussImmune && (explicitAbuse || profanity.matched || Boolean(classification?.abusive && (classification.abuseConfidence >= 0.92)));
         if (abusive) {
-            await recordAutomaticWarning(message, classification?.reason || 'Disrespectful, abusive, or prohibited language.', classification?.category || 'abuse', true);
-            return true;
-        }
-        if (nonEnglish) {
-            await recordAutomaticWarning(message, `Detected language: ${localLanguage?.language || classification?.language || 'non-English'}. ${localLanguage?.reason || 'AI language classifier detected non-English text.'} ${policyText(settings.moderation_other_languages_channel_id)}`, 'language', false);
+            const reason = profanity.matched
+                ? profanity.reason || 'Profanity detected (multilingual bad-words database).'
+                : (classification?.reason || 'Disrespectful, abusive, or prohibited language.');
+            await recordAutomaticWarning(message, reason, classification?.category || 'abuse', true);
             return true;
         }
         return false;
