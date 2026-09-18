@@ -1281,6 +1281,16 @@ class SupabaseService {
             logger.info(`grantInviteCoins: +${amt} COINS to ${email} (user ${inviterUserId}) via victus grant`);
             return true;
         } catch (e) {
+            logger.warn(`grantInviteCoins Paymenter failed for ${inviterUserId}: ${(e as Error).message} — falling back to Supabase wallet`);
+            try {
+                const ok = await this.fallbackIncrementCp(inviterUserId, amt, 'invite fallback');
+                if (ok) {
+                    logger.info(`grantInviteCoins: fallback +${amt} COINS to ${email} (user ${inviterUserId})`);
+                    return true;
+                }
+            } catch (fb) {
+                logger.error(`grantInviteCoins fallback failed for ${inviterUserId}: ${(fb as Error).message}`);
+            }
             logger.error(`grantInviteCoins failed for ${inviterUserId}: ${(e as Error).message}`);
             return false;
         }
@@ -1380,9 +1390,34 @@ class SupabaseService {
             logger.info(`grantLevelCoins: +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
             return true;
         } catch (e) {
+            logger.warn(`grantLevelCoins Paymenter failed for ${userId}: ${(e as Error).message} — falling back to Supabase wallet`);
+            try {
+                const fallback = await this.fallbackIncrementCp(userId, amt, `level ${level} fallback`);
+                if (fallback) {
+                    logger.info(`grantLevelCoins: fallback +${amt} COINS to ${email} (user ${userId}) for level ${level}`);
+                    return true;
+                }
+            } catch (fb) {
+                logger.error(`grantLevelCoins fallback failed for ${userId}: ${(fb as Error).message}`);
+            }
             logger.error(`grantLevelCoins failed for ${userId}: ${(e as Error).message}`);
             return false;
         }
+    }
+
+    /** Fallback: directly increment profiles.total_cp when Paymenter is unavailable. Queued reconciliation will later sync to Paymenter. */
+    private async fallbackIncrementCp(userId: string, amount: number, reason: string): Promise<boolean> {
+        const profile = await this.getUserProfile(userId);
+        if (!profile) return false;
+        const current = Number((profile as any).total_cp ?? 0);
+        const desired = Math.max(0, current + Math.round(amount));
+        const { error } = await this.client.from('profiles').update({ total_cp: desired, updated_at: new Date().toISOString() }).eq('id', userId);
+        if (error) {
+            logger.error(`fallbackIncrementCp failed for ${userId}: ${error.message}`);
+            return false;
+        }
+        await this.client.from('cp_transactions').insert({ user_id: userId, action_type: `fallback_${reason}`, cp_earned: Math.round(amount), metadata: { reason, fallback: true } } as any).then(() => {}, () => {});
+        return true;
     }
 
     // ============================================
@@ -1441,6 +1476,24 @@ class SupabaseService {
             logger.info(`grantDiscordLinkCoins: +${amount} COINS to ${email} (discord ${linked.discord_id})`);
             return true;
         } catch (e) {
+            logger.warn(`grantDiscordLinkCoins Paymenter failed for ${linked.discord_id}: ${(e as Error).message} — falling back to Supabase wallet`);
+            try {
+                const ok = await this.fallbackIncrementCp(linked.user_id, amount, 'discord link fallback');
+                if (ok) {
+                    await this.client.from('discord_linked_accounts').update({
+                        coins_granted: true,
+                        coins_granted_at: new Date().toISOString(),
+                        coins_amount: amount,
+                        coins_revoked: false,
+                        coins_revoked_at: null,
+                        coins_last_error: null,
+                    } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id);
+                    logger.info(`grantDiscordLinkCoins: fallback +${amount} COINS to ${email} (discord ${linked.discord_id})`);
+                    return true;
+                }
+            } catch (fb) {
+                logger.error(`grantDiscordLinkCoins fallback failed for ${linked.discord_id}: ${(fb as Error).message}`);
+            }
             await this.client.from('discord_linked_accounts').update({ coins_last_error: String((e as Error).message).slice(0, 500) } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, () => {});
             logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${(e as Error).message}`);
             return false;

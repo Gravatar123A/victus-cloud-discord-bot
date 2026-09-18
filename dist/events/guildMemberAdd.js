@@ -83,6 +83,21 @@ async function handleInviteAttribution(member) {
         logger.info(`Invite attribution: ${member.user.tag} account younger than ${inviteCfg.minAccountAgeDays}d; skipping`);
         return;
     }
+    // Optional quality gates (avatar / bio / username) — disabled by default via
+    // INVITE_REQUIRE_AVATAR=false etc, so legitimate joins are not filtered.
+    if (inviteCfg.requireAvatar || inviteCfg.requireBio || inviteCfg.strictUsername) {
+        try {
+            const { validateInvitee } = await import('../services/inviteValidation.js');
+            const check = validateInvitee(member, inviteCfg.minAccountAgeDays, inviteCfg.requireAvatar, inviteCfg.requireBio, inviteCfg.strictUsername);
+            if (!check.valid) {
+                logger.info(`Invite attribution: ${member.user.tag} failed quality gate (${check.reason}); skipping`);
+                return;
+            }
+        }
+        catch (e) {
+            logger.warn(`Invite validation import failed, skipping gate: ${e.message}`);
+        }
+    }
     // Rate cap: how many credits has this inviter earned in the trailing 24h?
     const since = new Date(Date.now() - DAY_MS).toISOString();
     const recent = await supabase.countRecentInviterCredits(inviterId, since);

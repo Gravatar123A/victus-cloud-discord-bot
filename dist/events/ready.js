@@ -119,6 +119,50 @@ async function processInviteCredits(client) {
         inviteCreditsProcessing = false;
     }
 }
+let linkCreditsProcessing = false;
+async function processPendingLinkRewards(client) {
+    if (!config.economy.discordLink.enabled)
+        return;
+    if (linkCreditsProcessing)
+        return;
+    linkCreditsProcessing = true;
+    try {
+        // Find linked accounts that have not yet received their 100 COINS reward.
+        // This repairs missed grants from Realtime downtime or the old polling path
+        // that did not grant coins. The grant itself is idempotent.
+        const { data, error } = await supabase.client
+            .from('discord_linked_accounts')
+            .select('user_id, discord_id, created_at')
+            .eq('coins_granted', false)
+            .limit(50);
+        if (error) {
+            // Column may not exist on older DBs — ignore.
+            if (!String(error.message || '').includes('coins_granted')) {
+                logger.warn(`Link reward repair query failed: ${error.message}`);
+            }
+            return;
+        }
+        const rows = (data || []);
+        for (const row of rows) {
+            if (!row.user_id || !row.discord_id)
+                continue;
+            // Skip if user left the guild (revoked logic will handle)
+            const granted = await supabase.grantDiscordLinkCoins({ user_id: row.user_id, discord_id: row.discord_id }).catch(() => false);
+            if (granted)
+                logger.info(`Link reward repair: +${config.economy.discordLink.amount} COINS to ${row.discord_id}`);
+            // Small delay to avoid hammering Paymenter
+            await new Promise((r) => setTimeout(r, 200));
+        }
+        if (rows.length > 0)
+            logger.info(`Link reward repair: processed ${rows.length} pending link(s)`);
+    }
+    catch (e) {
+        logger.warn(`Link reward repair failed: ${e.message}`);
+    }
+    finally {
+        linkCreditsProcessing = false;
+    }
+}
 function buildNotificationContainer(job) {
     const type = job.notification_type || null;
     const meta = job.metadata || {};
@@ -281,6 +325,15 @@ export const readyEvent = {
         }
         else {
             logger.info('Invite COINS escrow disabled (set DISCORD_INVITE_COINS_ENABLED=true to enable)');
+        }
+        // Discord link 100 COINS repair: grant any linked accounts that missed
+        // their reward due to Realtime downtime or the old polling path.
+        if (config.economy.discordLink.enabled) {
+            await processPendingLinkRewards(client).catch(() => { });
+            setInterval(() => {
+                processPendingLinkRewards(client).catch((error) => logger.error('Link reward repair interval failed:', error));
+            }, 5 * 60 * 1000);
+            logger.info('Link COINS repair scheduler started (5m interval)');
         }
         // Server Stats Auto-Updater
         const runServerStats = async () => {

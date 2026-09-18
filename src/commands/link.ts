@@ -113,6 +113,22 @@ export const linkCommand: Command = {
                 clearInterval(pollInterval);
                 logger.info(`✨ Polling: Account link detected for ${discordId}`);
 
+                // Grant Discord link 100 COINS reward (idempotent) — ensures coins
+                // are granted even when Supabase Realtime is unavailable.
+                try {
+                    const granted = await supabase.grantDiscordLinkCoins(linked as any).catch(() => false);
+                    if (granted) {
+                        const coinsContainer = ComponentsV2.successContainer(
+                            `+${config.economy.discordLink.amount} COINS Earned!`,
+                            `Thanks for linking your Discord account! You earned **${config.economy.discordLink.amount} COINS**.\n\n` +
+                            `⚠️ Do not leave our Discord server — if you leave, the ${config.economy.discordLink.amount} COINS will be deducted.`
+                        );
+                        await sendNotificationDM(interaction.client, discordId, coinsContainer, 'promotions').catch(() => {});
+                    }
+                } catch (e) {
+                    logger.warn(`Polling link COINS grant failed for ${discordId}: ${(e as Error).message}`);
+                }
+
                 // 1. Assign Role
                 const roleSuccess = await assignLinkedRole(interaction.client, discordId);
                 await syncEntitlementRoles(interaction.client, discordId).catch((error) => {
