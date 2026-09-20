@@ -123,11 +123,11 @@ async function requirePlayer(
 
 function ok(title: string, body: string) {
     const container = ComponentsV2.successContainer(title, body);
-    return { components: [container] } as const;
+    return { components: [container], flags: V2 } as const;
 }
 function info(title: string, body: string) {
     const container = ComponentsV2.infoContainer(title, body);
-    return { components: [container] } as const;
+    return { components: [container], flags: V2 } as const;
 }
 
 async function requireMusicServer(
@@ -140,7 +140,7 @@ async function requireMusicServer(
         'The audio node is not connected right now. Staff have been notified; please try again shortly.',
     );
     if (interaction.deferred || interaction.replied) {
-        await interaction.editReply({ components: [container], embeds: [] });
+        await interaction.editReply({ components: [container], embeds: [], flags: V2 });
     } else {
         await interaction.reply({ components: [container], flags: V2 | EPH });
     }
@@ -1068,7 +1068,8 @@ export const playrandomCommand: Command = {
 
             await interaction.editReply({
                 components: [successContainer],
-                embeds: []
+                embeds: [],
+                flags: V2,
             });
         }
     }

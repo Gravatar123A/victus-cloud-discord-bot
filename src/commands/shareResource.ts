@@ -78,7 +78,7 @@ function buildResourcePreviewComponents(session: ResourceSession) {
             .setStyle(ButtonStyle.Danger)
     );
 
-    return { components: [container, row1, row2] };
+    return { components: [container, row1, row2], flags: ComponentsV2.IS_COMPONENTS_V2 };
 }
 
 export const shareResourceCommand: Command = {
@@ -698,7 +698,7 @@ export const shareResourceCommand: Command = {
                             .setStyle(ButtonStyle.Secondary)
                             .setDisabled(true)
                     );
-                    await interaction.editReply({ components: [container, row] }).catch(() => {});
+                    await interaction.editReply({ components: [container, row], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
                     lastEditTime = Date.now();
                 } catch {
                     // Ignore discord edit rate limits or temporary network errors
@@ -787,6 +787,7 @@ export const shareResourceCommand: Command = {
                             `Could not fetch metadata from URL: ${error?.message || 'Invalid or unreachable link.'}\n\nYou can still use **Manual Entry** to fill in the details.`
                         ),
                     ],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
             }
             return;

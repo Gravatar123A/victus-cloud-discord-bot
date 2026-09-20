@@ -47,7 +47,7 @@ function buildResourcePreviewComponents(session) {
         .setCustomId('victus_res_btn_cancel')
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Danger));
-    return { components: [container, row1, row2] };
+    return { components: [container, row1, row2], flags: ComponentsV2.IS_COMPONENTS_V2 };
 }
 export const shareResourceCommand = {
     data: new SlashCommandBuilder()
@@ -528,7 +528,7 @@ export const shareResourceCommand = {
                         .setLabel(`Extracting Data... ${currentPercent}%`)
                         .setStyle(ButtonStyle.Secondary)
                         .setDisabled(true));
-                    await interaction.editReply({ components: [container, row] }).catch(() => { });
+                    await interaction.editReply({ components: [container, row], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
                     lastEditTime = Date.now();
                 }
                 catch {
@@ -611,6 +611,7 @@ export const shareResourceCommand = {
                     components: [
                         ComponentsV2.errorContainer('Link Extraction Failed', `Could not fetch metadata from URL: ${error?.message || 'Invalid or unreachable link.'}\n\nYou can still use **Manual Entry** to fill in the details.`),
                     ],
+                    flags: ComponentsV2.IS_COMPONENTS_V2,
                 });
             }
             return;

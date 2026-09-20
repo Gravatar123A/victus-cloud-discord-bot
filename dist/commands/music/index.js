@@ -73,18 +73,18 @@ async function requirePlayer(interaction, deferred = true) {
 }
 function ok(title, body) {
     const container = ComponentsV2.successContainer(title, body);
-    return { components: [container] };
+    return { components: [container], flags: V2 };
 }
 function info(title, body) {
     const container = ComponentsV2.infoContainer(title, body);
-    return { components: [container] };
+    return { components: [container], flags: V2 };
 }
 async function requireMusicServer(interaction) {
     if (isMusicAvailable(interaction.client))
         return true;
     const container = ComponentsV2.errorContainer('Music server unavailable', 'The audio node is not connected right now. Staff have been notified; please try again shortly.');
     if (interaction.deferred || interaction.replied) {
-        await interaction.editReply({ components: [container], embeds: [] });
+        await interaction.editReply({ components: [container], embeds: [], flags: V2 });
     }
     else {
         await interaction.reply({ components: [container], flags: V2 | EPH });
@@ -918,7 +918,8 @@ export const playrandomCommand = {
             const successContainer = ComponentsV2.successContainer('Random Song Queued 🎲', successMsg);
             await interaction.editReply({
                 components: [successContainer],
-                embeds: []
+                embeds: [],
+                flags: V2,
             });
         }
     }
