@@ -25,11 +25,15 @@ import { roleUpdateEvent } from './roleUpdate.js';
 import { emojiDeleteEvent } from './emojiDelete.js';
 import { stickerDeleteEvent } from './stickerDelete.js';
 import { guildUpdateEvent } from './guildUpdate.js';
+import { messageReactionAddEvent } from './messageReactionAdd.js';
+import { messageReactionRemoveEvent } from './messageReactionRemove.js';
 
 const events: Event[] = [
     readyEvent,
     interactionCreateEvent,
     messageCreateEvent,
+    messageReactionAddEvent,
+    messageReactionRemoveEvent,
     voiceStateUpdateEvent,
     guildMemberAddEvent,
     channelDeleteEvent,

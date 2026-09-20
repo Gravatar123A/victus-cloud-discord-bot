@@ -17,13 +17,33 @@ export interface ReactRolePanel {
     channelId?: string;
 }
 
+export interface EmojiReactionRole {
+    messageId: string;
+    channelId: string;
+    emoji: string;
+    roleId: string;
+}
+
 export interface ReactRolesConfig {
     panels: ReactRolePanel[];
+    reactionRoles: EmojiReactionRole[];
 }
 
 const DEFAULT_CONFIG: ReactRolesConfig = {
-    panels: []
+    panels: [],
+    reactionRoles: [],
 };
+
+export function matchEmoji(
+    stored: string,
+    reactionEmoji: { id?: string | null; name?: string | null; identifier?: string }
+): boolean {
+    const s = stored.trim();
+    if (reactionEmoji.id && s.includes(reactionEmoji.id)) return true;
+    if (reactionEmoji.name && (s === reactionEmoji.name || s.includes(`:${reactionEmoji.name}:`))) return true;
+    if (reactionEmoji.identifier && s === reactionEmoji.identifier) return true;
+    return false;
+}
 
 export class ReactRolesSettingsService {
     async get(guildId: string): Promise<ReactRolesConfig> {
@@ -35,25 +55,54 @@ export class ReactRolesSettingsService {
             }
             return {
                 ...DEFAULT_CONFIG,
-                ...raw
+                ...raw,
+                panels: raw.panels || [],
+                reactionRoles: raw.reactionRoles || [],
             };
         } catch (error) {
             logger.error(`Failed to get react roles settings for guild ${guildId}:`, error);
-            return DEFAULT_CONFIG;
+            return { ...DEFAULT_CONFIG };
         }
     }
 
     async set(guildId: string, updates: Partial<ReactRolesConfig>): Promise<ReactRolesConfig> {
         const current = await this.get(guildId);
-        const updated = { ...current, ...updates };
+        const updated: ReactRolesConfig = { ...current, ...updates };
         try {
             await supabase.saveCustomEmbed(guildId, '_react_roles_settings', {
-                description: JSON.stringify(updated)
+                description: JSON.stringify(updated),
             });
         } catch (error) {
             logger.error(`Failed to save react roles settings for guild ${guildId}:`, error);
         }
         return updated;
+    }
+
+    async addReactionRole(guildId: string, role: EmojiReactionRole): Promise<ReactRolesConfig> {
+        const config = await this.get(guildId);
+        // Remove existing mapping with same messageId and emoji if any
+        const filtered = config.reactionRoles.filter(
+            (rr) => !(rr.messageId === role.messageId && matchEmoji(rr.emoji, { name: role.emoji, id: role.emoji }))
+        );
+        filtered.push(role);
+        return this.set(guildId, { reactionRoles: filtered });
+    }
+
+    async removeReactionRole(guildId: string, messageId: string, emoji?: string): Promise<{ success: boolean; removedCount: number }> {
+        const config = await this.get(guildId);
+        const initialCount = config.reactionRoles.length;
+        const filtered = config.reactionRoles.filter((rr) => {
+            if (rr.messageId !== messageId) return true;
+            if (emoji && !matchEmoji(rr.emoji, { name: emoji, id: emoji })) return true;
+            return false;
+        });
+
+        const removedCount = initialCount - filtered.length;
+        if (removedCount > 0) {
+            await this.set(guildId, { reactionRoles: filtered });
+            return { success: true, removedCount };
+        }
+        return { success: false, removedCount: 0 };
     }
 }
 
