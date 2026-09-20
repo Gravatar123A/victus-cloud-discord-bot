@@ -20,35 +20,6 @@ export const FISH_SELL_PRICES = {
     pufferfish: 3.0,
     treasure: 15.0,
 };
-export const rpgCommand = {
-    data: new SlashCommandBuilder()
-        .setName('rpg')
-        .setDescription('Minecraft Text-RPG: mine, fish, craft, and sell materials for real Victus COINS')
-        .addSubcommand((sub) => sub
-        .setName('mine')
-        .setDescription('Mine underground for coal, iron, gold, diamonds, and netherite'))
-        .addSubcommand((sub) => sub
-        .setName('fish')
-        .setDescription('Cast your fishing line into the water to catch fish and sunken treasure'))
-        .addSubcommand((sub) => sub
-        .setName('inv')
-        .setDescription('View your RPG mining & fishing inventory, pickaxe, and rod tiers'))
-        .addSubcommand((sub) => sub
-        .setName('sell')
-        .setDescription('Sell your mined ores and fish for real Victus Cloud COINS')
-        .addStringOption((opt) => opt
-        .setName('category')
-        .setDescription('What to sell')
-        .setRequired(true)
-        .addChoices({ name: 'Sell All Ores & Fish', value: 'all' }, { name: 'Sell Only Ores', value: 'ores' }, { name: 'Sell Only Fish', value: 'fish' })))
-        .addSubcommand((sub) => sub
-        .setName('craft')
-        .setDescription('Upgrade your pickaxe or fishing rod to harvest rarer resources')
-        .addStringOption((opt) => opt
-        .setName('upgrade')
-        .setDescription('Select equipment upgrade')
-        .setRequired(true)
-        .addChoices({ name: 'Stone Pickaxe (10 Coal)', value: 'pick_stone' }, { name: 'Iron Pickaxe (15 Iron)', value: 'pick_iron' }, { name: 'Diamond Pickaxe (20 Diamonds)', value: 'pick_diamond' }, { name: 'Netherite Pickaxe (10 Netherite)', value: 'pick_netherite' }, { name: 'Lucky Fishing Rod (10 Gold)', value: 'rod_lucky' }, { name: 'Sea Fishing Rod (15 Diamonds)', value: 'rod_sea' }, { name: 'Prismarine Fishing Rod (8 Netherite)', value: 'rod_prismarine' }))),
 export async function handleMine(interaction) {
     const userId = interaction.user.id;
     const inv = await viralExpansionStore.getInventory(userId);
