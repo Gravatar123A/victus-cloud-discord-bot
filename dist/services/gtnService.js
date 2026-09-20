@@ -1,20 +1,66 @@
 import { EmbedBuilder, PermissionFlagsBits, } from 'discord.js';
 import { supabase } from './supabase.js';
+import { CoinTransactionLock } from './coinTransactionLock.js';
 import { logger } from '../utils/logger.js';
 export const DEFAULT_GTN_CONFIG = {
     channelId: null,
     autoLock: true,
     hintIntervalSeconds: 45,
+    rewardCoins: 0,
+    pingRoleId: '1551226428371243209',
+    autoEnabled: false,
+    autoIntervalMs: 60 * 60 * 1000, // 1 hour default
+    maxNumber: 10000,
+    nextAutoGameAt: null,
 };
-function formatDuration(ms) {
-    const seconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
+export function formatDuration(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const parts = [];
+    if (days > 0)
+        parts.push(`${days}d`);
     if (hours > 0)
-        return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+        parts.push(`${hours}h`);
     if (minutes > 0)
-        return `${minutes}m ${seconds % 60}s`;
-    return `${seconds}s`;
+        parts.push(`${minutes}m`);
+    if (seconds > 0 || parts.length === 0)
+        parts.push(`${seconds}s`);
+    return parts.join(' ');
+}
+export function parseTimeDuration(str) {
+    const trimmed = str.trim().toLowerCase();
+    if (trimmed === '0' || trimmed === 'off' || trimmed === 'disable' || trimmed === 'disabled' || trimmed === 'none') {
+        return 0;
+    }
+    const regex = /(\d+)\s*(d|h|m|s)/g;
+    let totalMs = 0;
+    let match;
+    let matchedAny = false;
+    while ((match = regex.exec(trimmed)) !== null) {
+        matchedAny = true;
+        const val = parseInt(match[1], 10);
+        const unit = match[2];
+        if (unit === 'd')
+            totalMs += val * 24 * 60 * 60 * 1000;
+        else if (unit === 'h')
+            totalMs += val * 60 * 60 * 1000;
+        else if (unit === 'm')
+            totalMs += val * 60 * 1000;
+        else if (unit === 's')
+            totalMs += val * 1000;
+    }
+    if (!matchedAny) {
+        // Direct number interpreted as minutes (e.g. "10" -> 10 minutes)
+        if (/^\d+$/.test(trimmed)) {
+            const val = parseInt(trimmed, 10);
+            return val * 60 * 1000;
+        }
+        return null;
+    }
+    return totalMs;
 }
 function isPrime(n) {
     if (n <= 1)
@@ -33,15 +79,9 @@ export function parseGtnGuess(text) {
     const trimmed = text.trim();
     if (!trimmed)
         return null;
-    // 1. Direct integer
+    // Strict single integer only
     if (/^-?\d+$/.test(trimmed)) {
         const val = parseInt(trimmed, 10);
-        return Number.isSafeInteger(val) ? val : null;
-    }
-    // 2. First token if someone typed "42 gg" or "100 maybe"
-    const firstWord = trimmed.split(/\s+/)[0];
-    if (/^-?\d+$/.test(firstWord)) {
-        const val = parseInt(firstWord, 10);
         return Number.isSafeInteger(val) ? val : null;
     }
     return null;
@@ -49,6 +89,7 @@ export function parseGtnGuess(text) {
 export class GtnService {
     cache = new Map();
     activeGames = new Map();
+    autoTimers = new Map();
     /**
      * Get GTN configuration for a guild.
      */
@@ -149,8 +190,9 @@ export class GtnService {
             .setTitle('🔒 Guess The Number Event Channel')
             .setDescription('This channel is the designated **Guess The Number** arena!\n\n' +
             '🔒 **Status:** Channel is locked.\n' +
-            '🔓 It will **automatically unlock** when a game begins (`/gtn start <number>`).\n' +
-            '🔒 It will **automatically lock** back down when a player wins or the game ends.')
+            '🔓 It will **automatically unlock** when a game begins (`/gtn start <number>` or automated timer).\n' +
+            '🔒 It will **automatically lock** back down when a player wins or the game ends.\n' +
+            '💬 **Chat rule:** Only numbers are allowed during games!')
             .setFooter({ text: 'Victus Cloud Events' })
             .setTimestamp();
         await channel.send({ embeds: [embed] }).catch(() => { });
@@ -179,7 +221,7 @@ export class GtnService {
     /**
      * Start a new Guess The Number game.
      */
-    async startGame(guild, channel, hostId, secretNumber) {
+    async startGame(guild, channel, hostId, secretNumber, maxRange = 10000) {
         if (this.activeGames.has(guild.id)) {
             const active = this.activeGames.get(guild.id);
             return {
@@ -199,6 +241,7 @@ export class GtnService {
             guildId: guild.id,
             channelId: channel.id,
             secretNumber,
+            maxRange,
             hostId,
             startedAt: Date.now(),
             guessCount: 0,
@@ -215,20 +258,34 @@ export class GtnService {
             await this.sendAutomatedHint(guild.id, channel);
         }, intervalMs);
         this.activeGames.set(guild.id, game);
-        // Send game announcement embed
+        // Determine ping role (default: 1551226428371243209)
+        const pingRoleId = config.pingRoleId || '1551226428371243209';
+        const roleMention = pingRoleId ? `<@&${pingRoleId}>` : '';
+        // Build start announcement embed
         const startEmbed = new EmbedBuilder()
             .setColor(0x8b5cf6)
             .setTitle('🎲 Guess The Number Game Started!')
             .setDescription(`A new game of **Guess The Number** has begun in this channel!\n\n` +
-            `🎯 **Goal:** Guess the secret number chosen by <@${hostId}>.\n` +
-            `💬 **How to play:** Type any number in this channel.\n` +
-            `⬆️ **Bot reactions:** The bot will react with ⬆️ if the number is **higher**, or ⬇️ if it is **lower**.\n` +
-            `💡 **Hints:** Clues and range updates will be broadcast periodically until someone wins!\n\n` +
+            `🎯 **Goal:** Guess the secret number (between **1** and **${maxRange}**).\n` +
+            `💬 **Rule:** Send **NUMBERS ONLY**. Non-numeric messages will be automatically deleted!\n` +
+            `⬆️ **Reactions:** The bot reacts with ⬆️ if higher, or ⬇️ if lower.\n` +
+            `🔥 **Hot Guesses:** The bot reacts with 🔥 if you are within 5 of the secret number!\n` +
+            `💡 **Hints:** Automatic clues will appear every ${Math.floor(intervalMs / 1000)}s until someone wins!\n\n` +
             `🔓 **Channel is now UNLOCKED!** Good luck!`)
-            .addFields({ name: '👑 Host', value: `<@${hostId}>`, inline: true }, { name: '📊 Current Range', value: '`?` ⟷ `?`', inline: true }, { name: '💡 First Hint', value: `Arrives in <t:${Math.floor((Date.now() + intervalMs) / 1000)}:R>`, inline: true })
-            .setFooter({ text: 'Victus Cloud Events • Type your guesses below!' })
+            .addFields({ name: '👑 Host', value: hostId === guild.client.user?.id ? '🤖 Victus Cloud (Automated)' : `<@${hostId}>`, inline: true }, { name: '📊 Range', value: `\`1\` ⟷ \`${maxRange}\``, inline: true }, {
+            name: '🪙 Reward',
+            value: config.rewardCoins > 0 ? `**${config.rewardCoins} Victus Coins** (Linked accounts)` : 'Glory & Bragging Rights',
+            inline: true,
+        })
+            .setFooter({ text: 'Victus Cloud Events • Type your number below!' })
             .setTimestamp();
-        await channel.send({ embeds: [startEmbed] }).catch(() => { });
+        await channel.send({
+            content: roleMention ? `🔔 ${roleMention} A new **Guess The Number** game has started!` : undefined,
+            embeds: [startEmbed],
+            allowedMentions: pingRoleId ? { roles: [pingRoleId] } : undefined,
+        }).catch((err) => {
+            logger.error('[GtnService] Failed to send game start announcement:', err);
+        });
         return {
             success: true,
             message: `✅ Guess The Number game started in <#${channel.id}>!`,
@@ -268,6 +325,10 @@ export class GtnService {
                     content: '🔒 **Channel Locked:** The event has ended. This channel is locked until the next game!',
                 }).catch(() => { });
             }
+            // Schedule next game if automated mode is active
+            if (config.autoEnabled && config.channelId) {
+                this.scheduleNextAutoGame(guild, config.autoIntervalMs);
+            }
         }
         return {
             success: true,
@@ -275,7 +336,42 @@ export class GtnService {
         };
     }
     /**
+     * Schedule the next automated game.
+     */
+    scheduleNextAutoGame(guild, delayMs) {
+        const existing = this.autoTimers.get(guild.id);
+        if (existing)
+            clearTimeout(existing);
+        const nextAutoGameAt = Date.now() + delayMs;
+        this.set(guild.id, { nextAutoGameAt }).catch(() => { });
+        const timer = setTimeout(async () => {
+            this.autoTimers.delete(guild.id);
+            await this.launchAutoGame(guild);
+        }, delayMs);
+        this.autoTimers.set(guild.id, timer);
+        logger.info(`[GtnService] Scheduled next auto GTN game for guild ${guild.id} in ${formatDuration(delayMs)}`);
+    }
+    /**
+     * Launch an automated game with a random number up to config.maxNumber (default 10,000).
+     */
+    async launchAutoGame(guild) {
+        if (this.activeGames.has(guild.id))
+            return;
+        const config = await this.get(guild.id);
+        if (!config.autoEnabled || !config.channelId)
+            return;
+        const channel = guild.channels.cache.get(config.channelId);
+        if (!channel || !channel.isTextBased())
+            return;
+        const max = config.maxNumber || 10000;
+        const randomSecret = Math.floor(Math.random() * max) + 1;
+        const botId = guild.client.user?.id || 'VictusBot';
+        logger.info(`[GtnService] Launching automated GTN in guild ${guild.id}, channel ${channel.id}, secret: ${randomSecret} (1-${max})`);
+        await this.startGame(guild, channel, botId, randomSecret, max);
+    }
+    /**
      * Process message in guild.
+     * Enforces: "they should not be able to send other messages except numbers"
      */
     async handleMessage(message) {
         if (!message.inGuild() || message.author.bot)
@@ -284,10 +380,30 @@ export class GtnService {
         const game = this.activeGames.get(guildId);
         if (!game || message.channelId !== game.channelId)
             return false;
+        // In active GTN channel during an ongoing game:
         const parsedGuess = parseGtnGuess(message.content);
-        if (parsedGuess === null)
-            return false;
-        // Disallow host from guessing their own number
+        // If NOT a valid number:
+        if (parsedGuess === null) {
+            // Staff members with ManageMessages can still send chat or moderator commands
+            const isStaff = !!message.member && (message.member.permissions.has(PermissionFlagsBits.ManageMessages) ||
+                message.member.permissions.has(PermissionFlagsBits.Administrator));
+            if (isStaff) {
+                return false;
+            }
+            // Non-numeric message by a regular member: DELETE IMMEDIATELY
+            await message.delete().catch(() => { });
+            // Send a transient 3.5-second reminder
+            const warnMsg = await message.channel.send({
+                content: `⚠️ <@${message.author.id}>, only numeric guesses are allowed in this channel!`,
+            }).catch(() => null);
+            if (warnMsg) {
+                setTimeout(() => {
+                    warnMsg.delete().catch(() => { });
+                }, 3500);
+            }
+            return true;
+        }
+        // Prevent host from guessing their own secret number
         if (message.author.id === game.hostId) {
             await message.react('🤫').catch(() => { });
             return true;
@@ -336,27 +452,75 @@ export class GtnService {
         await message.react('🏆').catch(() => { });
         await message.react('🎯').catch(() => { });
         const durationStr = formatDuration(Date.now() - game.startedAt);
+        const config = await this.get(game.guildId);
+        // Award Victus Coins if configured
+        let coinGrantResult = null;
+        if (config.rewardCoins > 0) {
+            try {
+                coinGrantResult = await CoinTransactionLock.grantCoins(message.author.id, config.rewardCoins, 'gtn_reward', `gtn:${game.guildId}:${Date.now()}`, `GTN Game Reward: Guessed secret number ${game.secretNumber}`);
+            }
+            catch (err) {
+                logger.error(`[GtnService] Failed to grant coins to ${message.author.id}:`, err);
+                coinGrantResult = { success: false, error: err.message };
+            }
+        }
         const winEmbed = new EmbedBuilder()
             .setColor(0x10b981) // Emerald Green
             .setTitle('🏆 WE HAVE A WINNER!')
-            .setDescription(`🎉 Huge congratulations to <@${message.author.id}> for guessing the secret number **${game.secretNumber}**!\n\n` +
+            .setDescription(`🎉 Huge congratulations to <@${message.author.id}> for correctly guessing the secret number **${game.secretNumber}**!\n\n` +
             `The number was accurately guessed after **${game.guessCount}** attempt${game.guessCount === 1 ? '' : 's'}!`)
-            .addFields({ name: '👤 Winner', value: `<@${message.author.id}> (${message.author.username})`, inline: true }, { name: '🎯 Secret Number', value: `**${game.secretNumber}**`, inline: true }, { name: '⏱️ Time Taken', value: `**${durationStr}**`, inline: true }, { name: '📊 Total Guesses', value: `**${game.guessCount}**`, inline: true }, { name: '👥 Total Players', value: `**${game.participants.size}**`, inline: true }, { name: '👑 Host', value: `<@${game.hostId}>`, inline: true })
+            .addFields({ name: '👤 Winner', value: `<@${message.author.id}> (${message.author.username})`, inline: true }, { name: '🎯 Secret Number', value: `**${game.secretNumber}**`, inline: true }, { name: '⏱️ Time Taken', value: `**${durationStr}**`, inline: true }, { name: '📊 Total Guesses', value: `**${game.guessCount}**`, inline: true }, { name: '👥 Total Players', value: `**${game.participants.size}**`, inline: true }, { name: '👑 Host', value: game.hostId === message.client.user?.id ? '🤖 Victus Cloud' : `<@${game.hostId}>`, inline: true })
             .setFooter({ text: 'Victus Cloud Events • GG to all players!' })
             .setTimestamp();
+        // Add Coin Reward status to embed
+        if (config.rewardCoins > 0) {
+            if (coinGrantResult?.success) {
+                winEmbed.addFields({
+                    name: '🪙 Victus Cloud Coins Reward',
+                    value: `✅ **+${config.rewardCoins} Coins** added to your linked Victus Cloud account!\n💳 Current Balance: **${coinGrantResult.newBalance}** Coins`,
+                    inline: false,
+                });
+            }
+            else if (coinGrantResult?.unlinked) {
+                winEmbed.addFields({
+                    name: '🪙 Victus Cloud Coins Reward',
+                    value: `⚠️ **${config.rewardCoins} Coins** available!\nYour Discord account is not linked to Victus Cloud. Link your account with \`/link\` to claim coin rewards in future games!`,
+                    inline: false,
+                });
+            }
+            else if (coinGrantResult?.error) {
+                winEmbed.addFields({
+                    name: '🪙 Victus Cloud Coins Reward',
+                    value: `⚠️ Error adding coins: ${coinGrantResult.error}`,
+                    inline: false,
+                });
+            }
+        }
+        // Add automated next game notice if auto mode is on
+        if (config.autoEnabled && config.channelId) {
+            const nextGameTimestamp = Math.floor((Date.now() + config.autoIntervalMs) / 1000);
+            winEmbed.addFields({
+                name: '⏳ Next Automated Game',
+                value: `The next round will start automatically in <t:${nextGameTimestamp}:R> (1 ⟷ ${config.maxNumber || 10000})!`,
+                inline: false,
+            });
+        }
         if ('send' in message.channel) {
             await message.channel.send({
                 content: `🎊 **BINGO!** <@${message.author.id}> got it!`,
                 embeds: [winEmbed],
             }).catch(() => { });
             // Relock channel if configured
-            const config = await this.get(game.guildId);
             const channel = message.channel;
             if (config.channelId === channel.id || game.wasLockedBefore) {
                 await this.lockChannel(channel, 'GTN game won - relocking channel');
                 await channel.send({
                     content: '🔒 **Channel Locked:** The game has concluded. This channel is now locked until the next game!',
                 }).catch(() => { });
+            }
+            // Trigger next auto-game schedule
+            if (config.autoEnabled && config.channelId && message.guild) {
+                this.scheduleNextAutoGame(message.guild, config.autoIntervalMs);
             }
         }
     }
@@ -487,8 +651,8 @@ export class GtnService {
         }
         if (candidates.length === 0) {
             // If all hints exhausted, reiterate the tightest range
-            const lowest = game.lowestGuess !== null ? game.lowestGuess : '?';
-            const highest = game.highestGuess !== null ? game.highestGuess : '?';
+            const lowest = game.lowestGuess !== null ? game.lowestGuess : '1';
+            const highest = game.highestGuess !== null ? game.highestGuess : game.maxRange;
             return {
                 hintKey: `range_reiterate_${Date.now()}`,
                 title: 'Range Summary',
@@ -515,8 +679,8 @@ export class GtnService {
         const hint = this.generateHint(game);
         if (!hint)
             return false;
-        const lowest = game.lowestGuess !== null ? String(game.lowestGuess) : '?';
-        const highest = game.highestGuess !== null ? String(game.highestGuess) : '?';
+        const lowest = game.lowestGuess !== null ? String(game.lowestGuess) : '1';
+        const highest = game.highestGuess !== null ? String(game.highestGuess) : String(game.maxRange);
         const embed = new EmbedBuilder()
             .setColor(0xf59e0b) // Amber / Gold
             .setTitle(`💡 Guess The Number Hint: ${hint.title}`)
@@ -536,8 +700,8 @@ export class GtnService {
             const promptEmbed = new EmbedBuilder()
                 .setColor(0x8b5cf6)
                 .setTitle('⏳ Waiting for Guesses!')
-                .setDescription('No one has made a guess yet! Type any number in this channel to begin narrowing down the range.')
-                .setFooter({ text: 'Victus Cloud Events' });
+                .setDescription(`No one has made a guess yet! Type any number between 1 and ${game.maxRange} to start narrowing down the range.`)
+                .setFooter({ text: 'Victus Cloud Events • Numbers only allowed' });
             await channel.send({ embeds: [promptEmbed] }).catch(() => { });
             return;
         }

@@ -1,5 +1,5 @@
 import { ChannelType, EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, } from 'discord.js';
-import { gtnService } from '../services/gtnService.js';
+import { gtnService, parseTimeDuration, formatDuration } from '../services/gtnService.js';
 export const gtnCommand = {
     data: new SlashCommandBuilder()
         .setName('gtn')
@@ -17,6 +17,48 @@ export const gtnCommand = {
         .setName('channel')
         .setDescription('Channel to host the game in (defaults to GTN channel or current)')
         .addChannelTypes(ChannelType.GuildText)
+        .setRequired(false))
+        .addIntegerOption((opt) => opt
+        .setName('max_range')
+        .setDescription('Maximum range shown to players (default 10000)')
+        .setMinValue(1)
+        .setRequired(false)))
+        .addSubcommand((sub) => sub
+        .setName('auto')
+        .setDescription('Configure automated recurring GTN games (e.g. 10m, 1h, off)')
+        .addStringOption((opt) => opt
+        .setName('time')
+        .setDescription('Delay before next game starts after a win (e.g. 10m, 1h, off to disable)')
+        .setRequired(true))
+        .addIntegerOption((opt) => opt
+        .setName('max_number')
+        .setDescription('Max random number generated (default 10000)')
+        .setMinValue(10)
+        .setMaxValue(1000000)
+        .setRequired(false))
+        .addBooleanOption((opt) => opt
+        .setName('start_now')
+        .setDescription('Immediately start the first automated game now')
+        .setRequired(false)))
+        .addSubcommand((sub) => sub
+        .setName('coins')
+        .setDescription('Configure Victus Coins reward for winning GTN')
+        .addIntegerOption((opt) => opt
+        .setName('amount')
+        .setDescription('Number of coins to give to the winner with a linked account (0 to disable)')
+        .setMinValue(0)
+        .setMaxValue(100000)
+        .setRequired(true)))
+        .addSubcommand((sub) => sub
+        .setName('role')
+        .setDescription('Configure role pinged when GTN starts (default: @1551226428371243209)')
+        .addRoleOption((opt) => opt
+        .setName('role')
+        .setDescription('The role to ping')
+        .setRequired(false))
+        .addBooleanOption((opt) => opt
+        .setName('reset')
+        .setDescription('Reset to default role (@1551226428371243209)')
         .setRequired(false)))
         .addSubcommand((sub) => sub
         .setName('channel')
@@ -38,7 +80,7 @@ export const gtnCommand = {
         .setDescription('Force an immediate hint in the active GTN channel'))
         .addSubcommand((sub) => sub
         .setName('status')
-        .setDescription('View status of the current game or channel setup')),
+        .setDescription('View status of the current game, coins, auto schedule, and channel')),
     async execute(interaction) {
         if (!interaction.guild) {
             await interaction.reply({
@@ -59,15 +101,37 @@ export const gtnCommand = {
         catch {
             subcommand = null;
         }
-        // Support prefix syntax: e.g. !gtn 42, !gtn 42 #channel, !gtn channel #channel, !gtn end
+        // Support prefix syntax: e.g. !gtn 42, !gtn auto 10m, !gtn coins 50, !gtn channel #ch
         const rawMessage = interaction.message;
         let prefixArgNumber = null;
         let prefixTargetChannel = null;
+        let prefixStringArg = null;
+        let prefixRoleArg = null;
         if (!subcommand && rawMessage?.content) {
             const parts = rawMessage.content.trim().split(/\s+/).slice(1);
             if (parts.length > 0) {
                 const first = parts[0].toLowerCase();
-                if (first === 'channel') {
+                if (first === 'auto') {
+                    subcommand = 'auto';
+                    if (parts[1])
+                        prefixStringArg = parts[1];
+                }
+                else if (first === 'coins' || first === 'coin' || first === 'reward') {
+                    subcommand = 'coins';
+                    if (parts[1] && /^\d+$/.test(parts[1])) {
+                        prefixArgNumber = parseInt(parts[1], 10);
+                    }
+                }
+                else if (first === 'role' || first === 'ping') {
+                    subcommand = 'role';
+                    const roleMention = parts.find((p) => /<@&(\d+)>/.test(p));
+                    if (roleMention) {
+                        const m = roleMention.match(/\d+/);
+                        if (m)
+                            prefixRoleArg = interaction.guild.roles.cache.get(m[0]) ?? null;
+                    }
+                }
+                else if (first === 'channel') {
                     subcommand = 'channel';
                 }
                 else if (first === 'end' || first === 'cancel' || first === 'stop') {
@@ -86,7 +150,7 @@ export const gtnCommand = {
                     }
                 }
                 else if (/^-?\d+$/.test(first)) {
-                    // Direct number: e.g. !gtn 42 #events
+                    // Direct integer: !gtn 42 #channel
                     subcommand = 'start';
                     prefixArgNumber = parseInt(first, 10);
                 }
@@ -144,11 +208,12 @@ export const gtnCommand = {
                 });
                 return;
             }
-            // If triggered via prefix, delete host's message so secret number is hidden!
+            // Hide the host's prefix message with the secret number
             if (rawMessage && typeof rawMessage.delete === 'function') {
                 await rawMessage.delete().catch(() => { });
             }
-            const result = await gtnService.startGame(interaction.guild, targetChannel, interaction.user.id, rawSecret);
+            const maxRange = interaction.options.getInteger?.('max_range') ?? config.maxNumber ?? 10000;
+            const result = await gtnService.startGame(interaction.guild, targetChannel, interaction.user.id, rawSecret, maxRange);
             if (!result.success) {
                 await interaction.reply({
                     content: result.message,
@@ -156,14 +221,155 @@ export const gtnCommand = {
                 });
                 return;
             }
-            // Ephemeral confirmation so the secret number is NEVER leaked!
             await interaction.reply({
-                content: `✅ **GTN Game Started!** Secret number **${rawSecret}** set in <#${targetChannel.id}>. Channel is now unlocked!`,
+                content: `✅ **GTN Game Started!** Secret number **${rawSecret}** set in <#${targetChannel.id}>. Channel unlocked and ping sent!`,
                 flags: MessageFlags.Ephemeral,
             }).catch(() => { });
             return;
         }
-        // 2. SUBCOMMAND: CHANNEL
+        // 2. SUBCOMMAND: AUTO
+        if (subcommand === 'auto') {
+            if (!hasStaffPerms) {
+                await interaction.reply({
+                    content: '⛔ You need the **Manage Server** or **Manage Messages** permission to configure automated GTN.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            const timeStr = interaction.options.getString?.('time') ?? prefixStringArg;
+            if (!timeStr) {
+                await interaction.reply({
+                    content: '❌ Please specify an interval like `10m`, `1h`, `30m`, or `off` to disable. Example: `/gtn auto time:10m`.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            const parsedMs = parseTimeDuration(timeStr);
+            if (parsedMs === null) {
+                await interaction.reply({
+                    content: '❌ Invalid time format. Please use formats like `10m`, `30m`, `1h`, `2h`, or `off` to disable.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            // Disabling auto mode
+            if (parsedMs === 0) {
+                await gtnService.set(interaction.guild.id, {
+                    autoEnabled: false,
+                    nextAutoGameAt: null,
+                });
+                await interaction.reply({
+                    content: '⏸️ **Automated GTN Games Disabled.** Manual games can still be started with `/gtn start`.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            const config = await gtnService.get(interaction.guild.id);
+            if (!config.channelId) {
+                await interaction.reply({
+                    content: '⚠️ Please set a dedicated GTN channel first using `/gtn channel channel:<#channel>` so the bot knows where to host automated games!',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            const maxNumber = interaction.options.getInteger?.('max_number') ?? config.maxNumber ?? 10000;
+            const startNow = interaction.options.getBoolean?.('start_now') ?? false;
+            await gtnService.set(interaction.guild.id, {
+                autoEnabled: true,
+                autoIntervalMs: parsedMs,
+                maxNumber,
+            });
+            const pingRole = config.pingRoleId || '1551226428371243209';
+            if (startNow) {
+                await interaction.reply({
+                    content: `🚀 **Automated GTN Activated!** Starting the first game now with a random number (1 to ${maxNumber}). Subsequent games will start every **${formatDuration(parsedMs)}** after each win!`,
+                    flags: MessageFlags.Ephemeral,
+                });
+                await gtnService.launchAutoGame(interaction.guild);
+            }
+            else {
+                gtnService.scheduleNextAutoGame(interaction.guild, parsedMs);
+                const nextTs = Math.floor((Date.now() + parsedMs) / 1000);
+                await interaction.reply({
+                    content: `✅ **Automated GTN Enabled!**\n` +
+                        `⏱️ **Interval:** Every **${formatDuration(parsedMs)}** after each game concludes.\n` +
+                        `🎲 **Range:** Random secret from **1 to ${maxNumber}**.\n` +
+                        `📢 **Ping Role:** <@&${pingRole}>\n` +
+                        `📍 **Channel:** <#${config.channelId}>\n` +
+                        `⏳ **Next Game Starts:** <t:${nextTs}:R> (<t:${nextTs}:f>)`,
+                    flags: MessageFlags.Ephemeral,
+                });
+            }
+            return;
+        }
+        // 3. SUBCOMMAND: COINS
+        if (subcommand === 'coins') {
+            if (!hasStaffPerms) {
+                await interaction.reply({
+                    content: '⛔ You need the **Manage Server** permission to configure Victus Coins rewards.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            const amount = interaction.options.getInteger?.('amount') ?? prefixArgNumber;
+            if (amount === null || amount === undefined || isNaN(amount) || amount < 0) {
+                await interaction.reply({
+                    content: '❌ Please specify a valid coin reward (0 to disable, or positive integer e.g. 50, 20).',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            await gtnService.set(interaction.guild.id, { rewardCoins: amount });
+            if (amount > 0) {
+                await interaction.reply({
+                    content: `🪙 **Victus Coins Reward Set:** The winner of each GTN game will now receive **${amount} Victus Coins** (awarded automatically to their linked Victus Cloud account)!`,
+                    flags: MessageFlags.Ephemeral,
+                });
+            }
+            else {
+                await interaction.reply({
+                    content: '⏸️ **Victus Coins Reward Disabled:** No coins will be awarded for GTN wins.',
+                    flags: MessageFlags.Ephemeral,
+                });
+            }
+            return;
+        }
+        // 4. SUBCOMMAND: ROLE
+        if (subcommand === 'role') {
+            if (!hasStaffPerms) {
+                await interaction.reply({
+                    content: '⛔ You need the **Manage Server** permission to configure the announcement ping role.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            const reset = interaction.options.getBoolean?.('reset') ?? false;
+            const targetRole = interaction.options.getRole?.('role') ?? prefixRoleArg;
+            if (reset) {
+                await gtnService.set(interaction.guild.id, { pingRoleId: '1551226428371243209' });
+                await interaction.reply({
+                    content: '✅ Ping role reset to default: <@&1551226428371243209>.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            if (targetRole) {
+                await gtnService.set(interaction.guild.id, { pingRoleId: targetRole.id });
+                await interaction.reply({
+                    content: `✅ Game start ping role updated to <@&${targetRole.id}>.`,
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            const config = await gtnService.get(interaction.guild.id);
+            const currentRole = config.pingRoleId || '1551226428371243209';
+            await interaction.reply({
+                content: `📢 Current GTN ping role is <@&${currentRole}>. Use \`/gtn role role:@role\` to change it.`,
+                flags: MessageFlags.Ephemeral,
+            });
+            return;
+        }
+        // 5. SUBCOMMAND: CHANNEL
         if (subcommand === 'channel') {
             if (!hasStaffPerms) {
                 await interaction.reply({
@@ -175,7 +381,6 @@ export const gtnCommand = {
             const removeOption = interaction.options.getBoolean?.('remove') ?? false;
             const channelOption = interaction.options.getChannel?.('channel')
                 ?? prefixTargetChannel;
-            // Check if prefix had "remove"
             const isRemove = removeOption || (rawMessage?.content && /\b(remove|clear|delete|off)\b/i.test(rawMessage.content));
             if (isRemove) {
                 const result = await gtnService.removeGtnChannel(interaction.guild);
@@ -193,7 +398,6 @@ export const gtnCommand = {
                 });
                 return;
             }
-            // Neither channel nor remove provided -> show current channel config
             const config = await gtnService.get(interaction.guild.id);
             if (config.channelId) {
                 await interaction.reply({
@@ -209,7 +413,7 @@ export const gtnCommand = {
             }
             return;
         }
-        // 3. SUBCOMMAND: END / CANCEL
+        // 6. SUBCOMMAND: END / CANCEL
         if (subcommand === 'end') {
             if (!hasStaffPerms) {
                 await interaction.reply({
@@ -225,7 +429,7 @@ export const gtnCommand = {
             });
             return;
         }
-        // 4. SUBCOMMAND: HINT
+        // 7. SUBCOMMAND: HINT
         if (subcommand === 'hint') {
             if (!hasStaffPerms) {
                 await interaction.reply({
@@ -265,29 +469,45 @@ export const gtnCommand = {
             }
             return;
         }
-        // 5. SUBCOMMAND: STATUS
+        // 8. SUBCOMMAND: STATUS
         if (subcommand === 'status') {
             const config = await gtnService.get(interaction.guild.id);
             const game = gtnService.getActiveGame(interaction.guild.id);
+            const pingRole = config.pingRoleId || '1551226428371243209';
             const embed = new EmbedBuilder()
                 .setColor(0x8b5cf6)
-                .setTitle('🎲 Guess The Number Status')
+                .setTitle('🎲 Guess The Number System Status')
                 .setTimestamp();
-            if (config.channelId) {
-                embed.addFields({ name: '🔒 Dedicated GTN Channel', value: `<#${config.channelId}>`, inline: true });
-            }
-            else {
-                embed.addFields({ name: '🔒 Dedicated GTN Channel', value: 'None set (runs anywhere)', inline: true });
-            }
+            embed.addFields({
+                name: '🔒 Dedicated Channel',
+                value: config.channelId ? `<#${config.channelId}>` : 'None (runs anywhere)',
+                inline: true,
+            }, {
+                name: '📢 Ping Role',
+                value: `<@&${pingRole}>`,
+                inline: true,
+            }, {
+                name: '🪙 Coin Reward',
+                value: config.rewardCoins > 0 ? `**${config.rewardCoins} Coins**` : 'Disabled',
+                inline: true,
+            }, {
+                name: '🤖 Auto Mode',
+                value: config.autoEnabled
+                    ? `🟢 Enabled (${formatDuration(config.autoIntervalMs || 3600000)} interval, 1-${config.maxNumber || 10000})`
+                    : '🔴 Disabled',
+                inline: true,
+            });
             if (game) {
-                const lowest = game.lowestGuess !== null ? String(game.lowestGuess) : '?';
-                const highest = game.highestGuess !== null ? String(game.highestGuess) : '?';
-                embed.addFields({ name: '🟢 Active Game', value: `Running in <#${game.channelId}>`, inline: true }, { name: '👑 Host', value: `<@${game.hostId}>`, inline: true }, { name: '📊 Current Range', value: `\`${lowest}\` ⟷ \`${highest}\``, inline: true }, { name: '🎯 Total Guesses', value: `**${game.guessCount}**`, inline: true }, { name: '👥 Participants', value: `**${game.participants.size}**`, inline: true }, { name: '💡 Hints Given', value: `**${game.givenHints.length}**`, inline: true });
+                const lowest = game.lowestGuess !== null ? String(game.lowestGuess) : '1';
+                const highest = game.highestGuess !== null ? String(game.highestGuess) : String(game.maxRange);
+                embed.addFields({ name: '🟢 Active Game', value: `Running in <#${game.channelId}>`, inline: true }, { name: '👑 Host', value: game.hostId === interaction.client.user?.id ? '🤖 Victus Cloud' : `<@${game.hostId}>`, inline: true }, { name: '📊 Current Range', value: `\`${lowest}\` ⟷ \`${highest}\``, inline: true }, { name: '🎯 Total Guesses', value: `**${game.guessCount}**`, inline: true }, { name: '👥 Participants', value: `**${game.participants.size}**`, inline: true }, { name: '💡 Hints Given', value: `**${game.givenHints.length}**`, inline: true });
             }
             else {
                 embed.addFields({
-                    name: '⚪ Game State',
-                    value: 'No game is currently active. Start one with `/gtn start <number>`.',
+                    name: '⚪ Current Game',
+                    value: config.autoEnabled && config.nextAutoGameAt
+                        ? `Next auto game starts <t:${Math.floor(config.nextAutoGameAt / 1000)}:R>!`
+                        : 'No game is currently active. Start one with `/gtn start` or `/gtn auto`.',
                     inline: false,
                 });
             }
