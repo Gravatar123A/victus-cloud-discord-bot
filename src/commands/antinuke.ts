@@ -47,6 +47,9 @@ async function buildControlPanelEmbed(config: AntiNukeConfig, cussFilterEnabled:
     ].filter(Boolean).length;
 
     const extraOwnerSummary = `${extraOwners.users.length} Users · ${extraOwners.roles.length} Roles`;
+    const botSettings = await supabase.getBotSettings(guild.id).catch(() => null);
+    const logChannelId = botSettings?.moderation_log_channel_id || botSettings?.log_channel_id;
+    const logChannelText = logChannelId ? `<#${logChannelId}>` : (guild.systemChannel ? `<#${guild.systemChannel.id}> *(Default)*` : '`Not set`');
 
     return new EmbedBuilder()
         .setColor(config.enabled ? 0x00d2ff : 0x64748b)
@@ -56,6 +59,7 @@ async function buildControlPanelEmbed(config: AntiNukeConfig, cussFilterEnabled:
             `### 🎛️ Master Defense\n` +
             `> **System Status:** ${config.enabled ? '🟢 **ONLINE & ARMED**' : '🔴 **OFFLINE (DISABLED)**'}\n` +
             `> **Shield Capacity:** \`${activeCount}/11 Modules Armed\`\n` +
+            `> **Alert Logs:** ${logChannelText} *(Set with \`/config moderation-logs\`)*\n` +
             `> **Extra Owners:** \`${extraOwnerSummary}\` *(Manage with \`/extraowner\`)*\n` +
             `> **Access Tier:** ${isGravUser ? '👑 **Primary Owner (Grav)**' : '🛡️ **Authorized Extra Owner**'}\n\n` +
             `### 🔒 Security Shield Modules\n` +
