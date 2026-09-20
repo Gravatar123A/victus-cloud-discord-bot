@@ -89,7 +89,7 @@ export function buildPublishedPanelPayload(panel, guild) {
         `### 📋 Available Roles\n` +
         panel.mappings.map((m) => `> ${m.emoji} **${m.label}** ── <@&${m.roleId}>`).join('\n') +
         `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `-# 💡 *Click any button below to toggle your roles. Updates apply instantly!*`)
+        `-# 💡 *React with an emoji or click a button below to toggle your roles!*`)
         .setTimestamp();
     if (guild) {
         const icon = guild.iconURL({ forceStatic: false });
@@ -370,6 +370,12 @@ export const reactRolesCommand = {
                 return;
             }
             panel.messageId = postedMsg.id;
+            // Automatically react with each emoji on the panel message
+            for (const m of mappings) {
+                if (m.emoji) {
+                    await postedMsg.react(m.emoji).catch(() => { });
+                }
+            }
             // Save panel to guild config
             const config = await reactRolesSettings.get(interaction.guild.id);
             config.panels.push(panel);
@@ -548,6 +554,12 @@ export const reactRolesCommand = {
                     panel.messageId = posted.id;
                     config.panels.push(panel);
                     await reactRolesSettings.set(guildId, config);
+                    // Automatically react with each emoji on the panel message
+                    for (const m of mappings) {
+                        if (m.emoji) {
+                            await posted.react(m.emoji).catch(() => { });
+                        }
+                    }
                     const { embed, components } = renderDashboardEmbed(config, interaction.guild.name);
                     await interaction.editReply({
                         embeds: [embed],
@@ -664,6 +676,12 @@ export const reactRolesCommand = {
                         panel.messageId = postedMsg.id;
                         panel.channelId = interaction.channelId;
                         await reactRolesSettings.set(guildId, config);
+                        // Automatically react with each emoji on the panel message
+                        for (const m of panel.mappings) {
+                            if (m.emoji) {
+                                await postedMsg.react(m.emoji).catch(() => { });
+                            }
+                        }
                         const confirmEmbed = new EmbedBuilder()
                             .setColor(0x10b981)
                             .setTitle('✅ Role Panel Published!')

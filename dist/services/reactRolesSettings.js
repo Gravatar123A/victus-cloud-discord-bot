@@ -5,13 +5,29 @@ const DEFAULT_CONFIG = {
     reactionRoles: [],
 };
 export function matchEmoji(stored, reactionEmoji) {
+    if (!stored)
+        return false;
     const s = stored.trim();
+    // 1. Check custom emoji by Snowflake ID
     if (reactionEmoji.id && s.includes(reactionEmoji.id))
         return true;
-    if (reactionEmoji.name && (s === reactionEmoji.name || s.includes(`:${reactionEmoji.name}:`)))
-        return true;
-    if (reactionEmoji.identifier && s === reactionEmoji.identifier)
-        return true;
+    // 2. Exact match on reaction name or identifier
+    if (reactionEmoji.name) {
+        if (s === reactionEmoji.name)
+            return true;
+        // Strip unicode variation selectors (\uFE0E, \uFE0F) for fuzzy unicode equality
+        const normalize = (str) => str.replace(/[\uFE0E\uFE0F]/g, '');
+        if (normalize(s) === normalize(reactionEmoji.name))
+            return true;
+        if (s.replace(/:/g, '') === reactionEmoji.name.replace(/:/g, ''))
+            return true;
+    }
+    if (reactionEmoji.identifier) {
+        if (s === reactionEmoji.identifier)
+            return true;
+        if (s.includes(reactionEmoji.identifier))
+            return true;
+    }
     return false;
 }
 export class ReactRolesSettingsService {

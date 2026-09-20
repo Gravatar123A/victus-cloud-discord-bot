@@ -31,19 +31,37 @@ export const messageReactionAddEvent: Event = {
         if (!message.guild) return;
 
         const config = await reactRolesSettings.get(message.guild.id);
-        if (!config.reactionRoles || config.reactionRoles.length === 0) return;
 
-        const match = config.reactionRoles.find(
-            (rr) => rr.messageId === message.id && matchEmoji(rr.emoji, reaction.emoji)
-        );
+        let targetRoleId: string | null = null;
 
-        if (!match) return;
+        // 1. Check direct reaction role mappings
+        if (config.reactionRoles && config.reactionRoles.length > 0) {
+            const match = config.reactionRoles.find(
+                (rr) => rr.messageId === message.id && matchEmoji(rr.emoji, reaction.emoji)
+            );
+            if (match) {
+                targetRoleId = match.roleId;
+            }
+        }
+
+        // 2. Check interactive role panels (support emoji reaction on panel messages!)
+        if (!targetRoleId && config.panels && config.panels.length > 0) {
+            const panel = config.panels.find((p) => p.messageId === message.id);
+            if (panel) {
+                const mapping = panel.mappings.find((m) => matchEmoji(m.emoji, reaction.emoji));
+                if (mapping) {
+                    targetRoleId = mapping.roleId;
+                }
+            }
+        }
+
+        if (!targetRoleId) return;
 
         try {
             const member = await message.guild.members.fetch(user.id).catch(() => null);
             if (!member) return;
 
-            const targetRole = message.guild.roles.cache.get(match.roleId);
+            const targetRole = message.guild.roles.cache.get(targetRoleId);
             if (!targetRole) return;
 
             // Check if bot can assign this role
@@ -53,16 +71,16 @@ export const messageReactionAddEvent: Event = {
                 return;
             }
 
-            if (!member.roles.cache.has(match.roleId)) {
-                await member.roles.add(match.roleId, 'Reaction Role: Added via emoji reaction');
+            if (!member.roles.cache.has(targetRoleId)) {
+                await member.roles.add(targetRoleId, 'Reaction Role: Added via emoji reaction');
                 logger.info(`[ReactRoles] Added role @${targetRole.name} to ${user.tag} in ${message.guild.name}`);
-                
+
                 await user.send({
                     content: `✅ You have been assigned the **@${targetRole.name}** role in **${message.guild.name}**!`,
                 }).catch(() => {});
             }
         } catch (err) {
-            logger.error(`[ReactRoles] Failed to add role ${match.roleId} to ${user.id}:`, err);
+            logger.error(`[ReactRoles] Failed to add role ${targetRoleId} to ${user.id}:`, err);
         }
     },
 };

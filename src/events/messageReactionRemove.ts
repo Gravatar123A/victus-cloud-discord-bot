@@ -31,19 +31,37 @@ export const messageReactionRemoveEvent: Event = {
         if (!message.guild) return;
 
         const config = await reactRolesSettings.get(message.guild.id);
-        if (!config.reactionRoles || config.reactionRoles.length === 0) return;
 
-        const match = config.reactionRoles.find(
-            (rr) => rr.messageId === message.id && matchEmoji(rr.emoji, reaction.emoji)
-        );
+        let targetRoleId: string | null = null;
 
-        if (!match) return;
+        // 1. Check direct reaction role mappings
+        if (config.reactionRoles && config.reactionRoles.length > 0) {
+            const match = config.reactionRoles.find(
+                (rr) => rr.messageId === message.id && matchEmoji(rr.emoji, reaction.emoji)
+            );
+            if (match) {
+                targetRoleId = match.roleId;
+            }
+        }
+
+        // 2. Check interactive role panels (support emoji unreaction on panel messages!)
+        if (!targetRoleId && config.panels && config.panels.length > 0) {
+            const panel = config.panels.find((p) => p.messageId === message.id);
+            if (panel) {
+                const mapping = panel.mappings.find((m) => matchEmoji(m.emoji, reaction.emoji));
+                if (mapping) {
+                    targetRoleId = mapping.roleId;
+                }
+            }
+        }
+
+        if (!targetRoleId) return;
 
         try {
             const member = await message.guild.members.fetch(user.id).catch(() => null);
             if (!member) return;
 
-            const targetRole = message.guild.roles.cache.get(match.roleId);
+            const targetRole = message.guild.roles.cache.get(targetRoleId);
             if (!targetRole) return;
 
             const botMember = message.guild.members.me;
@@ -52,16 +70,16 @@ export const messageReactionRemoveEvent: Event = {
                 return;
             }
 
-            if (member.roles.cache.has(match.roleId)) {
-                await member.roles.remove(match.roleId, 'Reaction Role: Removed via emoji unreaction');
+            if (member.roles.cache.has(targetRoleId)) {
+                await member.roles.remove(targetRoleId, 'Reaction Role: Removed via emoji unreaction');
                 logger.info(`[ReactRoles] Removed role @${targetRole.name} from ${user.tag} in ${message.guild.name}`);
-                
+
                 await user.send({
                     content: `❌ The **@${targetRole.name}** role was removed from you in **${message.guild.name}**.`,
                 }).catch(() => {});
             }
         } catch (err) {
-            logger.error(`[ReactRoles] Failed to remove role ${match.roleId} from ${user.id}:`, err);
+            logger.error(`[ReactRoles] Failed to remove role ${targetRoleId} from ${user.id}:`, err);
         }
     },
 };
