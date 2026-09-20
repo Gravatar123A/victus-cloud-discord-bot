@@ -12,18 +12,31 @@ export function createLavalinkManager(client) {
     if (!config.lavalink.password) {
         logger.error('🎵 LAVALINK_PASSWORD is not set. Music commands will remain unavailable.');
     }
+    const nodes = [
+        {
+            id: config.lavalink.id,
+            host: config.lavalink.host,
+            port: config.lavalink.port,
+            authorization: config.lavalink.password,
+            secure: config.lavalink.secure,
+            retryAmount: 5,
+            retryDelay: 30_000,
+        },
+    ];
+    // If host is 135.125.222.36 and configured port is not 25578 (e.g. legacy 25704 in server .env), also register 25578
+    if (config.lavalink.port !== 25578 && config.lavalink.host === '135.125.222.36') {
+        nodes.push({
+            id: `${config.lavalink.id}-25578`,
+            host: '135.125.222.36',
+            port: 25578,
+            authorization: config.lavalink.password,
+            secure: config.lavalink.secure,
+            retryAmount: 5,
+            retryDelay: 30_000,
+        });
+    }
     const manager = new LavalinkManager({
-        nodes: [
-            {
-                id: config.lavalink.id,
-                host: config.lavalink.host,
-                port: config.lavalink.port,
-                authorization: config.lavalink.password,
-                secure: config.lavalink.secure,
-                retryAmount: 5,
-                retryDelay: 30_000,
-            },
-        ],
+        nodes,
         sendToShard: (guildId, payload) => client.guilds.cache.get(guildId)?.shard?.send(payload),
         client: {
             id: config.discord.clientId,
