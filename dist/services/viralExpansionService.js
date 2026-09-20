@@ -112,7 +112,7 @@ export class ViralExpansionService {
                 if (channel) {
                     const bpCardAttachment = await generateBattlePassCardAttachment({
                         guildName: guild.name,
-                        guildIconUrl: guild.iconURL?.({ extension: 'png', size: 256 }) || undefined,
+                        guildIconUrl: guild.iconURL({ extension: 'png', size: 256 }) || undefined,
                         level: res.guild.guild_level,
                         totalXp: res.guild.guild_xp,
                         rewards: res.newRewards,

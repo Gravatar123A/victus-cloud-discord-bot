@@ -1,9 +1,10 @@
-import { MessageFlags, SlashCommandBuilder, User } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder, User, MediaGalleryBuilder, MediaGalleryItemBuilder } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { supabase } from '../services/supabase.js';
 import { getLevelProgress, progressBar } from '../utils/vccrs.js';
 import { config } from '../config.js';
+import { generateLevelCardAttachment } from '../utils/cardRenderer.js';
 
 export const levelCommand: Command = {
     data: new SlashCommandBuilder()
@@ -39,7 +40,29 @@ export const levelCommand: Command = {
         const xp = Number(profile.total_xp ?? 0);
         const coins = Number(profile.total_cp ?? 0);
         const info = getLevelProgress(xp);
-        const container = ComponentsV2.baseContainer(info.tier.color).addTextDisplayComponents(
+
+        const cardAttachment = await generateLevelCardAttachment({
+            username: targetUser.username,
+            avatarUrl: targetUser.displayAvatarURL({ extension: 'png', size: 256 }),
+            level: info.level,
+            tierName: info.tier.name,
+            tierEmoji: info.tier.emoji,
+            tierColorHex: '#' + info.tier.color.toString(16).padStart(6, '0'),
+            totalXp: xp,
+            progress: info.progress,
+            cpToNext: info.cpToNext,
+            mode: 'profile',
+            coins,
+        });
+
+        const container = ComponentsV2.baseContainer(info.tier.color);
+        if (cardAttachment) {
+            container.addMediaGalleryComponents(
+                new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(`attachment://${cardAttachment.name}`))
+            );
+        }
+
+        container.addTextDisplayComponents(
             ComponentsV2.text(
                 `# ${info.tier.emoji} ${info.tier.name} — Level ${info.level}\n` +
                 `**User**: <@${targetUser.id}>  ·  **Multi-Guild Synced**\n\n` +
@@ -51,6 +74,11 @@ export const levelCommand: Command = {
                 `Earn **+${config.economy.xpPerMessage} XP** per message, **+${config.economy.xpPerVoiceMinute} XP** per voice minute in any server, and **+${config.economy.coinsPerLevel} COINS** every level up!`,
             ),
         );
-        await interaction.editReply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 });
+
+        await interaction.editReply({
+            components: [container],
+            files: cardAttachment ? [cardAttachment] : [],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
     },
 };

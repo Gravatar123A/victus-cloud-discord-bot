@@ -23,13 +23,17 @@ export const FISH_SELL_PRICES = {
 export async function handleMine(interaction) {
     const userId = interaction.user.id;
     const inv = await viralExpansionStore.getInventory(userId);
-
+    // Normalize inventory in case DB returned raw strings or undefined
     if (typeof inv.ores_json === 'string') {
-        try { inv.ores_json = JSON.parse(inv.ores_json); } catch { inv.ores_json = { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 }; }
+        try {
+            inv.ores_json = JSON.parse(inv.ores_json);
+        }
+        catch {
+            inv.ores_json = { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 };
+        }
     }
     inv.ores_json = inv.ores_json || { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 };
     inv.pickaxe_tier = inv.pickaxe_tier || 'wood';
-
     const now = Date.now();
     const lastMine = inv.last_mine_at ? new Date(inv.last_mine_at).getTime() : 0;
     const diff = now - lastMine;
@@ -41,7 +45,7 @@ export async function handleMine(interaction) {
         });
         return;
     }
-
+    // Yields based on pickaxe tier
     const tierMultipliers = {
         wood: { coal: 3, iron: 1, gold: 0, diamond: 0, netherite: 0 },
         stone: { coal: 5, iron: 3, gold: 1, diamond: 0, netherite: 0 },
@@ -49,7 +53,6 @@ export async function handleMine(interaction) {
         diamond: { coal: 10, iron: 8, gold: 4, diamond: 2, netherite: 1 },
         netherite: { coal: 15, iron: 12, gold: 6, diamond: 4, netherite: 2 },
     };
-
     const maxYield = tierMultipliers[inv.pickaxe_tier] || tierMultipliers.wood;
     const gained = {
         coal: Math.floor(Math.random() * maxYield.coal) + 1,
@@ -58,20 +61,17 @@ export async function handleMine(interaction) {
         diamond: maxYield.diamond > 0 ? (Math.random() < 0.4 ? 1 : 0) : 0,
         netherite: maxYield.netherite > 0 ? (Math.random() < 0.15 ? 1 : 0) : 0,
     };
-
     inv.ores_json.coal = (inv.ores_json.coal || 0) + (gained.coal || 0);
     inv.ores_json.iron = (inv.ores_json.iron || 0) + (gained.iron || 0);
     inv.ores_json.gold = (inv.ores_json.gold || 0) + (gained.gold || 0);
     inv.ores_json.diamond = (inv.ores_json.diamond || 0) + (gained.diamond || 0);
     inv.ores_json.netherite = (inv.ores_json.netherite || 0) + (gained.netherite || 0);
     inv.last_mine_at = new Date().toISOString();
-
     await viralExpansionStore.saveInventory(inv);
-
+    // Award server battle pass XP (+5 XP)
     if (interaction.guild) {
-        await viralExpansionService.addGuildActivityXp(interaction.guild.id, 5, interaction.guild.ownerId).catch(() => {});
+        await viralExpansionService.addGuildActivityXp(interaction.guild.id, 5, interaction.guild.ownerId).catch(() => { });
     }
-
     const c = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
     let minedText = `# ⛏️ Mining Expedition Results\n\n` +
         `You swung your **${inv.pickaxe_tier.toUpperCase()} Pickaxe** deep into the subterranean caverns!\n\n` +
@@ -82,21 +82,22 @@ export async function handleMine(interaction) {
         (gained.diamond ? `› 💎 **+${gained.diamond} Diamond!**\n` : '') +
         (gained.netherite ? `› 🌌 **+${gained.netherite} Ancient Debris / Netherite!**\n` : '') +
         `\n-# Convert your ores into real Victus COINS with \`/rpg sell\`!`;
-
     c.addTextDisplayComponents(ComponentsV2.text(minedText));
     await interaction.reply({ components: [c], flags: ComponentsV2.IS_COMPONENTS_V2 });
 }
-
 export async function handleFish(interaction) {
     const userId = interaction.user.id;
     const inv = await viralExpansionStore.getInventory(userId);
-
     if (typeof inv.fish_json === 'string') {
-        try { inv.fish_json = JSON.parse(inv.fish_json); } catch { inv.fish_json = { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 }; }
+        try {
+            inv.fish_json = JSON.parse(inv.fish_json);
+        }
+        catch {
+            inv.fish_json = { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 };
+        }
     }
     inv.fish_json = inv.fish_json || { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 };
     inv.rod_tier = inv.rod_tier || 'wood';
-
     const now = Date.now();
     const lastFish = inv.last_fish_at ? new Date(inv.last_fish_at).getTime() : 0;
     const diff = now - lastFish;
@@ -108,32 +109,31 @@ export async function handleFish(interaction) {
         });
         return;
     }
-
     const rodLuck = {
         wood: 0.05,
         lucky: 0.15,
         sea: 0.28,
         prismarine: 0.45,
     };
-
     const luck = rodLuck[inv.rod_tier] || rodLuck.wood;
     const roll = Math.random();
-
     let caught = 'cod';
-    if (roll < luck * 0.2) caught = 'treasure';
-    else if (roll < luck * 0.5) caught = 'pufferfish';
-    else if (roll < luck) caught = 'tropical';
-    else if (roll < 0.6) caught = 'salmon';
-    else caught = 'cod';
-
+    if (roll < luck * 0.2)
+        caught = 'treasure';
+    else if (roll < luck * 0.5)
+        caught = 'pufferfish';
+    else if (roll < luck)
+        caught = 'tropical';
+    else if (roll < 0.6)
+        caught = 'salmon';
+    else
+        caught = 'cod';
     inv.fish_json[caught] = (inv.fish_json[caught] || 0) + 1;
     inv.last_fish_at = new Date().toISOString();
     await viralExpansionStore.saveInventory(inv);
-
     if (interaction.guild) {
-        await viralExpansionService.addGuildActivityXp(interaction.guild.id, 5, interaction.guild.ownerId).catch(() => {});
+        await viralExpansionService.addGuildActivityXp(interaction.guild.id, 5, interaction.guild.ownerId).catch(() => { });
     }
-
     const c = ComponentsV2.baseContainer(ComponentsV2.Accents.info);
     const catchLabels = {
         cod: '🐟 Raw Cod',
@@ -142,32 +142,37 @@ export async function handleFish(interaction) {
         pufferfish: '🐡 Pufferfish (Deadly Spike)',
         treasure: '📦 Sunken Treasure Chest (Enchanted Nautilus Shell!)',
     };
-
     const text = `# 🎣 Fishing Cast Results\n\n` +
         `You cast your **${inv.rod_tier.toUpperCase()} Fishing Rod** into the deep ocean!\n\n` +
         `### 🌊 Your Catch:\n` +
         `› **${catchLabels[caught]}**\n\n` +
         `-# Sell your sea bounty for real Victus COINS with \`/rpg sell\`!`;
-
     c.addTextDisplayComponents(ComponentsV2.text(text));
     await interaction.reply({ components: [c], flags: ComponentsV2.IS_COMPONENTS_V2 });
 }
-
 export async function handleInv(interaction) {
     const userId = interaction.user.id;
     const inv = await viralExpansionStore.getInventory(userId);
-
     if (typeof inv.ores_json === 'string') {
-        try { inv.ores_json = JSON.parse(inv.ores_json); } catch { inv.ores_json = { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 }; }
+        try {
+            inv.ores_json = JSON.parse(inv.ores_json);
+        }
+        catch {
+            inv.ores_json = { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 };
+        }
     }
     if (typeof inv.fish_json === 'string') {
-        try { inv.fish_json = JSON.parse(inv.fish_json); } catch { inv.fish_json = { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 }; }
+        try {
+            inv.fish_json = JSON.parse(inv.fish_json);
+        }
+        catch {
+            inv.fish_json = { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 };
+        }
     }
     inv.ores_json = inv.ores_json || { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 };
     inv.fish_json = inv.fish_json || { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 };
     inv.pickaxe_tier = inv.pickaxe_tier || 'wood';
     inv.rod_tier = inv.rod_tier || 'wood';
-
     const c = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
     const text = `# 🎒 RPG Inventory: ${interaction.user.username}\n\n` +
         `### ⚔️ Equipment Tiers\n` +
@@ -186,28 +191,33 @@ export async function handleInv(interaction) {
         `› 🐡 Pufferfish: \`${inv.fish_json.pufferfish || 0}\`\n` +
         `› 📦 Treasures: \`${inv.fish_json.treasure || 0}\`\n\n` +
         `-# Run \`/rpg sell\` to cash out your materials into real Victus COINS!`;
-
     c.addTextDisplayComponents(ComponentsV2.text(text));
     await interaction.reply({ components: [c], flags: ComponentsV2.IS_COMPONENTS_V2 });
 }
-
 export async function handleSell(interaction, categoryOverride) {
     const userId = interaction.user.id;
     const inv = await viralExpansionStore.getInventory(userId);
-
     if (typeof inv.ores_json === 'string') {
-        try { inv.ores_json = JSON.parse(inv.ores_json); } catch { inv.ores_json = { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 }; }
+        try {
+            inv.ores_json = JSON.parse(inv.ores_json);
+        }
+        catch {
+            inv.ores_json = { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 };
+        }
     }
     if (typeof inv.fish_json === 'string') {
-        try { inv.fish_json = JSON.parse(inv.fish_json); } catch { inv.fish_json = { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 }; }
+        try {
+            inv.fish_json = JSON.parse(inv.fish_json);
+        }
+        catch {
+            inv.fish_json = { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 };
+        }
     }
     inv.ores_json = inv.ores_json || { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 };
     inv.fish_json = inv.fish_json || { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 };
-
     const cat = categoryOverride || interaction.options?.getString?.('category') || 'all';
     let totalCoins = 0;
     const soldItems = [];
-
     if (cat === 'all' || cat === 'ores') {
         for (const [ore, count] of Object.entries(inv.ores_json)) {
             if (count > 0) {
@@ -218,7 +228,6 @@ export async function handleSell(interaction, categoryOverride) {
             }
         }
     }
-
     if (cat === 'all' || cat === 'fish') {
         for (const [fish, count] of Object.entries(inv.fish_json)) {
             if (count > 0) {
@@ -229,7 +238,6 @@ export async function handleSell(interaction, categoryOverride) {
             }
         }
     }
-
     const roundedCoins = Math.floor(totalCoins);
     if (roundedCoins <= 0) {
         await interaction.reply({
@@ -238,33 +246,22 @@ export async function handleSell(interaction, categoryOverride) {
         });
         return;
     }
-
     await interaction.deferReply({ flags: ComponentsV2.IS_COMPONENTS_V2 });
-
-    const grantRes = await CoinTransactionLock.grantCoins(
-        userId,
-        roundedCoins,
-        'rpg_market_sell',
-        `sell:${userId}:${Date.now()}`,
-        `Sold RPG resources for ${roundedCoins} COINS`
-    );
-
+    // Atomic payout of real Victus COINS
+    const grantRes = await CoinTransactionLock.grantCoins(userId, roundedCoins, 'rpg_market_sell', `sell:${userId}:${Date.now()}`, `Sold RPG resources for ${roundedCoins} COINS`);
     if (grantRes.unlinked) {
         await interaction.editReply({
             content: '⚠️ **Account Not Linked!** You must link your Victus Cloud account using `/link` so we can deposit your real COINS!',
         });
         return;
     }
-
     if (!grantRes.success) {
         await interaction.editReply({
             content: `❌ Error depositing coins: ${grantRes.error}`,
         });
         return;
     }
-
     await viralExpansionStore.saveInventory(inv);
-
     const c = ComponentsV2.baseContainer(ComponentsV2.Accents.success);
     const text = `# 💰 Market Sale Successful!\n\n` +
         `You traded your gathered resources at the Victus Marketplace!\n\n` +
@@ -273,26 +270,26 @@ export async function handleSell(interaction, categoryOverride) {
         `### 🪙 Payout Summary:\n` +
         `› **Earned:** **+${roundedCoins} COINS**\n` +
         `› **New Balance:** **${grantRes.newBalance} COINS** (Synced live with [victuscloud.com](https://victuscloud.com))\n`;
-
     c.addTextDisplayComponents(ComponentsV2.text(text));
     await interaction.editReply({ components: [c], flags: ComponentsV2.IS_COMPONENTS_V2 });
 }
-
 export async function handleCraft(interaction, upgradeOverride) {
     const userId = interaction.user.id;
     const inv = await viralExpansionStore.getInventory(userId);
-
     if (typeof inv.ores_json === 'string') {
-        try { inv.ores_json = JSON.parse(inv.ores_json); } catch { inv.ores_json = { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 }; }
+        try {
+            inv.ores_json = JSON.parse(inv.ores_json);
+        }
+        catch {
+            inv.ores_json = { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 };
+        }
     }
     inv.ores_json = inv.ores_json || { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 };
     inv.pickaxe_tier = inv.pickaxe_tier || 'wood';
     inv.rod_tier = inv.rod_tier || 'wood';
-
     const upgrade = upgradeOverride || interaction.options?.getString?.('upgrade', true);
     let success = false;
     let msg = '';
-
     switch (upgrade) {
         case 'pick_stone':
             if ((inv.ores_json.coal || 0) >= 10) {
@@ -300,7 +297,9 @@ export async function handleCraft(interaction, upgradeOverride) {
                 inv.pickaxe_tier = 'stone';
                 success = true;
                 msg = 'Forged a **Stone Pickaxe**! Iron and gold can now be harvested.';
-            } else msg = 'You need at least **10 Coal** to forge a Stone Pickaxe.';
+            }
+            else
+                msg = 'You need at least **10 Coal** to forge a Stone Pickaxe.';
             break;
         case 'pick_iron':
             if ((inv.ores_json.iron || 0) >= 15) {
@@ -308,7 +307,9 @@ export async function handleCraft(interaction, upgradeOverride) {
                 inv.pickaxe_tier = 'iron';
                 success = true;
                 msg = 'Forged an **Iron Pickaxe**! Diamonds are now within reach.';
-            } else msg = 'You need at least **15 Iron** to forge an Iron Pickaxe.';
+            }
+            else
+                msg = 'You need at least **15 Iron** to forge an Iron Pickaxe.';
             break;
         case 'pick_diamond':
             if ((inv.ores_json.diamond || 0) >= 20) {
@@ -316,7 +317,9 @@ export async function handleCraft(interaction, upgradeOverride) {
                 inv.pickaxe_tier = 'diamond';
                 success = true;
                 msg = 'Forged a **Diamond Pickaxe**! Netherite and massive yields unlocked!';
-            } else msg = 'You need at least **20 Diamonds** to forge a Diamond Pickaxe.';
+            }
+            else
+                msg = 'You need at least **20 Diamonds** to forge a Diamond Pickaxe.';
             break;
         case 'pick_netherite':
             if ((inv.ores_json.netherite || 0) >= 10) {
@@ -324,7 +327,9 @@ export async function handleCraft(interaction, upgradeOverride) {
                 inv.pickaxe_tier = 'netherite';
                 success = true;
                 msg = 'Forged a **Netherite Pickaxe**! Maximum mining speed and World Boss raid power!';
-            } else msg = 'You need at least **10 Netherite** to forge a Netherite Pickaxe.';
+            }
+            else
+                msg = 'You need at least **10 Netherite** to forge a Netherite Pickaxe.';
             break;
         case 'rod_lucky':
             if ((inv.ores_json.gold || 0) >= 10) {
@@ -332,7 +337,9 @@ export async function handleCraft(interaction, upgradeOverride) {
                 inv.rod_tier = 'lucky';
                 success = true;
                 msg = 'Crafted a **Lucky Fishing Rod**! Higher chance of rare sea creatures.';
-            } else msg = 'You need at least **10 Gold** to craft a Lucky Fishing Rod.';
+            }
+            else
+                msg = 'You need at least **10 Gold** to craft a Lucky Fishing Rod.';
             break;
         case 'rod_sea':
             if ((inv.ores_json.diamond || 0) >= 15) {
@@ -340,7 +347,9 @@ export async function handleCraft(interaction, upgradeOverride) {
                 inv.rod_tier = 'sea';
                 success = true;
                 msg = 'Crafted a **Sea Fishing Rod**! Pufferfish and tropical catches boosted.';
-            } else msg = 'You need at least **15 Diamonds** to craft a Sea Fishing Rod.';
+            }
+            else
+                msg = 'You need at least **15 Diamonds** to craft a Sea Fishing Rod.';
             break;
         case 'rod_prismarine':
             if ((inv.ores_json.netherite || 0) >= 8) {
@@ -348,20 +357,21 @@ export async function handleCraft(interaction, upgradeOverride) {
                 inv.rod_tier = 'prismarine';
                 success = true;
                 msg = 'Crafted a **Prismarine Fishing Rod**! Maximum chance for enchanted Sunken Treasure!';
-            } else msg = 'You need at least **8 Netherite** to craft a Prismarine Rod.';
+            }
+            else
+                msg = 'You need at least **8 Netherite** to craft a Prismarine Rod.';
             break;
     }
-
     if (success) {
         await viralExpansionStore.saveInventory(inv);
         const c = ComponentsV2.baseContainer(ComponentsV2.Accents.success);
         c.addTextDisplayComponents(ComponentsV2.text(`# 🔨 Blacksmith Forge\n\n${msg}`));
         await interaction.reply({ components: [c], flags: ComponentsV2.IS_COMPONENTS_V2 });
-    } else {
+    }
+    else {
         await interaction.reply({ content: `❌ ${msg}`, flags: MessageFlags.Ephemeral });
     }
 }
-
 export const rpgCommand = {
     data: new SlashCommandBuilder()
         .setName('rpg')
@@ -394,15 +404,20 @@ export const rpgCommand = {
     cooldown: 2,
     async execute(interaction) {
         const sub = interaction.options?.getSubcommand?.(false);
-        if (sub === 'mine') return handleMine(interaction);
-        if (sub === 'fish') return handleFish(interaction);
-        if (sub === 'inv') return handleInv(interaction);
-        if (sub === 'sell') return handleSell(interaction);
-        if (sub === 'craft') return handleCraft(interaction);
+        if (sub === 'mine')
+            return handleMine(interaction);
+        if (sub === 'fish')
+            return handleFish(interaction);
+        if (sub === 'inv')
+            return handleInv(interaction);
+        if (sub === 'sell')
+            return handleSell(interaction);
+        if (sub === 'craft')
+            return handleCraft(interaction);
         return handleInv(interaction);
     },
 };
-
+// Aliases for user convenience: /mine, /fish, /sell, /craft
 export const mineCommand = {
     data: new SlashCommandBuilder()
         .setName('mine')
@@ -412,7 +427,6 @@ export const mineCommand = {
         return handleMine(interaction);
     },
 };
-
 export const fishCommand = {
     data: new SlashCommandBuilder()
         .setName('fish')
@@ -422,7 +436,6 @@ export const fishCommand = {
         return handleFish(interaction);
     },
 };
-
 export const sellCommand = {
     data: new SlashCommandBuilder()
         .setName('sell')
@@ -432,7 +445,6 @@ export const sellCommand = {
         return handleSell(interaction, 'all');
     },
 };
-
 export const craftCommand = {
     data: new SlashCommandBuilder()
         .setName('craft')

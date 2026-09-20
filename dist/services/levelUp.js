@@ -6,8 +6,8 @@ import { logger } from '../utils/logger.js';
 import { syncRankRole } from '../utils/roles.js';
 import { supabase } from './supabase.js';
 import { levelSettings } from './levelSettings.js';
-import { getLastActiveGuild } from './activityXp.js';
 import { generateLevelCardAttachment } from '../utils/cardRenderer.js';
+import { getLastActiveGuild } from './activityXp.js';
 let processing = false;
 async function buildLevelPayload(client, discordId, level, totalXp, rankedUp) {
     const current = getLevelProgress(totalXp);
@@ -16,7 +16,7 @@ async function buildLevelPayload(client, discordId, level, totalXp, rankedUp) {
     const user = await client.users.fetch(discordId).catch(() => null);
     const cardAttachment = await generateLevelCardAttachment({
         username: user?.username || 'Member',
-        avatarUrl: user?.displayAvatarURL?.({ extension: 'png', size: 256 }) || null,
+        avatarUrl: user?.displayAvatarURL({ extension: 'png', size: 256 }) || null,
         level,
         tierName: tier.name,
         tierEmoji: tier.emoji,

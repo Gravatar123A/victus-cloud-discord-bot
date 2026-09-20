@@ -4,12 +4,15 @@ import {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
+    MediaGalleryBuilder,
+    MediaGalleryItemBuilder,
 } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { viralExpansionStore, BotAllianceWar, BotSmpServer } from '../services/viralExpansionStore.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
 import { config } from '../config.js';
+import { generateBattlePassCardAttachment } from '../utils/cardRenderer.js';
 
 function renderProgressBar(current: number, needed: number, size = 14): string {
     const ratio = Math.max(0, Math.min(1, current / (needed || 1)));
@@ -31,18 +34,37 @@ export const battlepassCommand: Command = {
             return;
         }
 
+        await interaction.deferReply({ flags: ComponentsV2.IS_COMPONENTS_V2 });
+
         const botGuild = await viralExpansionStore.getGuild(interaction.guild.id, interaction.guild.ownerId);
         const currentLvl = botGuild.guild_level;
         const currentXp = botGuild.guild_xp;
 
         // XP needed for next level: 500 * (L)^2
         const nextLevelXp = 500 * Math.pow(currentLvl, 2);
-        const prevLevelXp = 500 * Math.pow(currentLvl - 1, 2);
-        const progressXp = currentXp - prevLevelXp;
-        const neededXp = nextLevelXp - prevLevelXp;
+        const prevLevelXp = 500 * Math.pow(Math.max(1, currentLvl - 1), 2);
+        const progressXp = Math.max(0, currentXp - prevLevelXp);
+        const neededXp = Math.max(1, nextLevelXp - prevLevelXp);
         const bar = renderProgressBar(progressXp, neededXp);
 
+        const bpCardAttachment = await generateBattlePassCardAttachment({
+            guildName: interaction.guild.name,
+            guildIconUrl: interaction.guild.iconURL({ extension: 'png', size: 256 }) || undefined,
+            level: currentLvl,
+            totalXp: currentXp,
+            progressXp,
+            neededXp,
+            ramUnlocked: !!botGuild.ram_bonus_claimed,
+            subdomainUnlocked: !!botGuild.subdomain_unlocked,
+            mode: 'overview',
+        });
+
         const container = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
+        if (bpCardAttachment) {
+            container.addMediaGalleryComponents(
+                new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(`attachment://${bpCardAttachment.name}`))
+            );
+        }
 
         const text = `# 🎖️ Server Battle Pass: ${interaction.guild.name}\n\n` +
             `Your community gains Battle Pass XP from chat activity, \`/mine\` expeditions, and server referrals!\n\n` +
@@ -66,7 +88,11 @@ export const battlepassCommand: Command = {
                 .setEmoji('☁️')
         );
 
-        await interaction.reply({ components: [container, btnRow], flags: ComponentsV2.IS_COMPONENTS_V2 });
+        await interaction.editReply({
+            components: [container, btnRow],
+            files: bpCardAttachment ? [bpCardAttachment] : [],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
     },
 };
 

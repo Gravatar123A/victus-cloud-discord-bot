@@ -1,8 +1,9 @@
-import { MessageFlags, SlashCommandBuilder } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder } from 'discord.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { supabase } from '../services/supabase.js';
 import { getLevelProgress, progressBar, TIERS } from '../utils/vccrs.js';
 import { config } from '../config.js';
+import { generateLevelCardAttachment } from '../utils/cardRenderer.js';
 export const rankCommand = {
     data: new SlashCommandBuilder()
         .setName('rank')
@@ -39,7 +40,24 @@ export const rankCommand = {
         const nextTierText = nextTier
             ? `> **Next Rank Tier**  ${nextTier.emoji} **${nextTier.name}** (Unlocked at Level ${nextTier.minLevel})\n`
             : `> **Rank Status**  👑 **MAX TIER REACHED**\n`;
-        const container = ComponentsV2.baseContainer(info.tier.color).addTextDisplayComponents(ComponentsV2.text(`# ${info.tier.emoji} ${info.tier.name} — Level ${info.level}\n` +
+        const cardAttachment = await generateLevelCardAttachment({
+            username: targetUser.username,
+            avatarUrl: targetUser.displayAvatarURL({ extension: 'png', size: 256 }),
+            level: info.level,
+            tierName: info.tier.name,
+            tierEmoji: info.tier.emoji,
+            tierColorHex: '#' + info.tier.color.toString(16).padStart(6, '0'),
+            totalXp: xp,
+            progress: info.progress,
+            cpToNext: info.cpToNext,
+            mode: 'profile',
+            coins,
+        });
+        const container = ComponentsV2.baseContainer(info.tier.color);
+        if (cardAttachment) {
+            container.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(`attachment://${cardAttachment.name}`)));
+        }
+        container.addTextDisplayComponents(ComponentsV2.text(`# ${info.tier.emoji} ${info.tier.name} — Level ${info.level}\n` +
             `**User**: <@${targetUser.id}>  ·  **Victus Rail**: \`SYNCHRONIZED\`\n\n` +
             `> **Current Rank**  ${info.tier.emoji} **${info.tier.name}**\n` +
             `> **Global Level**  Level ${info.level}\n` +
@@ -53,6 +71,10 @@ export const rankCommand = {
             `• **Voice Active**: Earn **+${config.economy.xpPerVoiceMinute} XP** per active voice minute.\n` +
             `• **Level Up Payout**: Earn **+${config.economy.coinsPerLevel} COINS** directly to your wallet every level up.\n` +
             `• **Free Hosting**: Spend earned COINS at [victuscloud.com/free](${config.branding.free}) for free 24/7 Minecraft servers.`));
-        await interaction.editReply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 });
+        await interaction.editReply({
+            components: [container],
+            files: cardAttachment ? [cardAttachment] : [],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        });
     },
 };
