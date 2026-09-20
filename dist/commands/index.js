@@ -210,6 +210,11 @@ export const GLOBAL_COMMAND_NAMES = [
     'create-account',
     'preferences',
     'level',
+    'rpg',
+    'mine',
+    'fish',
+    'sell',
+    'craft',
 ];
 /**
  * Get all command data for registration (complete catalog)

@@ -1,8 +1,9 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MediaGalleryBuilder, MediaGalleryItemBuilder } from 'discord.js';
 import { viralExpansionStore } from './viralExpansionStore.js';
 import { CoinTransactionLock } from './coinTransactionLock.js';
 import { logger } from '../utils/logger.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
+import { generateBattlePassCardAttachment } from '../utils/cardRenderer.js';
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 export class ViralExpansionService {
@@ -109,7 +110,17 @@ export class ViralExpansionService {
                 const channel = (guild.systemChannel ||
                     guild.channels.cache.find((c) => c.isTextBased() && c.permissionsFor(guild.members.me)?.has('SendMessages')));
                 if (channel) {
+                    const bpCardAttachment = await generateBattlePassCardAttachment({
+                        guildName: guild.name,
+                        guildIconUrl: guild.iconURL?.({ extension: 'png', size: 256 }) || undefined,
+                        level: res.guild.guild_level,
+                        totalXp: res.guild.guild_xp,
+                        rewards: res.newRewards,
+                    });
                     const c = ComponentsV2.baseContainer(ComponentsV2.Accents.success);
+                    if (bpCardAttachment) {
+                        c.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(`attachment://${bpCardAttachment.name}`)));
+                    }
                     let body = `# 🎖️ Server Battle Pass: Level Up!\n\n` +
                         `**${guild.name}** has reached **Battle Pass Level ${res.guild.guild_level}**! (Total XP: \`${res.guild.guild_xp.toLocaleString()}\`)\n\n`;
                     if (res.newRewards.length > 0) {
@@ -117,7 +128,11 @@ export class ViralExpansionService {
                         body += `_Server owner <@${guild.ownerId}> can view & redeem rewards on [victuscloud.com](https://victuscloud.com)!_\n`;
                     }
                     c.addTextDisplayComponents(ComponentsV2.text(body));
-                    await channel.send({ components: [c], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
+                    await channel.send({
+                        components: [c],
+                        files: bpCardAttachment ? [bpCardAttachment] : [],
+                        flags: ComponentsV2.IS_COMPONENTS_V2,
+                    }).catch(() => { });
                 }
             }
         }

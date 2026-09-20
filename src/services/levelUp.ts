@@ -1,4 +1,4 @@
-import { ChannelType, Client, ContainerBuilder } from 'discord.js';
+import { ChannelType, Client, ContainerBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder } from 'discord.js';
 import { config } from '../config.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { calculateLevel, getLevelProgress, getTierForLevel, progressBar } from '../utils/vccrs.js';
@@ -6,16 +6,48 @@ import { logger } from '../utils/logger.js';
 import { syncRankRole } from '../utils/roles.js';
 import { supabase } from './supabase.js';
 import { levelSettings } from './levelSettings.js';
+import { generateLevelCardAttachment } from '../utils/cardRenderer.js';
 
 import { getLastActiveGuild } from './activityXp.js';
 
 let processing = false;
 
-function levelCard(discordId: string, level: number, totalXp: number, rankedUp: boolean): ContainerBuilder {
+async function buildLevelPayload(
+    client: Client<true>,
+    discordId: string,
+    level: number,
+    totalXp: number,
+    rankedUp: boolean
+) {
     const current = getLevelProgress(totalXp);
     const tier = getTierForLevel(level);
     const heading = rankedUp ? `${tier.emoji} RANK UP — ${tier.name}` : `🎉 LEVEL UP — LEVEL ${level}`;
-    return ComponentsV2.baseContainer(tier.color).addTextDisplayComponents(
+
+    const user = await client.users.fetch(discordId).catch(() => null);
+
+    const cardAttachment = await generateLevelCardAttachment({
+        username: user?.username || 'Member',
+        avatarUrl: user?.displayAvatarURL({ extension: 'png', size: 256 }) || null,
+        level,
+        tierName: tier.name,
+        tierEmoji: tier.emoji,
+        tierColorHex: '#' + tier.color.toString(16).padStart(6, '0'),
+        totalXp,
+        progress: current.progress,
+        cpToNext: current.cpToNext,
+        rankedUp,
+        xpReward: config.economy.xpPerLevel,
+        coinsReward: config.economy.coinsPerLevel,
+    });
+
+    const container = ComponentsV2.baseContainer(tier.color);
+    if (cardAttachment) {
+        container.addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(`attachment://${cardAttachment.name}`))
+        );
+    }
+
+    container.addTextDisplayComponents(
         ComponentsV2.text(
             `# ${heading}\n<@${discordId}> has reached **Level ${level}**!\n\n` +
             `> **Rank**  ${tier.emoji} ${tier.name}\n` +
@@ -26,6 +58,12 @@ function levelCard(discordId: string, level: number, totalXp: number, rankedUp: 
             `-# Victus Cloud cross-guild progression: real COINS deposited to your wallet for free server hosting.`,
         ),
     );
+
+    return {
+        components: [container],
+        files: cardAttachment ? [cardAttachment] : [],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+    };
 }
 
 async function processOne(client: Client<true>): Promise<boolean> {
@@ -81,7 +119,8 @@ async function processOne(client: Client<true>): Promise<boolean> {
             const user = await client.users.fetch(linked.discord_id).catch(() => null);
             if (user) {
                 try {
-                    await user.send({ components: [levelCard(linked.discord_id, event.level, eventXp, rankedUp)], flags: ComponentsV2.IS_COMPONENTS_V2 });
+                    const payload = await buildLevelPayload(client, linked.discord_id, event.level, eventXp, rankedUp);
+                    await user.send(payload);
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     if (!/no mutual guilds|cannot send messages to this user|50007|50001/i.test(message)) throw error;
@@ -92,7 +131,7 @@ async function processOne(client: Client<true>): Promise<boolean> {
         }
 
         if (!event.announcement_sent_at) {
-            const card = levelCard(linked.discord_id, event.level, eventXp, rankedUp);
+            const payload = await buildLevelPayload(client, linked.discord_id, event.level, eventXp, rankedUp);
 
             // 1. If user was recently active in an external guild, announce in that guild's configured level channel
             const activeLoc = getLastActiveGuild(linked.discord_id);
@@ -101,7 +140,7 @@ async function processOne(client: Client<true>): Promise<boolean> {
                     const extChannelId = await levelSettings.getChannelId(activeLoc.guildId);
                     const extChannel = await client.channels.fetch(extChannelId).catch(() => null);
                     if (extChannel && extChannel.isTextBased() && extChannel.type !== ChannelType.DM && 'send' in extChannel) {
-                        await extChannel.send({ components: [card], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                        await extChannel.send(payload).catch(() => {});
                     }
                 } catch (extErr) {
                     logger.debug(`[LevelUp] External guild level announcement note:`, extErr);
@@ -114,7 +153,7 @@ async function processOne(client: Client<true>): Promise<boolean> {
                     const supportChannelId = await levelSettings.getChannelId(config.bot.supportGuildId);
                     const supportChannel = await client.channels.fetch(supportChannelId).catch(() => null);
                     if (supportChannel && supportChannel.isTextBased() && supportChannel.type !== ChannelType.DM && 'send' in supportChannel) {
-                        await supportChannel.send({ components: [card], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => {});
+                        await supportChannel.send(payload).catch(() => {});
                     }
                 } catch (supErr) {
                     logger.debug(`[LevelUp] Support guild level announcement note:`, supErr);
