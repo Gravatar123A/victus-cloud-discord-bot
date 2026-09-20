@@ -67,6 +67,7 @@ import { antinukeCommand } from './antinuke.js';
 import { browseCommand } from './browse.js';
 import { statusCommand } from './status.js';
 import { setupCommand } from './setup.js';
+import { giveCommand } from './give.js';
 
 
 
@@ -183,6 +184,7 @@ const allCommands: Command[] = [
     browseCommand,
     statusCommand,
     setupCommand,
+    giveCommand,
     ...musicCommands,
 ];
 

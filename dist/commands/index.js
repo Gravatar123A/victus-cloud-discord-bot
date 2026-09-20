@@ -65,6 +65,7 @@ import { antinukeCommand } from './antinuke.js';
 import { browseCommand } from './browse.js';
 import { statusCommand } from './status.js';
 import { setupCommand } from './setup.js';
+import { giveCommand } from './give.js';
 // Viral Expansion Engine commands
 import { ownerStatsCommand } from './ownerStats.js';
 import { hostPromoCommand, freeServerCommand } from './hostPromo.js';
@@ -176,6 +177,7 @@ const allCommands = [
     browseCommand,
     statusCommand,
     setupCommand,
+    giveCommand,
     ...musicCommands,
 ];
 for (const command of allCommands) {
