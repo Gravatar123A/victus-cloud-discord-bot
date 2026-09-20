@@ -81,6 +81,7 @@ import { mcSkinCommand, mcStatusCommand, mcWhitelistCommand, serverCommand } fro
 import { backupWorldCommand } from './lifeboat.js';
 import { battlepassCommand, claimAirDropCommand, smpNetworkCommand, warCommand } from './community.js';
 import { extraOwnerCommand } from './extraowner.js';
+import { countingCommand } from './counting.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -183,6 +184,7 @@ const allCommands: Command[] = [
     browseCommand,
     statusCommand,
     setupCommand,
+    countingCommand,
     ...musicCommands,
 ];
 
