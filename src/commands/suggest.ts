@@ -1,6 +1,7 @@
 import {
     ActionRowBuilder,
     ButtonBuilder,
+    ButtonStyle,
     ChannelType,
     ForumChannel,
     MessageFlags,
@@ -17,7 +18,6 @@ import {
     type ChatInputCommandInteraction,
     type ModalSubmitInteraction,
 } from 'discord.js';
-import { ButtonStyle } from 'discord-api-types/v10';
 import type { Command, SuggestionCategoryKey } from '../types/index.js';
 import { supabase } from '../services/supabase.js';
 import { suggestionService, SUGGESTION_CATEGORIES } from '../services/suggestionService.js';

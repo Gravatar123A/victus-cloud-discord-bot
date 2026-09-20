@@ -6,6 +6,7 @@
 import {
     ActionRowBuilder,
     ButtonBuilder,
+    ButtonStyle,
     ContainerBuilder,
     MediaGalleryBuilder,
     MediaGalleryItemBuilder,
@@ -14,7 +15,6 @@ import {
     TextDisplayBuilder,
     ThumbnailBuilder,
 } from 'discord.js';
-import { ButtonStyle } from 'discord-api-types/v10';
 import { config } from '../config.js';
 import { compactId, decodeDisplayText, formatCredits, formatDate, Icons, statusIcon, statusLabel } from '../utils/premium.js';
 

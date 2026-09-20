@@ -2,8 +2,7 @@
  * Premium Discord Components v2 layouts for Victus Cloud.
  * Keep button emoji-free to avoid guild-specific invalid emoji failures.
  */
-import { ActionRowBuilder, ButtonBuilder, ContainerBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder, SeparatorBuilder, StringSelectMenuBuilder, TextDisplayBuilder, ThumbnailBuilder, } from 'discord.js';
-import { ButtonStyle } from 'discord-api-types/v10';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder, SeparatorBuilder, StringSelectMenuBuilder, TextDisplayBuilder, ThumbnailBuilder, } from 'discord.js';
 import { config } from '../config.js';
 import { compactId, decodeDisplayText, formatCredits, formatDate, Icons, statusIcon, statusLabel } from '../utils/premium.js';
 export const IS_COMPONENTS_V2 = 1 << 15;
