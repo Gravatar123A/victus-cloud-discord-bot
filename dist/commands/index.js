@@ -75,6 +75,7 @@ import { bossCommand, attackCommand, castCommand } from './worldBoss.js';
 import { mcSkinCommand, mcStatusCommand, mcWhitelistCommand, serverCommand } from './mcUtils.js';
 import { backupWorldCommand } from './lifeboat.js';
 import { battlepassCommand, claimAirDropCommand, smpNetworkCommand, warCommand } from './community.js';
+import { extraOwnerCommand } from './extraowner.js';
 // Export command collection
 export const commands = new Collection();
 // Register all commands
@@ -139,6 +140,7 @@ const allCommands = [
     untimeoutCommand,
     whitelistCommand,
     antinukeCommand,
+    extraOwnerCommand,
     communityCoinsCommand,
     levelCommand,
     rankCommand,

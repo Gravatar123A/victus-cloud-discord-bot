@@ -10,104 +10,71 @@ import {
     StringSelectMenuInteraction,
     ChatInputCommandInteraction,
     ButtonInteraction,
+    Guild,
 } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { antiNukeSettings, AntiNukeConfig } from '../services/antiNukeSettings.js';
-import { whitelistSettings } from '../services/whitelistSettings.js';
+import { extraOwnerSettings } from '../services/extraOwnerSettings.js';
+import { canManageSecurity } from '../utils/securityAuth.js';
 import { supabase } from '../services/supabase.js';
-import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 // Pastel / Ice Aesthetic Palette
 const ICE_PALETTE = {
-    frost: 0x7dd3fc,      // Soft Sky / Ice Blue
+    frost: 0x00d2ff,      // Vivid Cyan
     glacier: 0x38bdf8,    // Vivid Ice
     deepGlacier: 0x0284c7, // Accent Blue
-    unauthorized: 0xf87171, // Soft Pastel Red
+    unauthorized: 0xef4444, // Vivid Red
 };
 
 /**
- * Check if the invoking user is authorized to manage Anti-Nuke settings.
- * Checks for Server Owner, Server Administrator, or Bot Application Owner/Staff.
+ * Generate the high-tech cybersecurity Status Display Embed for the control panel.
  */
-async function isAuthorized(interaction: any): Promise<boolean> {
-    const userId = interaction.user.id;
-    const guild = interaction.guild;
-    if (!guild) return false;
+async function buildControlPanelEmbed(config: AntiNukeConfig, cussFilterEnabled: boolean, guild: Guild, isGravUser: boolean): Promise<EmbedBuilder> {
+    const extraOwners = await extraOwnerSettings.get(guild.id);
+    const activeCount = [
+        config.anti_kick,
+        config.anti_ban,
+        config.anti_ban_remove,
+        config.anti_channel_create,
+        config.anti_channel_delete,
+        config.anti_role_create,
+        config.anti_role_delete,
+        config.anti_role_update,
+        config.anti_emoji_delete,
+        config.anti_sticker_delete,
+        config.anti_guild_update,
+    ].filter(Boolean).length;
 
-    // 1. Server Owner & Guild Administrator checks
-    if (guild.ownerId === userId) return true;
-    if (interaction.member?.permissions?.has(PermissionFlagsBits.Administrator)) return true;
+    const extraOwnerSummary = `${extraOwners.users.length} Users · ${extraOwners.roles.length} Roles`;
 
-    // 2. Check Discord Application Owner / Team Member (Super Owner)
-    try {
-        const app = interaction.client.application;
-        const application = typeof app?.fetch === 'function' ? await app.fetch().catch(() => app) : app;
-        const owner = application?.owner || app?.owner;
-        if (owner) {
-            if ('id' in owner && owner.id === userId) return true;
-            if ('members' in (owner as any) && (owner as any).members?.has?.(userId)) return true;
-        }
-    } catch (err) {
-        logger.debug('[AntiNuke] Error fetching application owner:', err);
-    }
-
-    // 3. Evaluate Support Guild permissions / roles
-    const supportGuildId = config.bot.supportGuildId || config.discord.guildId;
-    if (supportGuildId) {
-        const supportGuild = await interaction.client.guilds.fetch(supportGuildId).catch(() => null);
-        if (supportGuild) {
-            const member = await supportGuild.members.fetch(userId).catch(() => null);
-            if (member) {
-                if (member.roles.cache.has('1392801771474259989')) return true;
-                if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
-                
-                const settings = await supabase.getBotSettings(supportGuild.id).catch(() => null);
-                const adminRoleIds = (settings?.ticket_admin_role_ids || []) as string[];
-                if (adminRoleIds.some((roleId) => member.roles.cache.has(roleId))) return true;
-            }
-        }
-    }
-
-    // 4. Supabase Platform Admin check
-    try {
-        const isPlatformAdmin = await supabase.isUserAdmin(userId).catch(() => false);
-        if (isPlatformAdmin) return true;
-    } catch (err) {
-        logger.debug('[AntiNuke] Error checking Supabase admin:', err);
-    }
-
-    return false;
-}
-
-/**
- * Generate the Status Display Embed for the control panel.
- */
-function buildControlPanelEmbed(config: AntiNukeConfig, cussFilterEnabled: boolean, guildName: string): EmbedBuilder {
     return new EmbedBuilder()
-        .setColor(ICE_PALETTE.frost)
-        .setTitle('🛡️ Victus Anti-Nuke Control Panel')
+        .setColor(config.enabled ? 0x00d2ff : 0x64748b)
+        .setTitle('🛡️ VICTUS ANTI-NUKE DEFENSE CONSOLE')
         .setDescription(
-            `Configure Anti-Nuke security protections for **${guildName}**.\n\n` +
-            `Use the interactive switches below to toggle individual security modules.\n\n` +
-            `### 🎛️ Master Status\n` +
-            `> **System Status:** ${config.enabled ? '🟢 ON' : '⚫ OFF'}\n\n` +
-            `### 🔒 Active Shields\n` +
-            `› **Anti-Kick:** ${config.anti_kick ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-Ban:** ${config.anti_ban ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-BanRemove:** ${config.anti_ban_remove ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-ChannelCreate:** ${config.anti_channel_create ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-ChannelDelete:** ${config.anti_channel_delete ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-RoleCreate:** ${config.anti_role_create ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-RoleDelete:** ${config.anti_role_delete ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-RoleUpdate:** ${config.anti_role_update ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-EmojiDelete:** ${config.anti_emoji_delete ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-StickerDelete:** ${config.anti_sticker_delete ? '✅ ON' : '❌ OFF'}\n` +
-            `› **Anti-GuildUpdate:** ${config.anti_guild_update ? '✅ ON' : '❌ OFF'}\n\n` +
-            `### 🤬 Content Filters\n` +
-            `› **Cuss Word Filter:** ${cussFilterEnabled ? '✅ ON' : '❌ OFF'}`
+            `Autonomous server protection system for **${guild.name}**.\n\n` +
+            `### 🎛️ Master Defense\n` +
+            `> **System Status:** ${config.enabled ? '🟢 **ONLINE & ARMED**' : '🔴 **OFFLINE (DISABLED)**'}\n` +
+            `> **Shield Capacity:** \`${activeCount}/11 Modules Armed\`\n` +
+            `> **Extra Owners:** \`${extraOwnerSummary}\` *(Manage with \`/extraowner\`)*\n` +
+            `> **Access Tier:** ${isGravUser ? '👑 **Primary Owner (Grav)**' : '🛡️ **Authorized Extra Owner**'}\n\n` +
+            `### 🔒 Security Shield Modules\n` +
+            `› **Anti-Kick:** ${config.anti_kick ? '🛡️ `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-Ban:** ${config.anti_ban ? '🔨 `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-BanRemove:** ${config.anti_ban_remove ? '🔓 `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-ChannelCreate:** ${config.anti_channel_create ? '➕ `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-ChannelDelete:** ${config.anti_channel_delete ? '❌ `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-RoleCreate:** ${config.anti_role_create ? '🎭 `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-RoleDelete:** ${config.anti_role_delete ? '🗑️ `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-RoleUpdate:** ${config.anti_role_update ? '📝 `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-EmojiDelete:** ${config.anti_emoji_delete ? '😀 `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-StickerDelete:** ${config.anti_sticker_delete ? '🏷️ `ACTIVE`' : '⚫ `INACTIVE`'}\n` +
+            `› **Anti-GuildUpdate:** ${config.anti_guild_update ? '🌐 `ACTIVE`' : '⚫ `INACTIVE`'}\n\n` +
+            `### 🤬 Content Moderation\n` +
+            `› **Cuss Word Filter:** ${cussFilterEnabled ? '🛡️ `ACTIVE (Multilingual DB)`' : '⚫ `INACTIVE`'}\n\n` +
+            `-# 🔒 Restricted to Grav & Extra Owners • Configure extra owners with \`/extraowner\``
         )
-        .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.enabled ? 'https://victuscloud.com/favicon.png' : undefined })
+        .setFooter({ text: 'Victus Cloud Advanced Guild Defense System', iconURL: 'https://victuscloud.com/favicon.png' })
         .setTimestamp();
 }
 
@@ -125,14 +92,14 @@ function buildControlPanelComponents(config: AntiNukeConfig, cussFilterEnabled: 
                 label: 'Anti-Kick',
                 value: 'anti_kick',
                 emoji: '👢',
-                description: 'Prevent excessive kicking of members',
+                description: 'Prevent unauthorized kicking of members',
                 default: config.anti_kick,
             },
             {
                 label: 'Anti-Ban',
                 value: 'anti_ban',
                 emoji: '🔨',
-                description: 'Prevent excessive banning of members',
+                description: 'Prevent unauthorized banning of members',
                 default: config.anti_ban,
             },
             {
@@ -202,7 +169,7 @@ function buildControlPanelComponents(config: AntiNukeConfig, cussFilterEnabled: 
                 label: 'Cuss Word Filter',
                 value: 'cuss_filter',
                 emoji: '🤬',
-                description: 'Enable or disable the cuss word filter',
+                description: 'Enable or disable multilingual bad-word filter',
                 default: cussFilterEnabled,
             },
         ]);
@@ -212,12 +179,12 @@ function buildControlPanelComponents(config: AntiNukeConfig, cussFilterEnabled: 
     const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId('antinuke:toggle:enabled')
-            .setLabel(`Anti-Nuke: ${config.enabled ? 'ON ✅' : 'OFF ❌'}`)
+            .setLabel(`Master Shield: ${config.enabled ? 'ONLINE ✅' : 'OFFLINE ❌'}`)
             .setStyle(config.enabled ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId('antinuke:save')
             .setLabel('Save & Close 🛡️')
-            .setStyle(ButtonStyle.Success)
+            .setStyle(ButtonStyle.Primary)
     );
 
     return [row1, row2];
@@ -226,24 +193,35 @@ function buildControlPanelComponents(config: AntiNukeConfig, cussFilterEnabled: 
 export const antinukeCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('antinuke')
-        .setDescription('Configure server Anti-Nuke protections')
+        .setDescription('Configure server Anti-Nuke protections (Grav & Extra Owners only)')
         .setDMPermission(false)
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction: ChatInputCommandInteraction) {
+        if (!interaction.guild) {
+            await interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+            return;
+        }
+
         await interaction.deferReply({ ephemeral: true });
 
-        const authorized = await isAuthorized(interaction);
-        if (!authorized) {
+        const member = interaction.guild.members.cache.get(interaction.user.id) || null;
+        const auth = await canManageSecurity(interaction.user, interaction.client, interaction.guild, member);
+
+        if (!auth.authorized) {
             const unauthorizedEmbed = new EmbedBuilder()
                 .setColor(ICE_PALETTE.unauthorized)
-                .setTitle('🚫 Not Authorized')
-                .setDescription('You do not have permission to run this command. This command is restricted to server administrators.')
-                .setFooter({ text: 'Victus Cloud Staff Operations' })
+                .setTitle('🚫 Access Denied — Grav / Extra Owner Restricted')
+                .setDescription(
+                    `You do not have permission to access the Anti-Nuke console.\n\n` +
+                    `> **Security Policy:** Only **Grav** (Primary Owner) or designated **Extra Owners** can configure Anti-Nuke protections.\n\n` +
+                    `-# If you should have access, ask Grav to designate you or your staff role using \`/extraowner add\`.`
+                )
+                .setFooter({ text: 'Victus Cloud Security Gateway' })
                 .setTimestamp();
 
             await interaction.editReply({
-                embeds: [unauthorizedEmbed]
+                embeds: [unauthorizedEmbed],
             });
             return;
         }
@@ -253,25 +231,27 @@ export const antinukeCommand: Command = {
         const botSettings = await supabase.getBotSettings(guildId).catch(() => null);
         const cussFilterEnabled = botSettings?.moderation_enabled ?? false;
 
-        const embed = buildControlPanelEmbed(antinukeConfig, cussFilterEnabled, interaction.guild!.name);
+        const embed = await buildControlPanelEmbed(antinukeConfig, cussFilterEnabled, interaction.guild, auth.isGrav);
         const components = buildControlPanelComponents(antinukeConfig, cussFilterEnabled);
 
         await interaction.editReply({
             embeds: [embed],
-            components
+            components,
         });
     },
 
     async handleButton(interaction: ButtonInteraction) {
         if (!interaction.customId.startsWith('antinuke:toggle:') && interaction.customId !== 'antinuke:save') return;
+        if (!interaction.guild) return;
 
-        // Defer update immediately to prevent 3-second timeouts
         await interaction.deferUpdate();
 
-        const authorized = await isAuthorized(interaction);
-        if (!authorized) {
+        const member = interaction.guild.members.cache.get(interaction.user.id) || null;
+        const auth = await canManageSecurity(interaction.user, interaction.client, interaction.guild, member);
+
+        if (!auth.authorized) {
             await interaction.followUp({
-                content: '❌ You are not authorized to perform this action.',
+                content: '❌ Access Denied: Only Grav and designated Extra Owners can modify Anti-Nuke settings.',
                 ephemeral: true,
             });
             return;
@@ -284,30 +264,8 @@ export const antinukeCommand: Command = {
             const botSettings = await supabase.getBotSettings(guildId).catch(() => null);
             const cussFilterEnabled = botSettings?.moderation_enabled ?? false;
 
-            const finalEmbed = new EmbedBuilder()
-                .setColor(ICE_PALETTE.frost)
-                .setTitle('🛡️ Victus Anti-Nuke Settings Saved')
-                .setDescription(
-                    `Anti-Nuke configuration for **${interaction.guild!.name}** has been successfully saved.\n\n` +
-                    `### 🎛️ Master Status\n` +
-                    `> **System Status:** ${antinukeConfig.enabled ? '🟢 ON' : '⚫ OFF'}\n\n` +
-                    `### 🔒 Active Shields\n` +
-                    `› **Anti-Kick:** ${antinukeConfig.anti_kick ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-Ban:** ${antinukeConfig.anti_ban ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-BanRemove:** ${antinukeConfig.anti_ban_remove ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-ChannelCreate:** ${antinukeConfig.anti_channel_create ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-ChannelDelete:** ${antinukeConfig.anti_channel_delete ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-RoleCreate:** ${antinukeConfig.anti_role_create ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-RoleDelete:** ${antinukeConfig.anti_role_delete ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-RoleUpdate:** ${antinukeConfig.anti_role_update ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-EmojiDelete:** ${antinukeConfig.anti_emoji_delete ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-StickerDelete:** ${antinukeConfig.anti_sticker_delete ? '✅ ON' : '❌ OFF'}\n` +
-                    `› **Anti-GuildUpdate:** ${antinukeConfig.anti_guild_update ? '✅ ON' : '❌ OFF'}\n\n` +
-                    `### 🤬 Content Filters\n` +
-                    `› **Cuss Word Filter:** ${cussFilterEnabled ? '✅ ON' : '❌ OFF'}`
-                )
-                .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: antinukeConfig.enabled ? 'https://victuscloud.com/favicon.png' : undefined })
-                .setTimestamp();
+            const finalEmbed = await buildControlPanelEmbed(antinukeConfig, cussFilterEnabled, interaction.guild, auth.isGrav);
+            finalEmbed.setTitle('🛡️ VICTUS ANTI-NUKE SETTINGS SAVED & ARMED');
 
             await interaction.editReply({
                 embeds: [finalEmbed],
@@ -323,14 +281,14 @@ export const antinukeCommand: Command = {
         let cussFilterEnabled = botSettings?.moderation_enabled ?? false;
 
         let updatedConfig = antinukeConfig;
-        if (targetToggle === 'cuss_filter') {
-            // Toggle moderation_enabled in bot_settings table
+        if (targetToggle === 'enabled') {
+            updatedConfig = await antiNukeSettings.set(guildId, { enabled: !antinukeConfig.enabled });
+        } else if (targetToggle === 'cuss_filter') {
             cussFilterEnabled = !cussFilterEnabled;
             await supabase.updateBotSettings(guildId, {
                 moderation_enabled: cussFilterEnabled,
             });
         } else {
-            // Toggle one of the AntiNukeConfig settings
             const key = targetToggle as keyof AntiNukeConfig;
             if (key in antinukeConfig) {
                 const updatedVal = !antinukeConfig[key];
@@ -338,8 +296,7 @@ export const antinukeCommand: Command = {
             }
         }
 
-        // Rebuild control panel UI
-        const embed = buildControlPanelEmbed(updatedConfig, cussFilterEnabled, interaction.guild!.name);
+        const embed = await buildControlPanelEmbed(updatedConfig, cussFilterEnabled, interaction.guild, auth.isGrav);
         const components = buildControlPanelComponents(updatedConfig, cussFilterEnabled);
 
         await interaction.editReply({
@@ -350,14 +307,16 @@ export const antinukeCommand: Command = {
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction) {
         if (interaction.customId !== 'antinuke:select') return;
+        if (!interaction.guild) return;
 
-        // Defer update immediately to prevent 3-second timeouts
         await interaction.deferUpdate();
 
-        const authorized = await isAuthorized(interaction);
-        if (!authorized) {
+        const member = interaction.guild.members.cache.get(interaction.user.id) || null;
+        const auth = await canManageSecurity(interaction.user, interaction.client, interaction.guild, member);
+
+        if (!auth.authorized) {
             await interaction.followUp({
-                content: '❌ You are not authorized to perform this action.',
+                content: '❌ Access Denied: Only Grav and designated Extra Owners can modify Anti-Nuke settings.',
                 ephemeral: true,
             });
             return;
@@ -366,7 +325,6 @@ export const antinukeCommand: Command = {
         const guildId = interaction.guildId!;
         const selectedValues = interaction.values;
 
-        // Set all specific modules based on presence in selectedValues
         const updatedConfig: Partial<AntiNukeConfig> = {
             anti_kick: selectedValues.includes('anti_kick'),
             anti_ban: selectedValues.includes('anti_ban'),
@@ -381,17 +339,14 @@ export const antinukeCommand: Command = {
             anti_guild_update: selectedValues.includes('anti_guild_update'),
         };
 
-        // Update AntiNukeConfig
         const currentConfig = await antiNukeSettings.set(guildId, updatedConfig);
 
-        // Update Cuss filter setting in supabase
         const cussFilterEnabled = selectedValues.includes('cuss_filter');
         await supabase.updateBotSettings(guildId, {
             moderation_enabled: cussFilterEnabled,
         });
 
-        // Re-render the control panel with the updated config
-        const embed = buildControlPanelEmbed(currentConfig, cussFilterEnabled, interaction.guild!.name);
+        const embed = await buildControlPanelEmbed(currentConfig, cussFilterEnabled, interaction.guild, auth.isGrav);
         const components = buildControlPanelComponents(currentConfig, cussFilterEnabled);
 
         await interaction.editReply({

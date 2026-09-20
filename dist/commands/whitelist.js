@@ -1,225 +1,184 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, UserSelectMenuBuilder, StringSelectMenuBuilder, } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, UserSelectMenuBuilder, StringSelectMenuBuilder, } from 'discord.js';
 import { whitelistSettings } from '../services/whitelistSettings.js';
-import { config } from '../config.js';
-import { supabase } from '../services/supabase.js';
-import { logger } from '../utils/logger.js';
-// Pastel / Ice Aesthetic Palette
+import { canManageSecurity } from '../utils/securityAuth.js';
+// Vivid Cyber Ice Palette
 const ICE_PALETTE = {
-    frost: 0x7dd3fc, // Soft Sky / Ice Blue
+    frost: 0x00d2ff, // Vivid Cyan
     glacier: 0x38bdf8, // Vivid Ice
     deepGlacier: 0x0284c7, // Accent Blue
-    unauthorized: 0xf87171, // Soft Pastel Red
+    unauthorized: 0xef4444, // Vivid Red
 };
-/**
- * Authorize the invoking user using the bot's permission architecture:
- * 1. Specific Role: 1392801771474259989 in the home guild
- * 2. Super Owner: Bot Application Owner / Team Member or Support Guild Owner
- * 3. Added Owners: Support Guild Administrators, Supabase platform admins, or ticket_admin roles
- */
-async function isAuthorized(interaction) {
-    const userId = interaction.user.id;
-    // 1. Check Discord Application Owner / Team Member (Super Owner)
-    try {
-        const app = interaction.client.application;
-        const application = typeof app?.fetch === 'function' ? await app.fetch().catch(() => app) : app;
-        const owner = application?.owner || app?.owner;
-        if (owner) {
-            if ('id' in owner && owner.id === userId)
-                return true;
-            if ('members' in owner && owner.members?.has?.(userId))
-                return true;
-        }
-    }
-    catch (err) {
-        logger.debug('[Whitelist] Error fetching application owner:', err);
-    }
-    // Evaluate Support Guild permissions / roles
-    const supportGuildId = config.bot.supportGuildId || config.discord.guildId;
-    if (supportGuildId) {
-        const guild = await interaction.client.guilds.fetch(supportGuildId).catch(() => null);
-        if (guild) {
-            // Support Guild Owner
-            if (guild.ownerId === userId)
-                return true;
-            const member = await guild.members.fetch(userId).catch(() => null);
-            if (member) {
-                // Specific role ID requested by user
-                if (member.roles.cache.has('1392801771474259989'))
-                    return true;
-                // Guild Administrator (Added Owner)
-                if (member.permissions.has(PermissionFlagsBits.Administrator))
-                    return true;
-                // Check Database Bot Settings for Staff & Admin Roles
-                const settings = await supabase.getBotSettings(guild.id).catch(() => null);
-                const adminRoleIds = (settings?.ticket_admin_role_ids || []);
-                if (adminRoleIds.some((roleId) => member.roles.cache.has(roleId)))
-                    return true;
-            }
-        }
-    }
-    // Supabase Platform Admin check (Added Owner)
-    try {
-        const isPlatformAdmin = await supabase.isUserAdmin(userId).catch(() => false);
-        if (isPlatformAdmin)
-            return true;
-    }
-    catch (err) {
-        logger.debug('[Whitelist] Error checking Supabase admin:', err);
-    }
-    return false;
-}
 /**
  * Generate a beautifully styled, high-info Whitelist Editor Embed card.
  */
 function buildEditorEmbed(selectedUserId, username, categories, addedBy) {
     const activeList = [];
     if (categories.includes('ban'))
-        activeList.push('• Ban Immunity');
+        activeList.push('• 🔨 **Ban Immunity** *(Cannot be banned by anti-nuke or auto-mod)*');
     if (categories.includes('kick'))
-        activeList.push('• Kick Immunity');
+        activeList.push('• 👢 **Kick Immunity** *(Cannot be kicked)*');
     if (categories.includes('timeout'))
-        activeList.push('• Timeout/Mute Immunity');
+        activeList.push('• ⏳ **Timeout/Mute Immunity** *(Cannot be timed out)*');
     if (categories.includes('warn'))
-        activeList.push('• Warning Immunity');
-    const activeText = activeList.length > 0 ? activeList.join('\n') : '• None';
+        activeList.push('• ⚠️ **Warning Immunity** *(Bypasses warnings)*');
+    const activeText = activeList.length > 0 ? activeList.join('\n') : '• *No active immunities assigned.*';
     return new EmbedBuilder()
         .setColor(ICE_PALETTE.frost)
-        .setTitle(`🛡️ Whitelist Editor: ${username}`)
-        .setDescription(`Configure immunity status and action bypasses for this member.\n\n` +
-        `› **User:** <@${selectedUserId}>\n` +
-        `(${selectedUserId})\n` +
-        `› **Added By:** <@${addedBy}>\n\n` +
-        `### Active Immunities:\n` +
-        `${activeText}`)
-        .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
+        .setTitle(`🛡️ WHITELIST EDITOR: @${username}`)
+        .setDescription(`Configure bypass immunities and security exemptions for this member.\n\n` +
+        `### 👤 Member Details\n` +
+        `> **Target:** <@${selectedUserId}>\n` +
+        `> **ID:** \`${selectedUserId}\`\n` +
+        `> **Authorized By:** <@${addedBy}>\n\n` +
+        `### 🛡️ Active Immunities\n` +
+        `${activeText}\n\n` +
+        `-# 🔒 Whitelist permissions managed by Grav & Extra Owners`)
+        .setFooter({ text: 'Victus Cloud Security Gateway', iconURL: 'https://victuscloud.com/favicon.png' })
         .setTimestamp();
 }
 export const whitelistCommand = {
     data: new SlashCommandBuilder()
         .setName('whitelist')
-        .setDescription('Manage bypass permissions and filters for users')
-        .setDMPermission(true),
+        .setDescription('Manage bypass immunities and filters for users (Grav & Extra Owners only)')
+        .setDMPermission(false)
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction) {
+        if (!interaction.guild) {
+            await interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+            return;
+        }
         await interaction.deferReply({ ephemeral: true });
-        const authorized = await isAuthorized(interaction);
-        if (!authorized) {
+        const member = interaction.guild.members.cache.get(interaction.user.id) || null;
+        const auth = await canManageSecurity(interaction.user, interaction.client, interaction.guild, member);
+        if (!auth.authorized) {
             const unauthorizedEmbed = new EmbedBuilder()
                 .setColor(ICE_PALETTE.unauthorized)
-                .setTitle('🚫 Not Authorized')
-                .setDescription('You do not have permission to run this command. This command is restricted to authorized staff.')
-                .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
+                .setTitle('🚫 Access Denied — Grav / Extra Owner Restricted')
+                .setDescription(`You do not have permission to manage the Whitelist.\n\n` +
+                `> **Security Policy:** Only **Grav** (Primary Owner) or designated **Extra Owners** can configure Whitelist immunities.\n\n` +
+                `-# If you should have access, ask Grav to designate you or your staff role using \`/extraowner add\`.`)
+                .setFooter({ text: 'Victus Cloud Security Gateway' })
                 .setTimestamp();
             await interaction.editReply({
-                embeds: [unauthorizedEmbed]
+                embeds: [unauthorizedEmbed],
             });
             return;
         }
         const initialEmbed = new EmbedBuilder()
             .setColor(ICE_PALETTE.frost)
-            .setTitle('❄️ Whitelist Configuration')
-            .setDescription('Select a user using the dropdown menu below to configure or view their bypass permissions.')
-            .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
+            .setTitle('🛡️ VICTUS WHITELIST SECURITY CONSOLE')
+            .setDescription(`Select a member using the dropdown menu below to configure or view their bypass immunities.\n\n` +
+            `> **Authorized User:** <@${interaction.user.id}> (${auth.isGrav ? '👑 Primary Owner' : '🛡️ Extra Owner'})\n` +
+            `> **Scope:** Guild Security Exemptions\n\n` +
+            `Whitelisted users are exempt from anti-nuke kick/ban thresholds and chat moderation filters.`)
+            .setFooter({ text: 'Victus Cloud Security Operations', iconURL: 'https://victuscloud.com/favicon.png' })
             .setTimestamp();
         const userSelectRow = new ActionRowBuilder().addComponents(new UserSelectMenuBuilder()
             .setCustomId('whitelist:user-select')
-            .setPlaceholder('Select a user to whitelist')
+            .setPlaceholder('Select a member to configure whitelist...')
             .setMinValues(1)
             .setMaxValues(1));
         await interaction.editReply({
             embeds: [initialEmbed],
-            components: [userSelectRow]
+            components: [userSelectRow],
         });
     },
     async handleButton(interaction) {
         if (!interaction.customId.startsWith('whitelist:'))
             return;
+        if (!interaction.guild)
+            return;
         await interaction.deferUpdate();
-        const authorized = await isAuthorized(interaction);
-        if (!authorized) {
+        const member = interaction.guild.members.cache.get(interaction.user.id) || null;
+        const auth = await canManageSecurity(interaction.user, interaction.client, interaction.guild, member);
+        if (!auth.authorized) {
             await interaction.followUp({
-                content: '❌ You are not authorized to perform this action.',
-                ephemeral: true
+                content: '❌ Access Denied: Only Grav and designated Extra Owners can modify Whitelist settings.',
+                ephemeral: true,
             });
             return;
         }
         const selectedUserId = interaction.customId.split(':')[2];
         const selectedUser = await interaction.client.users.fetch(selectedUserId).catch(() => null);
-        const homeGuildId = config.bot.supportGuildId || config.discord.guildId || '';
-        const whitelistConfig = await whitelistSettings.get(homeGuildId);
+        const guildId = interaction.guild.id;
+        const whitelistConfig = await whitelistSettings.get(guildId);
         if (interaction.customId.startsWith('whitelist:save-perms:')) {
-            const record = whitelistConfig.users.find(u => u.userId === selectedUserId) || {
+            const record = whitelistConfig.users.find((u) => u.userId === selectedUserId) || {
                 userId: selectedUserId,
                 userName: selectedUser?.username || 'Unknown',
-                categories: []
+                categories: [],
             };
             const finalEmbed = new EmbedBuilder()
                 .setColor(ICE_PALETTE.glacier)
-                .setTitle('🛡️ Whitelist Configuration Finalized')
-                .setDescription(`Bypass permissions for <@${selectedUserId}> have been successfully updated.\n\n` +
-                `### 👤 User Info\n` +
+                .setTitle('🛡️ Whitelist Settings Saved')
+                .setDescription(`Bypass immunities for <@${selectedUserId}> have been successfully updated.\n\n` +
+                `### 👤 Member Details\n` +
                 `› **User:** <@${selectedUserId}> (${selectedUser?.username || 'Unknown'})\n` +
                 `› **ID:** \`${selectedUserId}\`\n\n` +
-                `### 📋 Saved Bypass Status\n` +
+                `### 📋 Active Immunities\n` +
                 `${record.categories.includes('ban') ? '✅' : '❌'} Ban Immunity\n` +
                 `${record.categories.includes('kick') ? '✅' : '❌'} Kick Immunity\n` +
                 `${record.categories.includes('timeout') ? '✅' : '❌'} Timeout/Mute Immunity\n` +
-                `${record.categories.includes('warn') ? '✅' : '❌'} Warning Immunity`)
-                .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
+                `${record.categories.includes('warn') ? '✅' : '❌'} Warning Immunity\n\n` +
+                `-# Changes active immediately across all server channels.`)
+                .setFooter({ text: 'Victus Cloud Security Gateway', iconURL: 'https://victuscloud.com/favicon.png' })
                 .setTimestamp();
             await interaction.editReply({
                 embeds: [finalEmbed],
-                components: []
+                components: [],
             });
         }
         else if (interaction.customId.startsWith('whitelist:remove:')) {
-            // Remove the user from the whitelist settings
-            whitelistConfig.users = whitelistConfig.users.filter(u => u.userId !== selectedUserId);
-            await whitelistSettings.set(homeGuildId, whitelistConfig);
+            whitelistConfig.users = whitelistConfig.users.filter((u) => u.userId !== selectedUserId);
+            await whitelistSettings.set(guildId, whitelistConfig);
             const removalEmbed = new EmbedBuilder()
-                .setColor(0xef4444) // Soft red
-                .setTitle('🗑️ Whitelist Entry Removed')
-                .setDescription(`Bypass immunities for <@${selectedUserId}> have been completely cleared.\n\n` +
-                `**User:** <@${selectedUserId}> (${selectedUser?.username || 'Unknown'})\n` +
-                `**ID:** \`${selectedUserId}\`\n\n` +
-                `This user is no longer on the whitelist and will no longer bypass any active server filters or anti-nuke protections.`)
-                .setFooter({ text: 'Victus Cloud Staff Operations', iconURL: config.branding.logo })
+                .setColor(0xef4444)
+                .setTitle('🗑️ Whitelist Entry Cleared')
+                .setDescription(`Bypass immunities for <@${selectedUserId}> have been completely removed.\n\n` +
+                `› **User:** <@${selectedUserId}> (${selectedUser?.username || 'Unknown'})\n` +
+                `› **ID:** \`${selectedUserId}\`\n\n` +
+                `This user is no longer on the whitelist and is now fully subject to all Anti-Nuke protections and moderation rules.`)
+                .setFooter({ text: 'Victus Cloud Security Gateway', iconURL: 'https://victuscloud.com/favicon.png' })
                 .setTimestamp();
             await interaction.editReply({
                 embeds: [removalEmbed],
-                components: []
+                components: [],
             });
         }
     },
     async handleSelectMenu(interaction) {
         if (!interaction.customId.startsWith('whitelist:'))
             return;
+        if (!interaction.guild)
+            return;
         await interaction.deferUpdate();
-        const authorized = await isAuthorized(interaction);
-        if (!authorized) {
+        const member = interaction.guild.members.cache.get(interaction.user.id) || null;
+        const auth = await canManageSecurity(interaction.user, interaction.client, interaction.guild, member);
+        if (!auth.authorized) {
             await interaction.followUp({
-                content: '❌ You are not authorized to perform this action.',
-                ephemeral: true
+                content: '❌ Access Denied: Only Grav and designated Extra Owners can modify Whitelist settings.',
+                ephemeral: true,
             });
             return;
         }
-        const homeGuildId = config.bot.supportGuildId || config.discord.guildId || '';
+        const guildId = interaction.guild.id;
         if (interaction.customId === 'whitelist:user-select') {
             const selectedUserId = interaction.values[0];
             const selectedUser = await interaction.client.users.fetch(selectedUserId).catch(() => null);
             if (!selectedUser) {
                 await interaction.followUp({
                     content: '❌ Could not find the selected user.',
-                    ephemeral: true
+                    ephemeral: true,
                 });
                 return;
             }
-            const whitelistConfig = await whitelistSettings.get(homeGuildId);
-            const record = whitelistConfig.users.find(u => u.userId === selectedUserId) || {
+            const whitelistConfig = await whitelistSettings.get(guildId);
+            const record = whitelistConfig.users.find((u) => u.userId === selectedUserId) || {
                 userId: selectedUserId,
                 userName: selectedUser.username,
                 categories: [],
                 addedBy: interaction.user.id,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
             };
             const permsEmbed = buildEditorEmbed(selectedUserId, selectedUser.username, record.categories, record.addedBy || interaction.user.id);
             const permsSelectRow = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
@@ -231,27 +190,31 @@ export const whitelistCommand = {
                 {
                     label: 'Ban Immunity',
                     value: 'ban',
-                    description: 'Prevent user from being banned',
-                    default: record.categories.includes('ban')
+                    emoji: '🔨',
+                    description: 'Prevent user from being banned by anti-nuke',
+                    default: record.categories.includes('ban'),
                 },
                 {
                     label: 'Kick Immunity',
                     value: 'kick',
+                    emoji: '👢',
                     description: 'Prevent user from being kicked',
-                    default: record.categories.includes('kick')
+                    default: record.categories.includes('kick'),
                 },
                 {
                     label: 'Timeout/Mute Immunity',
                     value: 'timeout',
+                    emoji: '⏳',
                     description: 'Prevent user from being timed out',
-                    default: record.categories.includes('timeout')
+                    default: record.categories.includes('timeout'),
                 },
                 {
                     label: 'Warning Immunity',
                     value: 'warn',
+                    emoji: '⚠️',
                     description: 'Prevent user from receiving warnings',
-                    default: record.categories.includes('warn')
-                }
+                    default: record.categories.includes('warn'),
+                },
             ]));
             const saveButtonRow = new ActionRowBuilder().addComponents(new ButtonBuilder()
                 .setCustomId(`whitelist:save-perms:${selectedUserId}`)
@@ -262,7 +225,7 @@ export const whitelistCommand = {
                 .setStyle(ButtonStyle.Danger));
             await interaction.editReply({
                 embeds: [permsEmbed],
-                components: [permsSelectRow, saveButtonRow]
+                components: [permsSelectRow, saveButtonRow],
             });
         }
         else if (interaction.customId.startsWith('whitelist:perms-select:')) {
@@ -271,29 +234,28 @@ export const whitelistCommand = {
             if (!selectedUser) {
                 await interaction.followUp({
                     content: '❌ Could not find the selected user.',
-                    ephemeral: true
+                    ephemeral: true,
                 });
                 return;
             }
             const selectedValues = interaction.values;
-            const whitelistConfig = await whitelistSettings.get(homeGuildId);
-            let record = whitelistConfig.users.find(u => u.userId === selectedUserId);
+            const whitelistConfig = await whitelistSettings.get(guildId);
+            let record = whitelistConfig.users.find((u) => u.userId === selectedUserId);
             if (!record) {
                 record = {
                     userId: selectedUserId,
                     userName: selectedUser.username,
                     categories: selectedValues,
                     addedBy: interaction.user.id,
-                    timestamp: new Date().toISOString()
+                    timestamp: new Date().toISOString(),
                 };
                 whitelistConfig.users.push(record);
             }
             else {
-                // Keep non-bypass immunities if any, then merge selected values
-                const preservedCategories = record.categories.filter(c => !['ban', 'kick', 'timeout', 'warn'].includes(c));
+                const preservedCategories = record.categories.filter((c) => !['ban', 'kick', 'timeout', 'warn'].includes(c));
                 record.categories = [...preservedCategories, ...selectedValues];
             }
-            await whitelistSettings.set(homeGuildId, whitelistConfig);
+            await whitelistSettings.set(guildId, whitelistConfig);
             const permsEmbed = buildEditorEmbed(selectedUserId, selectedUser.username, record.categories, record.addedBy || interaction.user.id);
             const permsSelectRow = new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
                 .setCustomId(`whitelist:perms-select:${selectedUserId}`)
@@ -304,27 +266,31 @@ export const whitelistCommand = {
                 {
                     label: 'Ban Immunity',
                     value: 'ban',
-                    description: 'Prevent user from being banned',
-                    default: record.categories.includes('ban')
+                    emoji: '🔨',
+                    description: 'Prevent user from being banned by anti-nuke',
+                    default: record.categories.includes('ban'),
                 },
                 {
                     label: 'Kick Immunity',
                     value: 'kick',
+                    emoji: '👢',
                     description: 'Prevent user from being kicked',
-                    default: record.categories.includes('kick')
+                    default: record.categories.includes('kick'),
                 },
                 {
                     label: 'Timeout/Mute Immunity',
                     value: 'timeout',
+                    emoji: '⏳',
                     description: 'Prevent user from being timed out',
-                    default: record.categories.includes('timeout')
+                    default: record.categories.includes('timeout'),
                 },
                 {
                     label: 'Warning Immunity',
                     value: 'warn',
+                    emoji: '⚠️',
                     description: 'Prevent user from receiving warnings',
-                    default: record.categories.includes('warn')
-                }
+                    default: record.categories.includes('warn'),
+                },
             ]));
             const saveButtonRow = new ActionRowBuilder().addComponents(new ButtonBuilder()
                 .setCustomId(`whitelist:save-perms:${selectedUserId}`)
@@ -335,9 +301,9 @@ export const whitelistCommand = {
                 .setStyle(ButtonStyle.Danger));
             await interaction.editReply({
                 embeds: [permsEmbed],
-                components: [permsSelectRow, saveButtonRow]
+                components: [permsSelectRow, saveButtonRow],
             });
         }
-    }
+    },
 };
 export default whitelistCommand;
