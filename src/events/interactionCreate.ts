@@ -74,7 +74,7 @@ export const interactionCreateEvent: Event = {
 
                         await interaction.reply({
                             content: '⚠️ **System Error:** Failed to render linking interface. Please contact support.',
-                            ephemeral: true
+                            flags: MessageFlags.Ephemeral
                         }).catch(() => { });
                     }
                     return;
@@ -121,11 +121,10 @@ export const interactionCreateEvent: Event = {
                     }
                 } catch (fallbackError: any) {
                     logger.error('❌ Fallback V2 response failed:', fallbackError);
-                    const finalFallback = { content: '⚠️ **Critical Error:** High-end UI failed. Check bot console.', ephemeral: true };
                     if (interaction.replied || interaction.deferred) {
-                        await interaction.editReply(finalFallback).catch(() => { });
+                        await interaction.editReply({ content: '⚠️ **Critical Error:** High-end UI failed. Check bot console.' }).catch(() => { });
                     } else {
-                        await interaction.reply(finalFallback).catch(() => { });
+                        await interaction.reply({ content: '⚠️ **Critical Error:** High-end UI failed. Check bot console.', flags: MessageFlags.Ephemeral }).catch(() => { });
                     }
                 }
             }

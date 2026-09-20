@@ -47,7 +47,7 @@ export const whitelistCommand = {
             await interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
             return;
         }
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const member = interaction.guild.members.cache.get(interaction.user.id) || null;
         const auth = await canManageSecurity(interaction.user, interaction.client, interaction.guild, member);
         if (!auth.authorized) {
@@ -94,7 +94,7 @@ export const whitelistCommand = {
         if (!auth.authorized) {
             await interaction.followUp({
                 content: '❌ Access Denied: Only Grav and designated Extra Owners can modify Whitelist settings.',
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
             return;
         }
@@ -157,7 +157,7 @@ export const whitelistCommand = {
         if (!auth.authorized) {
             await interaction.followUp({
                 content: '❌ Access Denied: Only Grav and designated Extra Owners can modify Whitelist settings.',
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
             return;
         }
@@ -168,7 +168,7 @@ export const whitelistCommand = {
             if (!selectedUser) {
                 await interaction.followUp({
                     content: '❌ Could not find the selected user.',
-                    ephemeral: true,
+                    flags: MessageFlags.Ephemeral,
                 });
                 return;
             }
@@ -234,7 +234,7 @@ export const whitelistCommand = {
             if (!selectedUser) {
                 await interaction.followUp({
                     content: '❌ Could not find the selected user.',
-                    ephemeral: true,
+                    flags: MessageFlags.Ephemeral,
                 });
                 return;
             }

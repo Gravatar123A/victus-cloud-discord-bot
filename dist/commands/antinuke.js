@@ -172,7 +172,7 @@ export const antinukeCommand = {
             await interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
             return;
         }
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const member = interaction.guild.members.cache.get(interaction.user.id) || null;
         const auth = await canManageSecurity(interaction.user, interaction.client, interaction.guild, member);
         if (!auth.authorized) {
@@ -211,7 +211,7 @@ export const antinukeCommand = {
         if (!auth.authorized) {
             await interaction.followUp({
                 content: '❌ Access Denied: Only Grav and designated Extra Owners can modify Anti-Nuke settings.',
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
             return;
         }
@@ -267,7 +267,7 @@ export const antinukeCommand = {
         if (!auth.authorized) {
             await interaction.followUp({
                 content: '❌ Access Denied: Only Grav and designated Extra Owners can modify Anti-Nuke settings.',
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
             return;
         }

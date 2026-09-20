@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'node:crypto';
 import ws from 'ws';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
@@ -662,10 +663,13 @@ class SupabaseService {
             .from('profiles')
             .select('*')
             .eq('id', userId)
-            .single();
+            .limit(1)
+            .maybeSingle();
 
         if (error) {
-            logger.error('Failed to get user profile:', error);
+            if (error.code !== 'PGRST116') {
+                logger.error('Failed to get user profile:', error);
+            }
             return null;
         }
         return data;
@@ -2748,9 +2752,11 @@ class SupabaseService {
                     return false;
                 }
             } else {
+                const embedId = embed.id || randomUUID();
                 const { error } = await this.client
                     .from('custom_embeds')
                     .insert({
+                        id: embedId,
                         guild_id: guildId,
                         name: name,
                         ...embed,
