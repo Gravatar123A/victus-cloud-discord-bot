@@ -21,6 +21,13 @@ export interface GtnConfig {
     nextAutoGameAt: number | null; // Timestamp when next game is scheduled
 }
 
+export interface GtnPlayerStats {
+    userId: string;
+    wins: number;
+    totalGuesses: number;
+    lastWinAt: number;
+}
+
 export const DEFAULT_GTN_CONFIG: GtnConfig = {
     channelId: null,
     autoLock: true,
@@ -125,6 +132,7 @@ export class GtnService {
     private cache = new Map<string, GtnConfig>();
     private activeGames = new Map<string, ActiveGtnGame>();
     private autoTimers = new Map<string, NodeJS.Timeout>();
+    private leaderboardCache = new Map<string, Map<string, GtnPlayerStats>>();
 
     /**
      * Get GTN configuration for a guild.
@@ -168,6 +176,109 @@ export class GtnService {
         }
 
         return { ...updated };
+    }
+
+    /**
+     * Ensure GTN leaderboard stats are loaded for a guild.
+     */
+    async ensureLeaderboardLoaded(guildId: string): Promise<Map<string, GtnPlayerStats>> {
+        if (this.leaderboardCache.has(guildId)) {
+            return this.leaderboardCache.get(guildId)!;
+        }
+
+        const map = new Map<string, GtnPlayerStats>();
+        try {
+            const embed = await supabase.getCustomEmbed(guildId, '_gtn_leaderboard');
+            if (embed?.description) {
+                const parsed: Record<string, GtnPlayerStats> = JSON.parse(embed.description);
+                for (const [uid, stats] of Object.entries(parsed)) {
+                    map.set(uid, {
+                        userId: uid,
+                        wins: Number(stats.wins || 0),
+                        totalGuesses: Number(stats.totalGuesses || 0),
+                        lastWinAt: Number(stats.lastWinAt || 0),
+                    });
+                }
+            }
+        } catch (error) {
+            logger.warn(`[GtnService] Failed to load GTN leaderboard for guild ${guildId}:`, error);
+        }
+
+        this.leaderboardCache.set(guildId, map);
+        return map;
+    }
+
+    /**
+     * Save GTN leaderboard stats to Supabase for a guild.
+     */
+    async saveLeaderboard(guildId: string): Promise<void> {
+        const map = this.leaderboardCache.get(guildId);
+        if (!map) return;
+
+        const plainObj: Record<string, GtnPlayerStats> = {};
+        for (const [uid, stats] of map.entries()) {
+            plainObj[uid] = stats;
+        }
+
+        try {
+            await supabase.saveCustomEmbed(guildId, '_gtn_leaderboard', {
+                description: JSON.stringify(plainObj),
+            });
+        } catch (error) {
+            logger.warn(`[GtnService] Failed to save GTN leaderboard for guild ${guildId}:`, error);
+        }
+    }
+
+    /**
+     * Record a user's guess attempt.
+     */
+    async recordGuess(guildId: string, userId: string): Promise<void> {
+        if (!guildId || !userId) return;
+        const map = await this.ensureLeaderboardLoaded(guildId);
+        const existing = map.get(userId) || { userId, wins: 0, totalGuesses: 0, lastWinAt: 0 };
+        existing.totalGuesses += 1;
+        map.set(userId, existing);
+    }
+
+    /**
+     * Record a user win in GTN.
+     */
+    async recordWin(guildId: string, userId: string): Promise<GtnPlayerStats> {
+        const map = await this.ensureLeaderboardLoaded(guildId);
+        const existing = map.get(userId) || { userId, wins: 0, totalGuesses: 0, lastWinAt: 0 };
+        existing.wins += 1;
+        existing.lastWinAt = Date.now();
+        map.set(userId, existing);
+        await this.saveLeaderboard(guildId);
+        return { ...existing };
+    }
+
+    /**
+     * Get top GTN winners for a guild.
+     */
+    async getTopWinners(guildId: string, limit = 100): Promise<GtnPlayerStats[]> {
+        const map = await this.ensureLeaderboardLoaded(guildId);
+        return Array.from(map.values())
+            .filter((s) => s.wins > 0)
+            .sort((a, b) => {
+                if (b.wins !== a.wins) return b.wins - a.wins;
+                return a.totalGuesses - b.totalGuesses;
+            })
+            .slice(0, limit);
+    }
+
+    /**
+     * Get user GTN stats and rank.
+     */
+    async getUserStats(guildId: string, userId: string): Promise<{ stats: GtnPlayerStats; rank: number | null }> {
+        const top = await this.getTopWinners(guildId, 1000);
+        const index = top.findIndex((s) => s.userId === userId);
+        const map = await this.ensureLeaderboardLoaded(guildId);
+        const stats = map.get(userId) || { userId, wins: 0, totalGuesses: 0, lastWinAt: 0 };
+        return {
+            stats,
+            rank: index >= 0 ? index + 1 : null,
+        };
     }
 
     /**
@@ -504,6 +615,7 @@ export class GtnService {
 
         game.participants.add(message.author.id);
         game.guessCount++;
+        this.recordGuess(guildId, message.author.id).catch(() => {});
 
         const secret = game.secretNumber;
 
@@ -560,6 +672,14 @@ export class GtnService {
         const durationStr = formatDuration(Date.now() - game.startedAt);
         const config = await this.get(game.guildId);
 
+        // Record persistent GTN win
+        const playerStats = await this.recordWin(game.guildId, message.author.id).catch(() => ({
+            userId: message.author.id,
+            wins: 1,
+            totalGuesses: 1,
+            lastWinAt: Date.now(),
+        }));
+
         // Award Victus Coins if configured
         let coinGrantResult: { success: boolean; unlinked?: boolean; newBalance?: number; error?: string } | null = null;
         if (config.rewardCoins > 0) {
@@ -589,7 +709,7 @@ export class GtnService {
                 { name: '🎯 Secret Number', value: `**${game.secretNumber}**`, inline: true },
                 { name: '⏱️ Time Taken', value: `**${durationStr}**`, inline: true },
                 { name: '📊 Total Guesses', value: `**${game.guessCount}**`, inline: true },
-                { name: '👥 Total Players', value: `**${game.participants.size}**`, inline: true },
+                { name: '🏆 Total GTN Wins', value: `**${playerStats.wins}** victor${playerStats.wins === 1 ? 'y' : 'ies'}`, inline: true },
                 { name: '👑 Host', value: game.hostId === message.client.user?.id ? '🤖 Victus Cloud' : `<@${game.hostId}>`, inline: true }
             )
             .setFooter({ text: 'Victus Cloud Events • GG to all players!' })

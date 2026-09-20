@@ -8,11 +8,12 @@ import {
 } from 'discord.js';
 import { supabase } from './supabase.js';
 import { memberStatsService } from './memberStatsService.js';
+import { gtnService } from './gtnService.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { getLevelProgress } from '../utils/vccrs.js';
 import { logger } from '../utils/logger.js';
 
-export type LeaderboardCategory = 'overview' | 'coins' | 'xp' | 'messages' | 'voice';
+export type LeaderboardCategory = 'overview' | 'coins' | 'xp' | 'messages' | 'voice' | 'gtn';
 
 export interface LeaderboardConfig {
     guildId: string;
@@ -149,11 +150,15 @@ class LeaderboardService {
         // 4. Top Voice (up to 100 active voice participants)
         const topVoice = await memberStatsService.getTopVoice(guildId, 100);
 
+        // 5. Top GTN Champions (up to 100 players)
+        const topGtn = await gtnService.getTopWinners(guildId, 100);
+
         return {
             coins: topCoinsRaw || [],
             xp: topXpRaw || [],
             messages: topMessages,
             voice: topVoice,
+            gtn: topGtn,
         };
     }
 
@@ -179,6 +184,7 @@ class LeaderboardService {
                 data.xp.length,
                 data.messages.length,
                 data.voice.length,
+                data.gtn.length,
                 1
             );
             totalPages = Math.max(1, Math.ceil(maxOverviewCount / PAGE_SIZE));
@@ -225,6 +231,15 @@ class LeaderboardService {
                           .join('\n')
                     : '*No voice activity for this page.*';
 
+            // 5. Guess The Number Champions (10 items on this page)
+            const gtnSlice = data.gtn.slice(startIndex, endIndex);
+            const gtnList =
+                gtnSlice.length > 0
+                    ? gtnSlice
+                          .map((g, i) => `${formatRank(startIndex + i + 1)} <@${g.userId}> — **${fmt(g.wins)}** win${g.wins === 1 ? '' : 's'} (\`${fmt(g.totalGuesses)}\` guesses)`)
+                          .join('\n')
+                    : '*No GTN champions recorded for this page.*';
+
             body =
                 `# 🏆 VICTUS CLOUD LIVE LEADERBOARD\n` +
                 `Real-time server & cloud leaderboards. **Updates automatically every 1 minute.**\n` +
@@ -233,6 +248,7 @@ class LeaderboardService {
                 `### ⚡ Top XP & Contribution Ranks • Ranks ${startIndex + 1}–${startIndex + (xpSlice.length || 1)}\n${xpList}\n\n` +
                 `### 💬 Most Active Chatters • Ranks ${startIndex + 1}–${startIndex + (messagesSlice.length || 1)}\n${messagesList}\n\n` +
                 `### 🎙️ Top Voice Channel Airtime • Ranks ${startIndex + 1}–${startIndex + (voiceSlice.length || 1)}\n${voiceList}\n\n` +
+                `### 🎯 Guess The Number Champions • Ranks ${startIndex + 1}–${startIndex + (gtnSlice.length || 1)}\n${gtnList}\n\n` +
                 `${HR}\n` +
                 `- 📄 **Page ${currentPage} of ${totalPages}** • 🕒 *Updated: <t:${nowTs}:R> • Next tick: <t:${nowTs + 60}:R> • ⚡ Live Sync*`;
         } else if (view === 'coins') {
@@ -326,12 +342,34 @@ class LeaderboardService {
                 `${HR}\n` +
                 `- 📄 **Page ${currentPage} of ${totalPages}** (Showing ranks ${startIndex + 1}–${startIndex + slice.length} of ${data.voice.length})\n` +
                 `- 🕒 *Last updated: <t:${nowTs}:R> • Auto-updates every 1 minute*`;
+        } else if (view === 'gtn') {
+            const total = Math.max(data.gtn.length, 1);
+            totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+            currentPage = Math.min(currentPage, totalPages);
+            const startIndex = (currentPage - 1) * PAGE_SIZE;
+            const slice = data.gtn.slice(startIndex, startIndex + PAGE_SIZE);
+
+            const list =
+                slice.length > 0
+                    ? slice
+                          .map((g, i) => `${formatRank(startIndex + i + 1)} <@${g.userId}> — 🏆 **${fmt(g.wins)}** win${g.wins === 1 ? '' : 's'} · \`${fmt(g.totalGuesses)}\` total guesses${g.lastWinAt ? ` · Last win <t:${Math.floor(g.lastWinAt / 1000)}:R>` : ''}`)
+                          .join('\n')
+                    : '*No Guess The Number champions recorded yet. Play a game with `/gtn`!*';
+
+            body =
+                `# 🎯 GUESS THE NUMBER LEADERBOARD\n` +
+                `Top champions with the most GTN game victories and fastest guesses.\n` +
+                `${HR}\n\n` +
+                `${list}\n\n` +
+                `${HR}\n` +
+                `- 📄 **Page ${currentPage} of ${totalPages}** (Showing ranks ${startIndex + 1}–${startIndex + slice.length} of ${data.gtn.length})\n` +
+                `- 🕒 *Last updated: <t:${nowTs}:R> • Auto-updates every 1 minute*`;
         }
 
         container.addTextDisplayComponents(ComponentsV2.text(body));
 
-        // Row 1: Category Tab Buttons
-        const tabRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        // Row 1: Primary Categories (Overview, Coins, XP, Messages)
+        const tabRow1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
                 .setCustomId(`lb_tab:overview:${guildId}`)
                 .setLabel('Overview')
@@ -351,15 +389,24 @@ class LeaderboardService {
                 .setCustomId(`lb_tab:messages:${guildId}`)
                 .setLabel('Messages')
                 .setStyle(view === 'messages' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-                .setEmoji('💬'),
+                .setEmoji('💬')
+        );
+
+        // Row 2: Voice & GTN Categories
+        const tabRow2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
                 .setCustomId(`lb_tab:voice:${guildId}`)
                 .setLabel('Voice')
                 .setStyle(view === 'voice' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-                .setEmoji('🎙️')
+                .setEmoji('🎙️'),
+            new ButtonBuilder()
+                .setCustomId(`lb_tab:gtn:${guildId}`)
+                .setLabel('GTN')
+                .setStyle(view === 'gtn' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+                .setEmoji('🎯')
         );
 
-        // Row 2: Page Navigation and Refresh Controls
+        // Row 3: Page Navigation and Refresh Controls
         const prevPage = Math.max(1, currentPage - 1);
         const nextPage = Math.min(totalPages, currentPage + 1);
 
@@ -385,7 +432,8 @@ class LeaderboardService {
                 .setStyle(ButtonStyle.Success)
         );
 
-        container.addActionRowComponents(tabRow);
+        container.addActionRowComponents(tabRow1);
+        container.addActionRowComponents(tabRow2);
         container.addActionRowComponents(navRow);
 
         return container;

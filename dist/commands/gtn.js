@@ -5,7 +5,6 @@ export const gtnCommand = {
         .setName('gtn')
         .setDescription('Manage and play Guess The Number games')
         .setDMPermission(false)
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .addSubcommand((sub) => sub
         .setName('start')
         .setDescription('Start a Guess The Number game in a channel')
@@ -80,7 +79,16 @@ export const gtnCommand = {
         .setDescription('Force an immediate hint in the active GTN channel'))
         .addSubcommand((sub) => sub
         .setName('status')
-        .setDescription('View status of the current game, coins, auto schedule, and channel')),
+        .setDescription('View status of the current game, coins, auto schedule, and channel'))
+        .addSubcommand((sub) => sub
+        .setName('leaderboard')
+        .setDescription('View top Guess The Number champions in this server')
+        .addIntegerOption((opt) => opt
+        .setName('limit')
+        .setDescription('Number of top players to show (default 10, max 25)')
+        .setMinValue(1)
+        .setMaxValue(25)
+        .setRequired(false))),
     async execute(interaction) {
         if (!interaction.guild) {
             await interaction.reply({
@@ -142,6 +150,12 @@ export const gtnCommand = {
                 }
                 else if (first === 'status') {
                     subcommand = 'status';
+                }
+                else if (first === 'leaderboard' || first === 'lb' || first === 'top') {
+                    subcommand = 'leaderboard';
+                    if (parts[1] && /^\d+$/.test(parts[1])) {
+                        prefixArgNumber = parseInt(parts[1], 10);
+                    }
                 }
                 else if (first === 'start') {
                     subcommand = 'start';
@@ -511,6 +525,37 @@ export const gtnCommand = {
                     inline: false,
                 });
             }
+            await interaction.reply({ embeds: [embed] });
+            return;
+        }
+        // 9. SUBCOMMAND: LEADERBOARD
+        if (subcommand === 'leaderboard') {
+            const rawLimit = interaction.options.getInteger?.('limit') ?? prefixArgNumber ?? 10;
+            const limit = Math.min(25, Math.max(1, rawLimit));
+            const topWinners = await gtnService.getTopWinners(interaction.guild.id, limit);
+            const userStats = await gtnService.getUserStats(interaction.guild.id, interaction.user.id);
+            const embed = new EmbedBuilder()
+                .setColor(0x8b5cf6)
+                .setTitle('🎯 Guess The Number Leaderboard')
+                .setDescription(`Top champions with the most Guess The Number victories in **${interaction.guild.name}**!\n\n` +
+                (topWinners.length > 0
+                    ? topWinners
+                        .map((p, idx) => {
+                        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `\`#${idx + 1}\``;
+                        const winStr = `${p.wins} win${p.wins === 1 ? '' : 's'}`;
+                        const guessStr = `${p.totalGuesses} guesses`;
+                        const lastWin = p.lastWinAt ? ` • Last win <t:${Math.floor(p.lastWinAt / 1000)}:R>` : '';
+                        return `${medal} <@${p.userId}> — **${winStr}** (\`${guessStr}\`)${lastWin}`;
+                    })
+                        .join('\n')
+                    : '*No GTN champions recorded yet! Start a game with `/gtn start <number>` or wait for auto GTN.*'))
+                .setFooter({
+                text: userStats.rank
+                    ? `Your Rank: #${userStats.rank} • ${userStats.stats.wins} wins • ${userStats.stats.totalGuesses} total guesses`
+                    : 'You have not won any GTN games yet. Keep guessing!',
+                iconURL: interaction.user.displayAvatarURL(),
+            })
+                .setTimestamp();
             await interaction.reply({ embeds: [embed] });
             return;
         }
