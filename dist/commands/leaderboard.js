@@ -29,7 +29,7 @@ export const leaderboardCommand = {
         .setName('category')
         .setDescription('Category to display')
         .setRequired(false)
-        .addChoices({ name: '🏆 Overview (Top 3 of all categories)', value: 'overview' }, { name: '🪙 Top Coins', value: 'coins' }, { name: '⚡ Top XP & Tiers', value: 'xp' }, { name: '💬 Top Messages', value: 'messages' }, { name: '🎙️ Top Voice Minutes', value: 'voice' }, { name: '📨 Top Invites', value: 'invites' }))),
+        .addChoices({ name: '🏆 Overview (Top of all categories)', value: 'overview' }, { name: '🪙 Top Coins', value: 'coins' }, { name: '⚡ Top XP & Tiers', value: 'xp' }, { name: '💬 Top Messages', value: 'messages' }, { name: '🎙️ Top Voice Minutes', value: 'voice' }, { name: '🎯 Top GTN Champions', value: 'gtn' }, { name: '📨 Top Invites', value: 'invites' }))),
     cooldown: 5,
     async execute(interaction) {
         if (!interaction.inGuild() || !interaction.guild) {

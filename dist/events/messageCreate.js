@@ -24,6 +24,8 @@ import { createProcessingEmbed, createResultEmbeds } from '../embeds/antigravity
 import { viralExpansionService } from '../services/viralExpansionService.js';
 import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 import { hubBridgeService } from '../services/hubBridgeService.js';
+import { countingService } from '../services/countingService.js';
+import { gtnService } from '../services/gtnService.js';
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
 const aiChannelCache = new Map();
@@ -196,6 +198,20 @@ export const messageCreateEvent = {
                 return;
             // Viral Expansion: Record message for chat velocity, airdrops, wild mobs & Guild Battle Pass XP
             viralExpansionService.recordChatMessage(message).catch(() => { });
+            // Counting Game: Process message if in active counting channel
+            const countingHandled = await countingService.handleMessage(message).catch((err) => {
+                logger.error('Error handling counting message:', err);
+                return false;
+            });
+            if (countingHandled)
+                return;
+            // Guess The Number Game: Process guess if in active GTN channel
+            const gtnHandled = await gtnService.handleMessage(message).catch((err) => {
+                logger.error('Error handling GTN message:', err);
+                return false;
+            });
+            if (gtnHandled)
+                return;
         }
         // --- AFK System (Fast In-Memory, Zero Supabase Overhead) ---
         if (message.inGuild()) {
