@@ -163,8 +163,64 @@ function attachPlayerListeners(client: Client, manager: LavalinkManager): void {
         .on('playerDestroy', async (player) => {
             await clearNowPlaying(client, player);
         })
-        .on('trackError', (player, track, payload) => {
-            logger.warn(`🎵 Track error in guild ${player.guildId}: ${JSON.stringify(payload?.exception ?? payload)}`);
+        .on('trackError', async (player, track, payload) => {
+            const errDetails = JSON.stringify(payload?.exception ?? payload);
+            logger.warn(`🎵 Track error in guild ${player.guildId}: ${errDetails}`);
+
+            // 1. Check if we can attempt a seamless SoundCloud fallback for blocked YouTube tracks
+            const isFallback = (track as any)?._scFallback;
+            const trackTitle = track?.info?.title;
+            const trackAuthor = track?.info?.author || '';
+
+            if (!isFallback && trackTitle) {
+                logger.info(`🎵 Attempting seamless SoundCloud fallback for "${trackTitle}" by "${trackAuthor}"...`);
+                try {
+                    const fallbackQuery = `${trackTitle} ${trackAuthor}`.trim();
+                    const searchOutcome = await player.search({ query: fallbackQuery, source: 'scsearch' }, client.user!);
+                    if (searchOutcome && searchOutcome.tracks?.length > 0) {
+                        const fallbackTrack = searchOutcome.tracks[0];
+                        (fallbackTrack as any)._scFallback = true;
+
+                        // Place the fallback track at the top of the queue and start it
+                        player.queue.tracks.unshift(fallbackTrack);
+                        await player.skip();
+
+                        const channel = await getTextChannel(client, player);
+                        if (channel && 'send' in channel) {
+                            await channel.send({
+                                components: [
+                                    ComponentsV2.infoContainer(
+                                        'Stream Source Switched',
+                                        `YouTube blocked playback (*video requires login on datacenter IP*).\n\n` +
+                                        `› Automatically switched to **SoundCloud** stream for: **${trackTitle}** 🎵`,
+                                    ),
+                                ],
+                                flags: V2,
+                            }).catch(() => undefined);
+                        }
+                        return;
+                    }
+                } catch (fallbackErr) {
+                    logger.error(`🎵 SoundCloud fallback resolution failed:`, fallbackErr);
+                }
+            }
+
+            // 2. If fallback failed or wasn't possible, alert channel and skip ahead cleanly
+            const channel = await getTextChannel(client, player);
+            if (channel && 'send' in channel) {
+                await channel.send({
+                    components: [
+                        ComponentsV2.warningContainer(
+                            'Track Playback Blocked',
+                            `Could not stream **${trackTitle || 'this track'}**.\n\n` +
+                            `› **Reason:** Provider requires authentication or blocked datacenter IP.\n` +
+                            `› **Action:** Skipping to next track in queue.`,
+                        ),
+                    ],
+                    flags: V2,
+                }).catch(() => undefined);
+            }
+            player.skip().catch(() => undefined);
         })
         .on('trackStuck', (player) => {
             logger.warn(`🎵 Track stuck in guild ${player.guildId} — skipping.`);

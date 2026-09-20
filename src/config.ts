@@ -166,9 +166,9 @@ export const config = {
         // node credential is managed independently and may be rotated.
         password: process.env.LAVALINK_PASSWORD || '',
         secure: process.env.LAVALINK_SECURE === 'true',
-        // ytsearch (YouTube) is the default; users can paste SoundCloud/Bandcamp/
-        // direct URLs too. Override with LAVALINK_SEARCH (e.g. scsearch).
-        defaultSource: process.env.LAVALINK_SEARCH || 'ytsearch',
+        // scsearch (SoundCloud) is the default to avoid YouTube datacenter IP blocks.
+        // Users can paste YouTube/Spotify/Bandcamp/direct URLs too. Override with LAVALINK_SEARCH.
+        defaultSource: process.env.LAVALINK_SEARCH || 'scsearch',
         defaultVolume: parseInt(process.env.LAVALINK_VOLUME || '80', 10),
     },
 
