@@ -28,6 +28,7 @@ import { viralExpansionService } from '../services/viralExpansionService.js';
 import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 import { hubBridgeService } from '../services/hubBridgeService.js';
 import { countingService } from '../services/countingService.js';
+import { gtnService } from '../services/gtnService.js';
 
 
 const SETTINGS_TTL_MS = 20_000;
@@ -223,6 +224,13 @@ export const messageCreateEvent: Event = {
                 return false;
             });
             if (countingHandled) return;
+
+            // Guess The Number Game: Process guess if in active GTN channel
+            const gtnHandled = await gtnService.handleMessage(message).catch((err) => {
+                logger.error('Error handling GTN message:', err);
+                return false;
+            });
+            if (gtnHandled) return;
         }
 
 
