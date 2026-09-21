@@ -23,6 +23,7 @@
         "lavalink-client": "^2.10.3",
         "musicard": "^3.0.1",
         "tsx": "^4.7.0",
+        "typescript": "^5.3.3",
         "winston": "^3.11.0",
         "ws": "^8.18.0"
     },

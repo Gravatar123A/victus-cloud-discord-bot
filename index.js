@@ -32,21 +32,69 @@ if (!existsSync(discordJsPackage)) {
     });
 }
 
-// 3. Verify compiled entrypoint
-const hasDist = existsSync(entrypoint) && statSync(entrypoint).size > 0;
-if (!hasDist) {
-    console.log("[Victus Bot] dist/index.js not found. Building TypeScript before startup...");
-    const build = spawnSync("npm", ["run", "build"], {
+// 3. Verify compiled entrypoint and critical dist modules
+const loggerFile = path.join(rootDir, "dist", "utils", "logger.js");
+const commandsIndex = path.join(rootDir, "dist", "commands", "index.js");
+
+let hasCompleteDist =
+    existsSync(entrypoint) &&
+    statSync(entrypoint).size > 0 &&
+    existsSync(loggerFile) &&
+    existsSync(commandsIndex);
+
+if (!hasCompleteDist) {
+    console.log("[Victus Bot] dist files incomplete or missing. Restoring pre-built dist from git...");
+    // Attempt 1: Git checkout pre-built dist (fastest, 0 memory, guaranteed clean)
+    try {
+        spawnSync("git", ["checkout", "HEAD", "--", "dist/"], {
+            cwd: rootDir,
+            stdio: "ignore",
+            shell: process.platform === "win32",
+        });
+    } catch {}
+
+    hasCompleteDist =
+        existsSync(entrypoint) &&
+        existsSync(loggerFile) &&
+        existsSync(commandsIndex);
+
+    // Attempt 2: Compile TypeScript if git restore didn't populate it
+    if (!hasCompleteDist) {
+        console.log("[Victus Bot] Building TypeScript before startup...");
+        const build = spawnSync("npm", ["run", "build"], {
+            cwd: rootDir,
+            stdio: "inherit",
+            shell: process.platform === "win32",
+        });
+
+        hasCompleteDist =
+            build.status === 0 &&
+            existsSync(entrypoint) &&
+            existsSync(loggerFile);
+    }
+}
+
+// 4. Launch bot (with tsx fallback if dist is unavailable)
+if (hasCompleteDist) {
+    try {
+        await import("./dist/index.js");
+    } catch (err) {
+        console.error("[Victus Bot] Error importing dist/index.js:", err?.message || err);
+        console.log("[Victus Bot] Launching fallback directly via tsx src/index.ts...");
+        const tsxRun = spawnSync("npx", ["tsx", "src/index.ts"], {
+            cwd: rootDir,
+            stdio: "inherit",
+            shell: process.platform === "win32",
+        });
+        process.exit(tsxRun.status || 0);
+    }
+} else {
+    console.log("[Victus Bot] dist unavailable. Launching directly via tsx src/index.ts...");
+    const tsxRun = spawnSync("npx", ["tsx", "src/index.ts"], {
         cwd: rootDir,
         stdio: "inherit",
         shell: process.platform === "win32",
     });
-
-    if (build.status !== 0) {
-        console.error("[Victus Bot] Build failed. Check the TypeScript errors above.");
-        process.exit(build.status || 1);
-    }
+    process.exit(tsxRun.status || 0);
 }
-
-await import("./dist/index.js");
 
