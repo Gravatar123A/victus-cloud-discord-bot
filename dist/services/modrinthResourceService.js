@@ -23,6 +23,7 @@ async function writeLocalChannels(data) {
         logger.warn('Failed to write local modrinth channels fallback:', err);
     }
 }
+import { builtbybitResourceService, } from './builtbybitResourceService.js';
 const CATEGORY_DEFINITIONS = {
     'mc-mods': {
         name: 'Minecraft Mods',
@@ -127,6 +128,7 @@ class ModrinthResourceService {
                     versions: Array.isArray(hit.versions) ? hit.versions.map(String) : [],
                     license: String(hit.license || 'Free / Open-Source'),
                     url: `https://modrinth.com/${projectType}/${slug}`,
+                    source: 'modrinth',
                 };
             });
         }
@@ -299,20 +301,26 @@ class ModrinthResourceService {
         const tagsSnippet = item.categories.length > 0
             ? item.categories.slice(0, 6).map((c) => `\`${c}\``).join(' ')
             : '`General`';
+        const isBuiltByBit = item.source === 'builtbybit';
+        const brandColor = isBuiltByBit ? 0xF59E0B : 0x1bd96a; // BuiltByBit Amber vs Modrinth Emerald
+        const brandSource = isBuiltByBit
+            ? 'BuiltByBit community marketplace (Free Resource)'
+            : 'Modrinth open-source repository';
+        const brandButtonLabel = isBuiltByBit ? 'View on BuiltByBit' : 'Download on Modrinth';
         const embed = new EmbedBuilder()
-            .setColor(0x1bd96a) // Modrinth Emerald Green
+            .setColor(brandColor)
             .setTitle(`📦 ${item.title}`)
             .setURL(item.url)
             .setDescription(`### 📖 About this Resource\n` +
             `${cleanDescription}\n\n` +
             `### 📊 Details & Metrics\n` +
             `› 📥 **Downloads:** **${item.downloads.toLocaleString()}**\n` +
-            `› ⭐ **Followers:** **${item.follows.toLocaleString()}**\n` +
+            `› ⭐ **Followers / Stars:** **${item.follows.toLocaleString()}**\n` +
             `› 👤 **Author:** \`${item.author}\`\n` +
             `› ⚖️ **License:** \`${item.license}\`\n` +
             `› 🎮 **Latest Versions:** \`${versionsSnippet}\`\n` +
             `› 🏷️ **Categories:** ${tagsSnippet}\n\n` +
-            `_Hosted & published via Modrinth open-source repository._`)
+            `_Hosted & published via ${brandSource}._`)
             .setFooter({
             text: 'Victus Cloud Community Resource Hub • Free Minecraft Hosting at victuscloud.com/free',
         })
@@ -322,7 +330,7 @@ class ModrinthResourceService {
         }
         const actionRow = new ActionRowBuilder().addComponents(new ButtonBuilder()
             .setStyle(ButtonStyle.Link)
-            .setLabel('Download on Modrinth')
+            .setLabel(brandButtonLabel)
             .setURL(item.url)
             .setEmoji('📥'), new ButtonBuilder()
             .setStyle(ButtonStyle.Link)
@@ -391,7 +399,7 @@ class ModrinthResourceService {
     /**
      * Start background pulling of 100 resources for specified categories.
      */
-    async startIngestion(guild, selectedCategories = Object.keys(CATEGORY_DEFINITIONS), targetCount = 100) {
+    async startIngestion(guild, selectedCategories = Object.keys(CATEGORY_DEFINITIONS), targetCount = 100, source = 'all') {
         this.stopSignals.delete(guild.id);
         // 1. Ensure forum channels are present
         const setup = await this.ensureForumChannels(guild, selectedCategories);
@@ -415,7 +423,7 @@ class ModrinthResourceService {
         this.progress.set(guild.id, progress);
         // Run background pipeline
         (async () => {
-            logger.info(`[ModrinthService] Starting bulk ingestion of ${selectedCategories.length} categories (${targetCount} each) for guild ${guild.name}...`);
+            logger.info(`[ResourceService] Starting bulk ingestion of ${selectedCategories.length} categories (${targetCount} each, source: ${source}) for guild ${guild.name}...`);
             // Load existing published slugs to avoid re-posting
             const publishedSet = new Set();
             try {
@@ -450,8 +458,21 @@ class ModrinthResourceService {
                 catch {
                     // Ignore
                 }
-                // Fetch top resources
-                const items = await this.fetchTopResources(catKey, targetCount);
+                // Fetch top resources from selected source(s)
+                let items = [];
+                if (source === 'all') {
+                    const bbbTarget = Math.max(5, Math.ceil(targetCount / 2));
+                    const bbbItems = await builtbybitResourceService.fetchFreeResources(catKey, bbbTarget);
+                    const modrinthTarget = Math.max(1, targetCount - bbbItems.length);
+                    const modrinthItems = await this.fetchTopResources(catKey, modrinthTarget);
+                    items = [...bbbItems, ...modrinthItems];
+                }
+                else if (source === 'builtbybit') {
+                    items = await builtbybitResourceService.fetchFreeResources(catKey, targetCount);
+                }
+                else {
+                    items = await this.fetchTopResources(catKey, targetCount);
+                }
                 catStatus.totalFetched = items.length;
                 for (const item of items) {
                     if (this.stopSignals.has(guild.id))

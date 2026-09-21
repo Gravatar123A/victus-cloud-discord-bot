@@ -11,6 +11,7 @@ import type { Command } from '../types/index.js';
 import {
     modrinthResourceService,
     ModrinthCategory,
+    ResourceSource,
 } from '../services/modrinthResourceService.js';
 import { forumDirectoryService } from '../services/forumDirectoryService.js';
 import { antigravityPipeline } from '../services/antigravityPipeline.js';
@@ -114,6 +115,17 @@ export const resourceSyncCommand: Command = {
                         .setMaxValue(100)
                         .setRequired(false)
                 )
+                .addStringOption((opt) =>
+                    opt
+                        .setName('source')
+                        .setDescription('Platform to pull free resources from (default: Both)')
+                        .setRequired(false)
+                        .addChoices(
+                            { name: 'Both (Modrinth & BuiltByBit)', value: 'all' },
+                            { name: 'Modrinth Only', value: 'modrinth' },
+                            { name: 'BuiltByBit Only (Free Resources)', value: 'builtbybit' }
+                        )
+                )
         )
         .addSubcommand((sub) =>
             sub
@@ -194,6 +206,7 @@ export const resourceSyncCommand: Command = {
         const rawMessage = (interaction as any).message;
         let prefixCategoryArg: string | null = null;
         let prefixCountArg: number | null = null;
+        let prefixSourceArg: ResourceSource = 'all';
         let prefixChannelArg: any = null;
 
         if (!subcommand && rawMessage?.content) {
@@ -204,18 +217,18 @@ export const resourceSyncCommand: Command = {
                     subcommand = 'setup';
                 } else if (first === 'pull' || first === 'sync' || first === 'start') {
                     subcommand = 'pull';
-                    if (parts[1]) {
-                        const target = parts[1].toLowerCase();
-                        if (target === 'mods' || target === 'mc-mods') prefixCategoryArg = 'mc-mods';
-                        else if (target === 'plugins' || target === 'mc-plugins') prefixCategoryArg = 'mc-plugins';
-                        else if (target === 'shaders' || target === 'mc-shaders') prefixCategoryArg = 'mc-shaders';
-                        else if (target === 'scripts' || target === 'datapacks') prefixCategoryArg = 'scripts';
-                        else if (target === 'configs') prefixCategoryArg = 'configs';
-                        else if (target === 'builds' || target === 'structures') prefixCategoryArg = 'builds';
-                        else if (target === 'all') prefixCategoryArg = 'all';
-                    }
-                    if (parts[2] && /^\d+$/.test(parts[2])) {
-                        prefixCountArg = parseInt(parts[2], 10);
+                    for (let i = 1; i < parts.length; i++) {
+                        const p = parts[i].toLowerCase();
+                        if (p === 'mods' || p === 'mc-mods') prefixCategoryArg = 'mc-mods';
+                        else if (p === 'plugins' || p === 'mc-plugins') prefixCategoryArg = 'mc-plugins';
+                        else if (p === 'shaders' || p === 'mc-shaders') prefixCategoryArg = 'mc-shaders';
+                        else if (p === 'scripts' || p === 'datapacks') prefixCategoryArg = 'scripts';
+                        else if (p === 'configs') prefixCategoryArg = 'configs';
+                        else if (p === 'builds' || p === 'structures') prefixCategoryArg = 'builds';
+                        else if (p === 'all') prefixCategoryArg = 'all';
+                        else if (p === 'builtbybit' || p === 'bbb' || p === 'buildbybit') prefixSourceArg = 'builtbybit';
+                        else if (p === 'modrinth') prefixSourceArg = 'modrinth';
+                        else if (/^\d+$/.test(p)) prefixCountArg = parseInt(p, 10);
                     }
                 } else if (first === 'bind' || first === 'link' || first === 'setchannel') {
                     subcommand = 'bind';
@@ -359,6 +372,10 @@ export const resourceSyncCommand: Command = {
             const rawCount =
                 interaction.options.getInteger?.('count') ?? prefixCountArg ?? 100;
             const count = Math.min(100, Math.max(10, rawCount));
+            const rawSource =
+                interaction.options.getString?.('source') ?? prefixSourceArg ?? 'all';
+            const source: ResourceSource =
+                rawSource === 'builtbybit' || rawSource === 'modrinth' ? rawSource : 'all';
 
             // Check if already running
             const existingProgress = modrinthResourceService.getProgress(interaction.guild.id);
@@ -385,18 +402,33 @@ export const resourceSyncCommand: Command = {
             const progress = await modrinthResourceService.startIngestion(
                 interaction.guild,
                 categoriesToPull,
-                count
+                count,
+                source
             );
 
             const totalTarget = categoriesToPull.length * count;
             const estimatedMinutes = Math.ceil((totalTarget * 2) / 60);
 
+            const sourceLabel =
+                source === 'builtbybit'
+                    ? 'BuiltByBit (Free)'
+                    : source === 'modrinth'
+                    ? 'Modrinth'
+                    : 'Modrinth & BuiltByBit';
+
+            const brandColor =
+                source === 'builtbybit'
+                    ? 0xF59E0B
+                    : source === 'modrinth'
+                    ? 0x1bd96a
+                    : VICTUS_COLORS.primary;
+
             const embed = new EmbedBuilder()
-                .setColor(0x1bd96a) // Modrinth green
-                .setTitle('🚀 Modrinth Resource Sync Launched!')
+                .setColor(brandColor)
+                .setTitle(`🚀 Free Resource Sync Launched! (${sourceLabel})`)
                 .setDescription(
-                    `Background ingestion of top free community resources has started from **Modrinth**.\n\n` +
-                    `Each item will be posted as an informative thread with download links, version tags, and stats.`
+                    `Background ingestion of top free community resources has started from **${sourceLabel}**.\n\n` +
+                    `Each item will be posted as an informative thread with direct download links, version tags, metrics, and auto-archiving to stay within Discord limits.`
                 )
                 .addFields(
                     {
@@ -407,18 +439,20 @@ export const resourceSyncCommand: Command = {
                         inline: true,
                     },
                     {
-                        name: '📦 Volume & Pacing',
+                        name: '📦 Volume & Platform',
                         value:
-                            `› **Per Category:** \`${count}\` resources\n` +
-                            `› **Total Target:** \`~${totalTarget}\` resources\n` +
-                            `› **Est. Time:** \`~${estimatedMinutes} mins\` (Discord safe pacing)`,
+                            `› **Platform:** \`${sourceLabel}\`\n` +
+                            `› **Per Category:** \`${count}\` items\n` +
+                            `› **Total Target:** \`~${totalTarget}\` items\n` +
+                            `› **Est. Time:** \`~${estimatedMinutes} mins\``,
                         inline: true,
                     },
                     {
                         name: '⚙️ Controls',
                         value:
                             `• Check live progress: \`/resource-sync status\`\n` +
-                            `• Stop ingestion: \`/resource-sync stop\``,
+                            `• Stop ingestion: \`/resource-sync stop\`\n` +
+                            `• Archive active threads: \`/resource-sync prune\``,
                         inline: false,
                     }
                 )

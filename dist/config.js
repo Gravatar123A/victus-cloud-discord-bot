@@ -256,4 +256,8 @@ export const config = {
         timeoutMs: parseInt(process.env.ANTIGRAVITY_TIMEOUT_MS || '1800000', 10),
         inactivityTimeoutMs: parseInt(process.env.ANTIGRAVITY_INACTIVITY_TIMEOUT_MS || '600000', 10),
     },
+    // BuiltByBit (MC-Market) Integration
+    builtbybit: {
+        apiToken: process.env.BUILTBYBIT_API_TOKEN || process.env.BUILTBYBIT_TOKEN || '',
+    },
 };
