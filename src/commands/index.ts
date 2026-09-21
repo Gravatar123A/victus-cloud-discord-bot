@@ -68,6 +68,7 @@ import { browseCommand } from './browse.js';
 import { statusCommand } from './status.js';
 import { setupCommand } from './setup.js';
 import { giveCommand } from './give.js';
+import { coinCommand } from './coin.js';
 
 
 
@@ -196,6 +197,7 @@ const allCommands: Command[] = [
     giveCommand,
     unscrambleCommand,
     resourceSyncCommand,
+    coinCommand,
     ...musicCommands,
 ];
 

@@ -66,6 +66,7 @@ import { browseCommand } from './browse.js';
 import { statusCommand } from './status.js';
 import { setupCommand } from './setup.js';
 import { giveCommand } from './give.js';
+import { coinCommand } from './coin.js';
 // Viral Expansion Engine commands
 import { ownerStatsCommand } from './ownerStats.js';
 import { hostPromoCommand, freeServerCommand } from './hostPromo.js';
@@ -189,6 +190,7 @@ const allCommands = [
     giveCommand,
     unscrambleCommand,
     resourceSyncCommand,
+    coinCommand,
     ...musicCommands,
 ];
 for (const command of allCommands) {
