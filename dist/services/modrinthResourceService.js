@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { logger } from '../utils/logger.js';
 import { supabase } from './supabase.js';
+import { forumDirectoryService } from './forumDirectoryService.js';
 const LOCAL_CHANNELS_PATH = join(process.cwd(), 'data', 'modrinth-channels.json');
 async function readLocalChannels() {
     try {
@@ -342,7 +343,7 @@ class ModrinthResourceService {
         }
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                await channel.threads.create({
+                const thread = await channel.threads.create({
                     name: threadName,
                     appliedTags: appliedTags.length > 0 ? appliedTags : undefined,
                     message: {
@@ -351,10 +352,19 @@ class ModrinthResourceService {
                     },
                     reason: `Victus Cloud automated resource ingestion for ${item.title}`,
                 });
+                // Immediately archive static resource thread to conserve guild active thread limit (1,000 cap)
+                await thread.setArchived(true).catch(() => { });
                 return true;
             }
             catch (err) {
                 const errMsg = err?.message || String(err);
+                // Handle Discord 1,000 active thread limit
+                if (err?.code === 160006 && attempt <= maxRetries) {
+                    logger.warn(`[ModrinthService] Guild active thread ceiling (1,000) reached. Archiving older forum threads to free slots...`);
+                    await forumDirectoryService.archiveExcessForumThreads(channel.guild, 150);
+                    await new Promise((r) => setTimeout(r, 4000));
+                    continue;
+                }
                 const isRateLimit = err?.status === 429 ||
                     err?.code === 429 ||
                     errMsg.toLowerCase().includes('rate limit') ||

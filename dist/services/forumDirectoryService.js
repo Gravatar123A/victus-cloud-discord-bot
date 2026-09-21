@@ -27,6 +27,21 @@ export class ForumDirectoryService {
         setTimeout(() => {
             this.runPeriodicSync().catch((err) => logger.error('Initial forum directory sync failed:', err));
         }, 30 * 1000);
+        // Initial thread capacity check: if active threads > 600, automatically archive excess forum threads
+        setTimeout(async () => {
+            if (!this.client)
+                return;
+            for (const guild of this.client.guilds.cache.values()) {
+                try {
+                    const active = await guild.channels.fetchActiveThreads().catch(() => null);
+                    if (active && active.threads.size > 600) {
+                        logger.info(`🧹 Guild "${guild.name}" has ${active.threads.size}/1000 active threads. Archiving excess forum threads to stay under limit...`);
+                        await this.archiveExcessForumThreads(guild, active.threads.size - 300);
+                    }
+                }
+                catch { }
+            }
+        }, 10 * 1000);
         // Run sync loop every 90 seconds
         this.syncTimer = setInterval(() => {
             this.runPeriodicSync().catch((err) => logger.error('Periodic forum directory sync failed:', err));
@@ -157,6 +172,38 @@ export class ForumDirectoryService {
         }
     }
     /**
+     * Archive active forum threads to stay well below the 1,000 active thread limit per guild.
+     * In Discord, archived forum threads remain completely visible, searchable, and interactive.
+     */
+    async archiveExcessForumThreads(guild, maxToArchive = 250) {
+        try {
+            const active = await guild.channels.fetchActiveThreads().catch(() => null);
+            if (!active?.threads || active.threads.size === 0)
+                return 0;
+            let archivedCount = 0;
+            for (const [_, thread] of active.threads) {
+                if (archivedCount >= maxToArchive)
+                    break;
+                // Only archive forum threads (keep support tickets & text channel threads active)
+                if (thread.parent?.type === ChannelType.GuildForum) {
+                    await thread.setArchived(true).catch(() => { });
+                    archivedCount++;
+                    if (archivedCount % 10 === 0) {
+                        await new Promise((r) => setTimeout(r, 600));
+                    }
+                }
+            }
+            if (archivedCount > 0) {
+                logger.info(`🧹 Archived ${archivedCount} active forum threads in "${guild.name}" (Active before: ${active.threads.size}/1000).`);
+            }
+            return archivedCount;
+        }
+        catch (err) {
+            logger.warn(`Failed to archive excess forum threads in ${guild.name}:`, err);
+            return 0;
+        }
+    }
+    /**
      * Rate-limited queue processor
      */
     async processQueue() {
@@ -170,7 +217,13 @@ export class ForumDirectoryService {
                 await this.syncSingleServer(serverId);
             }
             catch (err) {
-                logger.error(`Error processing forum sync for server ${serverId}:`, err);
+                if (err?.code === 160006) {
+                    logger.warn(`[ForumDirectoryService] Active thread cap reached (1000). Pausing queue 15s to free slots...`);
+                    await new Promise((resolve) => setTimeout(resolve, 15000));
+                }
+                else {
+                    logger.error(`Error processing forum sync for server ${serverId}:`, err);
+                }
             }
             // Global rate limiting delay: 2.5 seconds between thread updates
             await new Promise((resolve) => setTimeout(resolve, 2500));
@@ -311,6 +364,10 @@ export class ForumDirectoryService {
                             },
                             appliedTags: appliedTags.slice(0, 5),
                         });
+                        // Auto-archive offline servers immediately to conserve guild active thread limit (1,000 cap)
+                        if (server.status !== 'online') {
+                            await newThread.setArchived(true).catch(() => { });
+                        }
                         const starterMessage = await newThread.fetchStarterMessage().catch(() => null);
                         await discoveryService.updateForumMetadata(server.serverId, {
                             forumGuildId: guild.id,
@@ -344,7 +401,13 @@ export class ForumDirectoryService {
                 }
             }
             catch (err) {
-                logger.error(`Failed to sync server ${server.serverName} to guild ${guild.id}:`, err);
+                if (err?.code === 160006) {
+                    logger.warn(`[ForumDirectoryService] Active thread limit (1000) reached in guild "${guild.name}". Archiving inactive forum threads...`);
+                    await this.archiveExcessForumThreads(guild, 150);
+                }
+                else {
+                    logger.error(`Failed to sync server ${server.serverName} to guild ${guild.id}:`, err);
+                }
             }
         }
         return true;

@@ -12,6 +12,7 @@ import {
     modrinthResourceService,
     ModrinthCategory,
 } from '../services/modrinthResourceService.js';
+import { forumDirectoryService } from '../services/forumDirectoryService.js';
 import { antigravityPipeline } from '../services/antigravityPipeline.js';
 import { supabase } from '../services/supabase.js';
 import { config } from '../config.js';
@@ -149,6 +150,19 @@ export const resourceSyncCommand: Command = {
             sub
                 .setName('stop')
                 .setDescription('Stop any ongoing Modrinth resource ingestion')
+        )
+        .addSubcommand((sub) =>
+            sub
+                .setName('prune')
+                .setDescription('Archive older active forum threads to free up guild capacity (<1000 limit)')
+                .addIntegerOption((opt) =>
+                    opt
+                        .setName('max')
+                        .setDescription('Maximum number of active forum threads to archive (default: 300, max: 800)')
+                        .setMinValue(10)
+                        .setMaxValue(800)
+                        .setRequired(false)
+                )
         ),
 
     async execute(interaction: ChatInputCommandInteraction) {
@@ -225,6 +239,11 @@ export const resourceSyncCommand: Command = {
                     subcommand = 'status';
                 } else if (first === 'stop' || first === 'cancel') {
                     subcommand = 'stop';
+                } else if (first === 'prune' || first === 'archive' || first === 'clean') {
+                    subcommand = 'prune';
+                    if (parts[1] && /^\d+$/.test(parts[1])) {
+                        prefixCountArg = parseInt(parts[1], 10);
+                    }
                 }
             } else {
                 subcommand = 'status';
@@ -498,6 +517,42 @@ export const resourceSyncCommand: Command = {
                     flags: MessageFlags.Ephemeral,
                 });
             }
+            return;
+        }
+
+        // =========================================================================
+        // SUBCOMMAND: PRUNE
+        // =========================================================================
+        if (subcommand === 'prune') {
+            await interaction.deferReply();
+            const maxToArchive =
+                interaction.options.getInteger('max') ?? prefixCountArg ?? 300;
+
+            const activeThreadsBefore = await interaction.guild.channels.fetchActiveThreads().catch(() => null);
+            const totalActiveBefore = activeThreadsBefore?.threads.size ?? 0;
+
+            const archivedCount = await forumDirectoryService.archiveExcessForumThreads(
+                interaction.guild,
+                maxToArchive
+            );
+
+            const activeThreadsAfter = await interaction.guild.channels.fetchActiveThreads().catch(() => null);
+            const totalActiveAfter = activeThreadsAfter?.threads.size ?? 0;
+
+            const embed = new EmbedBuilder()
+                .setColor(VICTUS_COLORS.primary)
+                .setTitle('🧹 Guild Forum Thread Pruning')
+                .setDescription(
+                    `Successfully checked and archived forum threads to keep your guild well below Discord's 1,000 active thread limit.\n\n` +
+                    `› **Active Threads Before:** \`${totalActiveBefore}/1000\`\n` +
+                    `› **Forum Threads Archived:** \`${archivedCount}\`\n` +
+                    `› **Active Threads Remaining:** \`${totalActiveAfter}/1000\`\n\n` +
+                    `💡 *Archived forum threads remain 100% visible, searchable, and interactive in your Forum channels while freeing up active thread slots.*`
+                )
+                .setFooter({ text: 'Victus Cloud Community Resource Hub' })
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
     },
