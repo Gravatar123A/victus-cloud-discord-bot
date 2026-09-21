@@ -5,6 +5,7 @@ import { groqAi } from '../services/groqAi.js';
 import { victusAiActions } from '../services/victusAiActions.js';
 import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
+import { aiConversationMemory } from '../services/aiConversationMemory.js';
 
 export const askCommand: Command = {
     data: new SlashCommandBuilder()
@@ -69,6 +70,11 @@ export const askCommand: Command = {
                 return;
             }
 
+            const isDm = !interaction.guildId;
+            const channelId = interaction.channelId || interaction.user.id;
+            const sessionId = aiConversationMemory.getSessionId(channelId, interaction.user.id, isDm, false);
+            const history = aiConversationMemory.getHistory(sessionId);
+
             const linked = await supabase.getLinkedAccount(interaction.user.id).catch(() => null);
             const profile = linked ? await supabase.getUserProfile(linked.user_id).catch(() => null) : null;
             const answer = await groqAi.askVictus(question, {
@@ -77,7 +83,13 @@ export const askCommand: Command = {
                 linked: !!linked,
                 profile,
                 publicReply,
+                channelName: (interaction.channel as any)?.name,
+                guildName: interaction.guild?.name,
+                history,
             });
+
+            aiConversationMemory.addTurn(sessionId, 'user', question);
+            aiConversationMemory.addTurn(sessionId, 'assistant', answer);
 
             await interaction.editReply({
                 content: formatAiMessage(answer),

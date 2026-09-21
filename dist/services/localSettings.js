@@ -55,5 +55,23 @@ class LocalSettingsService {
             return false;
         }
     }
+    async getPrefix(guildId) {
+        const settings = await readSettings();
+        return settings.guilds?.[guildId]?.prefix || null;
+    }
+    async setPrefix(guildId, prefix) {
+        try {
+            const settings = await readSettings();
+            settings.guilds ||= {};
+            settings.guilds[guildId] ||= {};
+            settings.guilds[guildId].prefix = prefix;
+            await writeSettings(settings);
+            return true;
+        }
+        catch (error) {
+            logger.error('Failed to write local prefix fallback:', error);
+            return false;
+        }
+    }
 }
 export const localSettings = new LocalSettingsService();

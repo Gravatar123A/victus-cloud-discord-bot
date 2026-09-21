@@ -85,6 +85,7 @@ import { extraOwnerCommand } from './extraowner.js';
 import { countingCommand } from './counting.js';
 import { gtnCommand } from './gtn.js';
 import { unscrambleCommand } from './unscramble.js';
+import { resourceSyncCommand } from './resourceSync.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -193,6 +194,7 @@ const allCommands: Command[] = [
     gtnCommand,
     giveCommand,
     unscrambleCommand,
+    resourceSyncCommand,
     ...musicCommands,
 ];
 

@@ -21,6 +21,8 @@ import { leaderboardService } from '../services/leaderboardService.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
 import { forumDirectoryService } from '../services/forumDirectoryService.js';
 import { hubBridgeService } from '../services/hubBridgeService.js';
+import { gtnService } from '../services/gtnService.js';
+import { unscrambleService } from '../services/unscrambleService.js';
 
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
@@ -417,6 +419,10 @@ export const readyEvent: Event = {
 
         // Main Hub Minecraft <-> Discord Chat & Join/Leave Bridge
         await hubBridgeService.start(client).catch((err) => logger.error('Failed to start hubBridgeService:', err));
+
+        // Restore automated GTN & Unscramble game timers across all guilds
+        await gtnService.init(client).catch((err) => logger.error('Failed to init GTN service auto games:', err));
+        await unscrambleService.init(client).catch((err) => logger.error('Failed to init Unscramble service auto games:', err));
 
         await processNotificationQueue(client);
         setInterval(() => {

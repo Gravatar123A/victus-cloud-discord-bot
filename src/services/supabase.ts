@@ -583,10 +583,18 @@ class SupabaseService {
 
             const fallbackAiChannelId = await localSettings.getAiChannelId(guildId);
             const fallbackSuggestionChannelId = await localSettings.getSuggestionChannelId(guildId);
+            const fallbackPrefix = await localSettings.getPrefix(guildId);
+            let cloudPrefix: string | null = data?.prefix || null;
+            if (!cloudPrefix) {
+                const embedPrefix = await this.getCustomEmbed(guildId, '_bot_prefix').catch(() => null);
+                if (embedPrefix?.description) cloudPrefix = embedPrefix.description.trim();
+            }
+
             const resolvedSettings = {
                 ...(data || { guild_id: guildId }),
                 ai_channel_id: data?.ai_channel_id || fallbackAiChannelId,
                 suggestion_channel_id: data?.suggestion_channel_id || fallbackSuggestionChannelId,
+                prefix: cloudPrefix || fallbackPrefix || '!',
             } as BotSettings;
 
             this.botSettingsCache.set(guildId, {
@@ -596,7 +604,16 @@ class SupabaseService {
 
             return resolvedSettings;
         } catch (err: any) {
-            return cached ? cached.settings : null;
+            if (cached) return cached.settings;
+            const fallbackPrefix = await localSettings.getPrefix(guildId).catch(() => null);
+            const fallbackAi = await localSettings.getAiChannelId(guildId).catch(() => null);
+            const fallbackSugg = await localSettings.getSuggestionChannelId(guildId).catch(() => null);
+            return {
+                guild_id: guildId,
+                prefix: fallbackPrefix || '!',
+                ai_channel_id: fallbackAi,
+                suggestion_channel_id: fallbackSugg,
+            } as BotSettings;
         }
     }
 
@@ -614,11 +631,16 @@ class SupabaseService {
             await localSettings.setSuggestionChannelId(guildId, settings.suggestion_channel_id ?? null);
         }
 
+        if ('prefix' in settings) {
+            await localSettings.setPrefix(guildId, settings.prefix ?? null);
+            await this.saveCustomEmbed(guildId, '_bot_prefix', { description: settings.prefix || '!' }).catch(() => {});
+        }
+
         if (!this.isAvailable()) {
             if ('ai_channel_id' in settings) {
                 await localSettings.setAiChannelId(guildId, settings.ai_channel_id ?? null);
             }
-            return 'suggestion_channel_id' in settings;
+            return ('suggestion_channel_id' in settings) || ('prefix' in settings) || ('ai_channel_id' in settings);
         }
 
         const { error } = await this.client
@@ -639,6 +661,12 @@ class SupabaseService {
                 logger.warn('bot_settings.ai_channel_id is missing in Supabase; using local file fallback. Apply the migration when possible.');
                 return localSettings.setAiChannelId(guildId, settings.ai_channel_id ?? null);
             }
+
+            if ('prefix' in settings) {
+                logger.warn(`Supabase bot_settings upsert error for prefix (${error.message || error.code}); saved to local fallback and _bot_prefix embed.`);
+                return true;
+            }
+
             if (error.code !== 'CIRCUIT_BREAKER_OPEN') {
                 logger.warn(`Failed to update bot settings for ${guildId}: ${error.message || error}`);
             }

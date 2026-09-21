@@ -6,6 +6,7 @@ type LocalBotSettings = {
     guilds?: Record<string, {
         ai_channel_id?: string | null;
         suggestion_channel_id?: string | null;
+        prefix?: string | null;
     }>;
 };
 
@@ -63,6 +64,25 @@ class LocalSettingsService {
             return true;
         } catch (error) {
             logger.error('Failed to write local suggestion channel fallback:', error);
+            return false;
+        }
+    }
+
+    async getPrefix(guildId: string): Promise<string | null> {
+        const settings = await readSettings();
+        return settings.guilds?.[guildId]?.prefix || null;
+    }
+
+    async setPrefix(guildId: string, prefix: string | null): Promise<boolean> {
+        try {
+            const settings = await readSettings();
+            settings.guilds ||= {};
+            settings.guilds[guildId] ||= {};
+            settings.guilds[guildId].prefix = prefix;
+            await writeSettings(settings);
+            return true;
+        } catch (error) {
+            logger.error('Failed to write local prefix fallback:', error);
             return false;
         }
     }

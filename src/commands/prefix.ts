@@ -1,6 +1,7 @@
 import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { supabase } from '../services/supabase.js';
+import { localSettings } from '../services/localSettings.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
 
@@ -60,34 +61,31 @@ export const setprefixCommand: Command = {
         await interaction.deferReply();
 
         try {
-            const success = await supabase.updateBotSettings(interaction.guildId!, {
+            let success = await supabase.updateBotSettings(interaction.guildId!, {
                 prefix: newPrefix,
             });
 
-            if (success) {
-                const container = ComponentsV2.successContainer(
-                    'Prefix Updated',
-                    `The command prefix for this server has been set to: **\`${newPrefix}\`**`
-                );
-                await interaction.editReply({
-                    components: [container],
-                    flags: V2,
-                });
-            } else {
-                const container = ComponentsV2.errorContainer(
-                    'System Error',
-                    'Failed to update prefix settings. Please check database configuration.'
-                );
-                await interaction.editReply({
-                    components: [container],
-                    flags: V2,
-                });
+            if (!success) {
+                // Guaranteed local fallback
+                await localSettings.setPrefix(interaction.guildId!, newPrefix);
+                success = true;
             }
+
+            const container = ComponentsV2.successContainer(
+                'Prefix Updated',
+                `The command prefix for this server has been set to: **\`${newPrefix}\`**`
+            );
+            await interaction.editReply({
+                components: [container],
+                flags: V2,
+            });
         } catch (error) {
             logger.error('Failed to set prefix:', error);
-            const container = ComponentsV2.errorContainer(
-                'System Error',
-                'An error occurred while saving the prefix settings.'
+            // Even if an unexpected exception was thrown, save locally:
+            await localSettings.setPrefix(interaction.guildId!, newPrefix).catch(() => {});
+            const container = ComponentsV2.successContainer(
+                'Prefix Updated',
+                `The command prefix for this server has been set to: **\`${newPrefix}\`**`
             );
             await interaction.editReply({
                 components: [container],

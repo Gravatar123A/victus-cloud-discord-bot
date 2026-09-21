@@ -1,4 +1,5 @@
 import {
+    Client,
     Guild,
     GuildTextBasedChannel,
     Message,
@@ -851,6 +852,32 @@ export class UnscrambleService {
         const game = this.activeGames.get(guildId);
         if (!game) return;
         await this.sendHint(guildId, channel, false);
+    }
+
+    /**
+     * Initialize Unscramble service on bot startup.
+     * Restores automated recurring game timers across all guilds so bot restarts don't lose auto games.
+     */
+    async init(client: Client): Promise<void> {
+        for (const guild of client.guilds.cache.values()) {
+            try {
+                const config = await this.get(guild.id);
+                if (config.autoEnabled && config.channelId) {
+                    const channel = guild.channels.cache.get(config.channelId) as GuildTextBasedChannel | undefined;
+                    if (channel && channel.isTextBased()) {
+                        if (!this.activeGames.has(guild.id)) {
+                            const now = Date.now();
+                            const target = config.nextAutoGameAt || now;
+                            const delayMs = Math.max(5000, target - now);
+                            this.scheduleNextAutoGame(guild, delayMs);
+                            logger.info(`[UnscrambleService] Restored automated Unscramble timer for "${guild.name}" (${guild.id}) in ${formatDuration(delayMs)}`);
+                        }
+                    }
+                }
+            } catch (err) {
+                logger.error(`[UnscrambleService] Failed to restore auto Unscramble for guild ${guild.id}:`, err);
+            }
+        }
     }
 }
 

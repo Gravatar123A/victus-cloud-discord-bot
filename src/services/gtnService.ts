@@ -1,4 +1,5 @@
 import {
+    Client,
     Guild,
     GuildTextBasedChannel,
     Message,
@@ -977,6 +978,32 @@ export class GtnService {
         }
 
         await this.sendHint(guildId, channel, false);
+    }
+
+    /**
+     * Initialize GTN service on bot startup.
+     * Restores automated recurring game timers across all guilds so bot restarts don't lose auto games.
+     */
+    async init(client: Client): Promise<void> {
+        for (const guild of client.guilds.cache.values()) {
+            try {
+                const config = await this.get(guild.id);
+                if (config.autoEnabled && config.channelId) {
+                    const channel = guild.channels.cache.get(config.channelId) as GuildTextBasedChannel | undefined;
+                    if (channel && channel.isTextBased()) {
+                        if (!this.activeGames.has(guild.id)) {
+                            const now = Date.now();
+                            const target = config.nextAutoGameAt || now;
+                            const delayMs = Math.max(5000, target - now);
+                            this.scheduleNextAutoGame(guild, delayMs);
+                            logger.info(`[GtnService] Restored automated GTN timer for "${guild.name}" (${guild.id}) in ${formatDuration(delayMs)}`);
+                        }
+                    }
+                }
+            } catch (err) {
+                logger.error(`[GtnService] Failed to restore auto GTN for guild ${guild.id}:`, err);
+            }
+        }
     }
 }
 

@@ -27,6 +27,7 @@ import { hubBridgeService } from '../services/hubBridgeService.js';
 import { countingService } from '../services/countingService.js';
 import { gtnService } from '../services/gtnService.js';
 import { unscrambleService } from '../services/unscrambleService.js';
+import { aiConversationMemory } from '../services/aiConversationMemory.js';
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
 const aiChannelCache = new Map();
@@ -110,15 +111,40 @@ async function replyWithAi(message, prompt, publicReply, fallbackMessage) {
             await mirrorPublicReply(message, publicReply, content);
             return;
         }
+        const isDm = message.channel.type === ChannelType.DM;
+        const isThread = message.channel.isThread();
+        const sessionId = aiConversationMemory.getSessionId(message.channelId, message.author.id, isDm, isThread);
+        // If the user's message is a Discord reply, fetch the referenced message for instant context
+        let effectivePrompt = prompt;
+        if (message.reference?.messageId) {
+            try {
+                const refMsg = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
+                if (refMsg && refMsg.content) {
+                    const authorName = refMsg.author.id === message.client.user?.id ? 'Victus AI' : refMsg.author.username;
+                    const refSnippet = refMsg.content.slice(0, 250).trim();
+                    effectivePrompt = `[Replying to ${authorName}: "${refSnippet}"]\n\n${prompt}`;
+                }
+            }
+            catch {
+                // Ignore reference fetch errors
+            }
+        }
+        const history = aiConversationMemory.getHistory(sessionId);
         const linked = await supabase.getLinkedAccount(message.author.id).catch(() => null);
         const profile = linked ? await supabase.getUserProfile(linked.user_id).catch(() => null) : null;
-        const answer = await groqAi.askVictus(prompt, {
+        const answer = await groqAi.askVictus(effectivePrompt, {
             discordTag: message.author.tag,
             discordId: message.author.id,
             linked: !!linked,
             profile,
             publicReply,
+            channelName: 'name' in message.channel ? message.channel.name : undefined,
+            guildName: message.guild?.name,
+            history,
         });
+        // Store conversation turns in memory
+        aiConversationMemory.addTurn(sessionId, 'user', prompt);
+        aiConversationMemory.addTurn(sessionId, 'assistant', answer);
         await message.reply({
             content: formatAiMessage(answer),
             allowedMentions: { repliedUser: false },
@@ -329,6 +355,8 @@ export const messageCreateEvent = {
                     commandName = 'blackjack';
                 if (commandName === 'scramble' || commandName === 'wordscramble')
                     commandName = 'unscramble';
+                if (commandName === 'resourcesync' || commandName === 'modrinthsync' || commandName === 'resource_sync')
+                    commandName = 'resource-sync';
                 if (commandName === 'translate') {
                     const ticket = await supabase.getTicketByChannel(message.channelId).catch(() => null);
                     if (!ticket) {
