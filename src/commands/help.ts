@@ -165,7 +165,9 @@ export const helpCommand: Command = {
                     `› \`/rpg sell\` • Exchange mined ores & fish for real Victus Cloud COINS!\n` +
                     `› \`/rpg craft\` • Upgrade to Stone, Iron, Diamond, or Netherite equipment.\n\n` +
                     `### 🎲 High-Stakes Gambling (Real COINS)\n` +
-                    `› \`/coinflip <amount> [choice]\` • Double-or-nothing coinflip.\n` +
+                    `› \`/coinflip <amount> [choice]\` • Double-or-nothing coinflip (alias \`!cf\`).\n` +
+                    `› \`/rockpaperscissors <bet> <choice>\` • Rock Paper Scissors (alias \`!rps\`).\n` +
+                    `› \`/blackjack <bet>\` • High-stakes Blackjack with interactive cards (alias \`!bj\`).\n` +
                     `› \`/slots <amount>\` • 3-reel Minecraft slots with Wither Skull jackpot.\n` +
                     `› \`/heist @user <amount>\` • Organize 5-player squad vault heists.\n\n` +
                     `### 🐉 World Boss Raids & Mob Gacha\n` +
@@ -266,9 +268,15 @@ export const helpCommand: Command = {
                     `› \`/rpg sell\` • Liquidate gathered resources into real Victus COINS.\n` +
                     `› \`/rpg craft\` • Forge higher tier pickaxes and rods.\n\n` +
                     `### 🎲 COINS Gambling & Heists\n` +
-                    `› \`/coinflip <amount> [choice]\` • Fast 50/50 double-or-nothing wagers.\n` +
+                    `› \`/coinflip <amount> [choice]\` • Fast double-or-nothing wagers (alias \`!cf\`).\n` +
+                    `› \`/rockpaperscissors <bet> <choice>\` • Rock Paper Scissors (alias \`!rps\`).\n` +
+                    `› \`/blackjack <bet>\` • High-stakes Blackjack with interactive cards (alias \`!bj\`).\n` +
                     `› \`/slots <amount>\` • 3-reel spinning slots with 50x Wither Jackpot.\n` +
                     `› \`/heist @user <amount>\` • 5-player co-op bank heist minigame.\n\n` +
+                    `### 🧩 Word & Chat Games\n` +
+                    `› \`/unscramble\` • Unscramble words for rewards & auto-events (alias \`!scramble\`).\n` +
+                    `› \`/gtn\` • Guess The Number event with auto-hinting & coins (alias \`!gtn\`).\n` +
+                    `› \`/counting\` • Server counting channel minigame.\n\n` +
                     `### 🐉 World Bosses & Arena Pets\n` +
                     `› \`/boss\` • Check global World Boss raid status (Ender Dragon, Wither).\n` +
                     `› \`/attack [melee/bow/magic]\` • Deal damage and claim shares of 1,000 COINS bounty.\n` +

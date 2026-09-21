@@ -75,7 +75,7 @@ import { giveCommand } from './give.js';
 import { ownerStatsCommand } from './ownerStats.js';
 import { hostPromoCommand, freeServerCommand } from './hostPromo.js';
 import { rpgCommand, mineCommand, fishCommand, sellCommand, craftCommand } from './rpg.js';
-import { coinflipCommand, slotsCommand, heistCommand } from './gambling.js';
+import { coinflipCommand, slotsCommand, heistCommand, rpsCommand, blackjackCommand } from './gambling.js';
 import { tameCommand, zooCommand, battleCommand } from './mobGacha.js';
 import { bossCommand, attackCommand, castCommand } from './worldBoss.js';
 import { mcSkinCommand, mcStatusCommand, mcWhitelistCommand, serverCommand } from './mcUtils.js';
@@ -84,6 +84,7 @@ import { battlepassCommand, claimAirDropCommand, smpNetworkCommand, warCommand }
 import { extraOwnerCommand } from './extraowner.js';
 import { countingCommand } from './counting.js';
 import { gtnCommand } from './gtn.js';
+import { unscrambleCommand } from './unscramble.js';
 
 // Export command collection
 export const commands = new Collection<string, Command>();
@@ -166,6 +167,8 @@ const allCommands: Command[] = [
     sellCommand,
     craftCommand,
     coinflipCommand,
+    rpsCommand,
+    blackjackCommand,
     slotsCommand,
     heistCommand,
     tameCommand,
@@ -189,6 +192,7 @@ const allCommands: Command[] = [
     countingCommand,
     gtnCommand,
     giveCommand,
+    unscrambleCommand,
     ...musicCommands,
 ];
 

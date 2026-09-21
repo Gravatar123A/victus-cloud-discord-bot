@@ -26,6 +26,7 @@ import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 import { hubBridgeService } from '../services/hubBridgeService.js';
 import { countingService } from '../services/countingService.js';
 import { gtnService } from '../services/gtnService.js';
+import { unscrambleService } from '../services/unscrambleService.js';
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
 const aiChannelCache = new Map();
@@ -212,6 +213,13 @@ export const messageCreateEvent = {
             });
             if (gtnHandled)
                 return;
+            // Unscramble Game: Process guess if in active Unscramble channel
+            const unscrambleHandled = await unscrambleService.handleMessage(message).catch((err) => {
+                logger.error('Error handling Unscramble message:', err);
+                return false;
+            });
+            if (unscrambleHandled)
+                return;
         }
         // --- AFK System (Fast In-Memory, Zero Supabase Overhead) ---
         if (message.inGuild()) {
@@ -313,6 +321,14 @@ export const messageCreateEvent = {
                 let commandName = args.shift()?.toLowerCase();
                 if (commandName === 'lb')
                     commandName = 'leaderboard';
+                if (commandName === 'cf')
+                    commandName = 'coinflip';
+                if (commandName === 'rps')
+                    commandName = 'rockpaperscissors';
+                if (commandName === 'bj')
+                    commandName = 'blackjack';
+                if (commandName === 'scramble' || commandName === 'wordscramble')
+                    commandName = 'unscramble';
                 if (commandName === 'translate') {
                     const ticket = await supabase.getTicketByChannel(message.channelId).catch(() => null);
                     if (!ticket) {

@@ -216,6 +216,102 @@ export class CoinTransactionLock {
     }
 
     /**
+     * Resolves flexible wager inputs (numbers, 'all', 'half', 'max').
+     */
+    static resolveWagerAmount(
+        raw: string | number | null | undefined,
+        currentBalance: number,
+        maxAllowed = 100000
+    ): number | null {
+        if (raw === null || raw === undefined) return null;
+        if (typeof raw === 'number') {
+            if (!Number.isSafeInteger(raw) || raw <= 0) return null;
+            return Math.min(raw, maxAllowed);
+        }
+
+        const trimmed = String(raw).trim().toLowerCase();
+        if (trimmed === 'all' || trimmed === 'max') {
+            return Math.max(1, Math.min(currentBalance, maxAllowed));
+        }
+        if (trimmed === 'half') {
+            return Math.max(1, Math.min(Math.floor(currentBalance / 2), maxAllowed));
+        }
+
+        const parsed = parseInt(trimmed, 10);
+        if (isNaN(parsed) || parsed <= 0) return null;
+        return Math.min(parsed, maxAllowed);
+    }
+
+    /**
+     * Atomically deducts a wager amount from a linked user balance.
+     * Useful for multi-stage wagering games like Blackjack Double Down.
+     */
+    static async deductWager(
+        discordId: string,
+        amount: number,
+        source: string,
+        reference: string,
+        description: string
+    ): Promise<{
+        success: boolean;
+        unlinked?: boolean;
+        insufficientBalance?: boolean;
+        user?: LinkedVictusUser;
+        newBalance?: number;
+        error?: string;
+    }> {
+        const user = await this.resolveLinkedUser(discordId);
+        if (!user) {
+            return {
+                success: false,
+                unlinked: true,
+                error: 'Account not linked. Use `/link` to connect your Victus Cloud account.',
+            };
+        }
+
+        if (amount <= 0) {
+            return {
+                success: false,
+                error: 'Wager amount must be greater than 0 COINS.',
+            };
+        }
+
+        return coinMutex.runExclusive(user.email, async () => {
+            const currentBalance = await this.getCoinsBalance(user.email);
+            if (currentBalance < amount) {
+                return {
+                    success: false,
+                    insufficientBalance: true,
+                    user,
+                    error: `Insufficient balance. You have **${currentBalance} COINS**, but need **${amount} COINS**.`,
+                };
+            }
+
+            try {
+                const newBalance = await supabase.mutatePaymenterCoins(
+                    user.email,
+                    -amount,
+                    source,
+                    reference,
+                    description
+                );
+                await supabase.mirrorProfileCoinsFromPaymenter(user.userId, newBalance, `${source} wager deduction`);
+
+                return {
+                    success: true,
+                    user,
+                    newBalance,
+                };
+            } catch (err: any) {
+                return {
+                    success: false,
+                    error: err?.message || 'Failed to deduct wager from Victus Cloud balance.',
+                };
+            }
+        });
+    }
+
+    /**
      * Executes an atomic payout/grant to a user (e.g. RPG sell, referral, AirDrop, boss reward).
      */
     static async grantCoins(
