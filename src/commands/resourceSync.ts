@@ -1,4 +1,5 @@
 import {
+    ChannelType,
     ChatInputCommandInteraction,
     EmbedBuilder,
     GuildMember,
@@ -115,6 +116,32 @@ export const resourceSyncCommand: Command = {
         )
         .addSubcommand((sub) =>
             sub
+                .setName('bind')
+                .setDescription('Bind a specific forum channel to a category (rename-friendly)')
+                .addStringOption((opt) =>
+                    opt
+                        .setName('category')
+                        .setDescription('The category to bind')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: 'Minecraft Mods (mc-mods)', value: 'mc-mods' },
+                            { name: 'Minecraft Plugins (mc-plugins)', value: 'mc-plugins' },
+                            { name: 'Minecraft Shaders (mc-shaders)', value: 'mc-shaders' },
+                            { name: 'Scripts & Datapacks (scripts)', value: 'scripts' },
+                            { name: 'Configs & Presets (configs)', value: 'configs' },
+                            { name: 'Builds & Worldgen (builds)', value: 'builds' }
+                        )
+                )
+                .addChannelOption((opt) =>
+                    opt
+                        .setName('channel')
+                        .setDescription('The Forum Channel to use for this category')
+                        .addChannelTypes(ChannelType.GuildForum)
+                        .setRequired(true)
+                )
+        )
+        .addSubcommand((sub) =>
+            sub
                 .setName('status')
                 .setDescription('View live Modrinth resource ingestion progress and statistics')
         )
@@ -153,6 +180,7 @@ export const resourceSyncCommand: Command = {
         const rawMessage = (interaction as any).message;
         let prefixCategoryArg: string | null = null;
         let prefixCountArg: number | null = null;
+        let prefixChannelArg: any = null;
 
         if (!subcommand && rawMessage?.content) {
             const parts = rawMessage.content.trim().split(/\s+/).slice(1);
@@ -175,6 +203,24 @@ export const resourceSyncCommand: Command = {
                     if (parts[2] && /^\d+$/.test(parts[2])) {
                         prefixCountArg = parseInt(parts[2], 10);
                     }
+                } else if (first === 'bind' || first === 'link' || first === 'setchannel') {
+                    subcommand = 'bind';
+                    if (parts[1]) {
+                        const target = parts[1].toLowerCase();
+                        if (target === 'mods' || target === 'mc-mods') prefixCategoryArg = 'mc-mods';
+                        else if (target === 'plugins' || target === 'mc-plugins') prefixCategoryArg = 'mc-plugins';
+                        else if (target === 'shaders' || target === 'mc-shaders') prefixCategoryArg = 'mc-shaders';
+                        else if (target === 'scripts' || target === 'datapacks') prefixCategoryArg = 'scripts';
+                        else if (target === 'configs') prefixCategoryArg = 'configs';
+                        else if (target === 'builds' || target === 'structures') prefixCategoryArg = 'builds';
+                    }
+                    const channelMention = parts.find((p: string) => /<#(\d+)>/.test(p));
+                    if (channelMention) {
+                        const match = channelMention.match(/\d+/);
+                        if (match) {
+                            prefixChannelArg = interaction.guild.channels.cache.get(match[0]);
+                        }
+                    }
                 } else if (first === 'status' || first === 'progress') {
                     subcommand = 'status';
                 } else if (first === 'stop' || first === 'cancel') {
@@ -188,6 +234,52 @@ export const resourceSyncCommand: Command = {
         // Default to status if no subcommand
         if (!subcommand) {
             subcommand = 'status';
+        }
+
+        // =========================================================================
+        // SUBCOMMAND: BIND
+        // =========================================================================
+        if (subcommand === 'bind') {
+            const rawCategory =
+                interaction.options.getString?.('category') ?? prefixCategoryArg;
+            const category = rawCategory as ModrinthCategory;
+
+            if (!category || !ALL_CATEGORIES.includes(category)) {
+                await interaction.reply({
+                    content: '❌ Invalid or missing category. Valid choices: `mc-mods`, `mc-plugins`, `mc-shaders`, `scripts`, `configs`, `builds`.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            let targetChannel = interaction.options.getChannel?.('channel');
+            if (!targetChannel && prefixChannelArg) {
+                targetChannel = prefixChannelArg;
+            }
+
+            if (!targetChannel || targetChannel.type !== ChannelType.GuildForum) {
+                await interaction.reply({
+                    content: '❌ The selected channel must be a valid **Forum Channel**.',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            await modrinthResourceService.setCategoryChannel(interaction.guild.id, category, targetChannel.id);
+
+            const embed = new EmbedBuilder()
+                .setColor(VICTUS_COLORS.primary)
+                .setTitle('✅ Forum Channel Bound')
+                .setDescription(
+                    `Successfully linked **${CATEGORY_LABELS[category]}** to <#${targetChannel.id}> (\`#${targetChannel.name}\`)!\n\n` +
+                    `• You can rename this channel, add emojis, customize permissions, or move it anywhere.\n` +
+                    `• Running \`/resource-sync pull\` will now publish **${CATEGORY_LABELS[category]}** directly to this forum.`
+                )
+                .setFooter({ text: 'Victus Cloud Community Resource Hub' })
+                .setTimestamp();
+
+            await interaction.reply({ embeds: [embed] });
+            return;
         }
 
         // =========================================================================

@@ -1,6 +1,27 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, PermissionFlagsBits, } from 'discord.js';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { logger } from '../utils/logger.js';
 import { supabase } from './supabase.js';
+const LOCAL_CHANNELS_PATH = join(process.cwd(), 'data', 'modrinth-channels.json');
+async function readLocalChannels() {
+    try {
+        const raw = await readFile(LOCAL_CHANNELS_PATH, 'utf8');
+        return JSON.parse(raw);
+    }
+    catch {
+        return {};
+    }
+}
+async function writeLocalChannels(data) {
+    try {
+        await mkdir(dirname(LOCAL_CHANNELS_PATH), { recursive: true });
+        await writeFile(LOCAL_CHANNELS_PATH, JSON.stringify(data, null, 2), 'utf8');
+    }
+    catch (err) {
+        logger.warn('Failed to write local modrinth channels fallback:', err);
+    }
+}
 const CATEGORY_DEFINITIONS = {
     'mc-mods': {
         name: 'Minecraft Mods',
@@ -116,6 +137,50 @@ class ModrinthResourceService {
     /**
      * Finds or creates all 6 dedicated Forum Channels under a category in the guild.
      */
+    /**
+     * Get saved category -> channelId mapping for a guild.
+     */
+    async getSavedChannelMap(guildId) {
+        try {
+            const embed = await supabase.getCustomEmbed(guildId, '_modrinth_channels');
+            if (embed?.description) {
+                return JSON.parse(embed.description);
+            }
+        }
+        catch {
+            // fallback to local settings
+        }
+        const local = await readLocalChannels();
+        return local[guildId] || {};
+    }
+    /**
+     * Persist category -> channelId mapping for a guild.
+     */
+    async saveChannelMap(guildId, mapping) {
+        try {
+            await supabase.saveCustomEmbed(guildId, '_modrinth_channels', {
+                description: JSON.stringify(mapping),
+            });
+        }
+        catch {
+            // fallback
+        }
+        const local = await readLocalChannels();
+        local[guildId] = { ...(local[guildId] || {}), ...mapping };
+        await writeLocalChannels(local);
+    }
+    /**
+     * Explicitly bind a forum channel to a Modrinth category.
+     */
+    async setCategoryChannel(guildId, category, channelId) {
+        const current = await this.getSavedChannelMap(guildId);
+        current[category] = channelId;
+        await this.saveChannelMap(guildId, current);
+    }
+    /**
+     * Finds or creates all 6 dedicated Forum Channels under a category in the guild.
+     * Fully rename-proof: resolves channels by saved Channel ID first.
+     */
     async ensureForumChannels(guild, categoriesToEnsure = Object.keys(CATEGORY_DEFINITIONS)) {
         const botMember = guild.members.me;
         if (!botMember?.permissions.has(PermissionFlagsBits.ManageChannels)) {
@@ -142,6 +207,8 @@ class ModrinthResourceService {
                 logger.warn(`Could not create category ${categoryName}, placing forums at root:`, err);
             }
         }
+        const savedMap = await this.getSavedChannelMap(guild.id);
+        const updatedMap = { ...savedMap };
         const results = {
             'mc-mods': null,
             'mc-plugins': null,
@@ -156,14 +223,30 @@ class ModrinthResourceService {
             const def = CATEGORY_DEFINITIONS[catKey];
             if (!def)
                 continue;
-            // Check if existing forum channel matches name
-            let channel = guild.channels.cache.find((c) => c.type === ChannelType.GuildForum && c.name.toLowerCase() === def.channelName.toLowerCase());
+            let channel;
+            // Step 1: Check by persistent Channel ID (Rename-Proof!)
+            if (savedMap[catKey]) {
+                const candidate = guild.channels.cache.get(savedMap[catKey]) ||
+                    (await guild.channels.fetch(savedMap[catKey]).catch(() => null));
+                if (candidate && candidate.type === ChannelType.GuildForum) {
+                    channel = candidate;
+                }
+            }
+            // Step 2: If no saved ID or channel deleted, try finding by name, topic, or keyword
+            if (!channel) {
+                channel = guild.channels.cache.find((c) => c.type === ChannelType.GuildForum &&
+                    (c.name.toLowerCase() === def.channelName.toLowerCase() ||
+                        c.name.toLowerCase().replace(/[^a-z0-9]/g, '').includes(catKey.replace(/[^a-z0-9]/g, '')) ||
+                        c.topic?.toLowerCase().includes(def.channelName.toLowerCase())));
+            }
+            // If found, register ID and reuse
             if (channel) {
                 results[catKey] = channel;
+                updatedMap[catKey] = channel.id;
                 reusedCount++;
                 continue;
             }
-            // Create new forum channel
+            // Step 3: Create new forum channel if none existed
             try {
                 const availableTags = def.tags.map((tag, idx) => ({
                     name: tag,
@@ -180,6 +263,7 @@ class ModrinthResourceService {
                     reason: `Victus Cloud automated forum setup for ${def.name}`,
                 }));
                 results[catKey] = channel;
+                updatedMap[catKey] = channel.id;
                 createdCount++;
                 logger.info(`[ModrinthService] Created forum channel #${def.channelName} in ${guild.name}`);
             }
@@ -187,6 +271,7 @@ class ModrinthResourceService {
                 logger.error(`[ModrinthService] Failed to create forum channel ${def.channelName}:`, err);
             }
         }
+        await this.saveChannelMap(guild.id, updatedMap);
         return {
             success: true,
             channels: results,
