@@ -383,6 +383,7 @@ export const messageCreateEvent: Event = {
                 if (commandName === 'lb') commandName = 'leaderboard';
                 if (commandName === 'cf') commandName = 'coinflip';
                 if (commandName === 'rps') commandName = 'rockpaperscissors';
+                if (commandName === 'rpsduel' || commandName === 'rps-duel') commandName = 'rps-duel';
                 if (commandName === 'bj') commandName = 'blackjack';
                 if (commandName === 'scramble' || commandName === 'wordscramble') commandName = 'unscramble';
                 if (commandName === 'resourcesync' || commandName === 'modrinthsync' || commandName === 'resource_sync') commandName = 'resource-sync';

@@ -351,6 +351,8 @@ export const messageCreateEvent = {
                     commandName = 'coinflip';
                 if (commandName === 'rps')
                     commandName = 'rockpaperscissors';
+                if (commandName === 'rpsduel' || commandName === 'rps-duel')
+                    commandName = 'rps-duel';
                 if (commandName === 'bj')
                     commandName = 'blackjack';
                 if (commandName === 'scramble' || commandName === 'wordscramble')

@@ -70,7 +70,7 @@ import { giveCommand } from './give.js';
 import { ownerStatsCommand } from './ownerStats.js';
 import { hostPromoCommand, freeServerCommand } from './hostPromo.js';
 import { rpgCommand, mineCommand, fishCommand, sellCommand, craftCommand } from './rpg.js';
-import { coinflipCommand, slotsCommand, heistCommand, rpsCommand, blackjackCommand } from './gambling.js';
+import { coinflipCommand, slotsCommand, heistCommand, rpsCommand, rpsDuelCommand, blackjackCommand } from './gambling.js';
 import { tameCommand, zooCommand, battleCommand } from './mobGacha.js';
 import { bossCommand, attackCommand, castCommand } from './worldBoss.js';
 import { mcSkinCommand, mcStatusCommand, mcWhitelistCommand, serverCommand } from './mcUtils.js';
@@ -162,6 +162,7 @@ const allCommands = [
     craftCommand,
     coinflipCommand,
     rpsCommand,
+    rpsDuelCommand,
     blackjackCommand,
     slotsCommand,
     heistCommand,

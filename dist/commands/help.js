@@ -139,7 +139,7 @@ export const helpCommand = {
                     `› \`/rpg craft\` • Upgrade to Stone, Iron, Diamond, or Netherite equipment.\n\n` +
                     `### 🎲 High-Stakes Gambling (Real COINS)\n` +
                     `› \`/coinflip <amount> [choice]\` • Double-or-nothing coinflip (alias \`!cf\`).\n` +
-                    `› \`/rockpaperscissors <bet> <choice>\` • Rock Paper Scissors (alias \`!rps\`).\n` +
+                    `› \`/rockpaperscissors <bet> [choice] [opponent]\` • Play RPS solo against bot or duel another player 1v1 (alias \`!rps\`, \`/rps-duel\`).\n` +
                     `› \`/blackjack <bet>\` • High-stakes Blackjack with interactive cards (alias \`!bj\`).\n` +
                     `› \`/slots <amount>\` • 3-reel Minecraft slots with Wither Skull jackpot.\n` +
                     `› \`/heist @user <amount>\` • Organize 5-player squad vault heists.\n\n` +
@@ -236,7 +236,7 @@ export const helpCommand = {
                     `› \`/rpg craft\` • Forge higher tier pickaxes and rods.\n\n` +
                     `### 🎲 COINS Gambling & Heists\n` +
                     `› \`/coinflip <amount> [choice]\` • Fast double-or-nothing wagers (alias \`!cf\`).\n` +
-                    `› \`/rockpaperscissors <bet> <choice>\` • Rock Paper Scissors (alias \`!rps\`).\n` +
+                    `› \`/rockpaperscissors <bet> [choice] [opponent]\` • Play RPS solo against bot or duel another player 1v1 (alias \`!rps\`, \`/rps-duel\`).\n` +
                     `› \`/blackjack <bet>\` • High-stakes Blackjack with interactive cards (alias \`!bj\`).\n` +
                     `› \`/slots <amount>\` • 3-reel spinning slots with 50x Wither Jackpot.\n` +
                     `› \`/heist @user <amount>\` • 5-player co-op bank heist minigame.\n\n` +

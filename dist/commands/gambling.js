@@ -312,27 +312,316 @@ export const heistCommand = {
         });
     },
 };
+async function executeRpsDuel(interaction, challenger, opponent, rawAmountStr) {
+    if (challenger.id === opponent.id) {
+        await interaction.reply({
+            content: '❌ You cannot challenge yourself to a duel!',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    if (opponent.bot) {
+        await interaction.reply({
+            content: '❌ You cannot challenge a bot to a duel! If you want to play against the bot, omit the opponent parameter.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const chalUser = await CoinTransactionLock.resolveLinkedUser(challenger.id);
+    if (!chalUser) {
+        await interaction.reply({
+            content: '⚠️ **Account Not Linked!** Run `/link` to connect your Victus Cloud account before dueling with COINS.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const oppUser = await CoinTransactionLock.resolveLinkedUser(opponent.id);
+    if (!oppUser) {
+        await interaction.reply({
+            content: `⚠️ <@${opponent.id}> has not linked their Victus Cloud account yet! They must run \`/link\` first.`,
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const chalBal = await CoinTransactionLock.getCoinsBalance(chalUser.email);
+    const oppBal = await CoinTransactionLock.getCoinsBalance(oppUser.email);
+    const wager = CoinTransactionLock.resolveWagerAmount(rawAmountStr, chalBal, 100000);
+    if (!wager || wager <= 0) {
+        await interaction.reply({
+            content: `❌ Please specify a valid wager amount! (e.g. \`/rps-duel opponent:@user amount:50\` or \`!rps @user 50\`)`,
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    if (chalBal < wager) {
+        await interaction.reply({
+            content: `⚠️ You only have **${chalBal} COINS**, which is not enough for a **${wager} COINS** wager!`,
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    if (oppBal < wager) {
+        await interaction.reply({
+            content: `⚠️ <@${opponent.id}> only has **${oppBal} COINS**, which is not enough for a **${wager} COINS** wager!`,
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    const duelId = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const totalPot = wager * 2;
+    const container = ComponentsV2.baseContainer(ComponentsV2.Accents.warning);
+    const promptText = `# ⚔️ Rock Paper Scissors: 1v1 Duel Challenge!\n\n` +
+        `<@${challenger.id}> has challenged <@${opponent.id}> to a high-stakes **Rock Paper Scissors Duel**!\n\n` +
+        `› 💰 **Wager Per Player:** \`${wager} COINS\`\n` +
+        `› 🏆 **Winner's Pot:** **${totalPot} COINS** (Winner takes all!)\n\n` +
+        `<@${opponent.id}>, click **[Accept Duel]** within 45 seconds to battle!`;
+    container.addTextDisplayComponents(ComponentsV2.text(promptText));
+    const acceptBtn = new ButtonBuilder()
+        .setCustomId(`rps_accept_${duelId}`)
+        .setLabel('Accept Duel')
+        .setEmoji('⚔️')
+        .setStyle(ButtonStyle.Success);
+    const declineBtn = new ButtonBuilder()
+        .setCustomId(`rps_decline_${duelId}`)
+        .setLabel('Decline')
+        .setEmoji('🏳️')
+        .setStyle(ButtonStyle.Danger);
+    const challengeRow = new ActionRowBuilder().addComponents(acceptBtn, declineBtn);
+    const reply = await interaction.reply({
+        components: [container, challengeRow],
+        flags: ComponentsV2.IS_COMPONENTS_V2,
+        fetchReply: true,
+    });
+    const targetMsg = reply || (interaction.fetchReply ? await interaction.fetchReply().catch(() => null) : null);
+    if (!targetMsg)
+        return;
+    const inviteCollector = targetMsg.createMessageComponentCollector({
+        componentType: ComponentType.Button,
+        time: 45_000,
+    });
+    inviteCollector.on('collect', async (btn) => {
+        if (btn.user.id !== opponent.id) {
+            await btn.reply({
+                content: `⛔ Only <@${opponent.id}> can accept or decline this duel challenge!`,
+                flags: MessageFlags.Ephemeral,
+            });
+            return;
+        }
+        if (btn.customId === `rps_decline_${duelId}`) {
+            inviteCollector.stop('declined');
+            await btn.deferUpdate().catch(() => { });
+            const decC = ComponentsV2.baseContainer(ComponentsV2.Accents.danger);
+            decC.addTextDisplayComponents(ComponentsV2.text(`# 🏳️ Challenge Declined\n\n<@${opponent.id}> declined the Rock Paper Scissors duel.`));
+            await targetMsg.edit({ components: [decC], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
+            return;
+        }
+        inviteCollector.stop('accepted');
+        await btn.deferUpdate().catch(() => { });
+        // Step 2: Atomic balance deductions for escrow
+        const chalDeduct = await CoinTransactionLock.executeWagerTransaction(challenger.id, wager, 'rps_duel_wager', `rps_duel:${challenger.id}:${Date.now()}`, `RPS duel wager vs ${opponent.username}`, async () => ({ won: false, payoutAmount: 0, payload: null }));
+        if (!chalDeduct.success) {
+            const errC = ComponentsV2.baseContainer(ComponentsV2.Accents.danger);
+            errC.addTextDisplayComponents(ComponentsV2.text(`❌ Duel cancelled: Challenger balance lock failed.`));
+            await targetMsg.edit({ components: [errC], flags: ComponentsV2.IS_COMPONENTS_V2 });
+            return;
+        }
+        const oppDeduct = await CoinTransactionLock.executeWagerTransaction(opponent.id, wager, 'rps_duel_wager', `rps_duel:${opponent.id}:${Date.now()}`, `RPS duel wager vs ${challenger.username}`, async () => ({ won: false, payoutAmount: 0, payload: null }));
+        if (!oppDeduct.success) {
+            await CoinTransactionLock.grantCoins(challenger.id, wager, 'rps_duel_refund', `refund:${challenger.id}:${Date.now()}`, 'RPS duel cancelled refund');
+            const errC = ComponentsV2.baseContainer(ComponentsV2.Accents.danger);
+            errC.addTextDisplayComponents(ComponentsV2.text(`❌ Duel cancelled: Opponent balance lock failed.`));
+            await targetMsg.edit({ components: [errC], flags: ComponentsV2.IS_COMPONENTS_V2 });
+            return;
+        }
+        // Step 3: Secret Move Selection Phase
+        const choices = {};
+        function renderMoveContainer() {
+            const chalStatus = choices[challenger.id] ? '✅ **Choice Locked in!**' : '⏳ *Choosing move...*';
+            const oppStatus = choices[opponent.id] ? '✅ **Choice Locked in!**' : '⏳ *Choosing move...*';
+            const moveContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.primary);
+            const moveText = `# 🎮 Rock Paper Scissors: Make Your Move!\n\n` +
+                `Both players must click a button below to choose their throw.\n` +
+                `Your choice is **100% secret** and will only be revealed once both players have chosen!\n\n` +
+                `› 👤 <@${challenger.id}>: ${chalStatus}\n` +
+                `› 👤 <@${opponent.id}>: ${oppStatus}\n\n` +
+                `⏱️ You have **45 seconds** to make your throw!`;
+            moveContainer.addTextDisplayComponents(ComponentsV2.text(moveText));
+            return moveContainer;
+        }
+        const moveRow = new ActionRowBuilder().addComponents(new ButtonBuilder()
+            .setCustomId(`rps_rock_${duelId}`)
+            .setLabel('Rock')
+            .setEmoji('🪨')
+            .setStyle(ButtonStyle.Primary), new ButtonBuilder()
+            .setCustomId(`rps_paper_${duelId}`)
+            .setLabel('Paper')
+            .setEmoji('📰')
+            .setStyle(ButtonStyle.Primary), new ButtonBuilder()
+            .setCustomId(`rps_scissors_${duelId}`)
+            .setLabel('Scissors')
+            .setEmoji('✂️')
+            .setStyle(ButtonStyle.Primary));
+        await targetMsg.edit({
+            components: [renderMoveContainer(), moveRow],
+            flags: ComponentsV2.IS_COMPONENTS_V2,
+        }).catch(() => { });
+        const moveCollector = targetMsg.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 45_000,
+        });
+        const moveEmojis = {
+            rock: '🪨 Rock',
+            paper: '📰 Paper',
+            scissors: '✂️ Scissors',
+        };
+        moveCollector.on('collect', async (moveBtn) => {
+            if (moveBtn.user.id !== challenger.id && moveBtn.user.id !== opponent.id) {
+                await moveBtn.reply({
+                    content: '⛔ You are not part of this duel!',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            if (choices[moveBtn.user.id]) {
+                await moveBtn.reply({
+                    content: '🔒 You have already locked in your choice! Waiting for your opponent...',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+            let pickedMove;
+            if (moveBtn.customId.includes('rock'))
+                pickedMove = 'rock';
+            else if (moveBtn.customId.includes('paper'))
+                pickedMove = 'paper';
+            else
+                pickedMove = 'scissors';
+            choices[moveBtn.user.id] = pickedMove;
+            await moveBtn.reply({
+                content: `🔒 You secretly threw **${moveEmojis[pickedMove]}**! Waiting for your opponent...`,
+                flags: MessageFlags.Ephemeral,
+            });
+            // If both players have locked in, resolve immediately!
+            if (choices[challenger.id] && choices[opponent.id]) {
+                moveCollector.stop('resolved');
+                return;
+            }
+            // Otherwise update public display
+            await targetMsg.edit({
+                components: [renderMoveContainer(), moveRow],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            }).catch(() => { });
+        });
+        moveCollector.on('end', async (_, reason) => {
+            const chalMove = choices[challenger.id];
+            const oppMove = choices[opponent.id];
+            // Case 1: Both chose!
+            if (chalMove && oppMove) {
+                if (chalMove === oppMove) {
+                    // Tie: Refund both
+                    await CoinTransactionLock.grantCoins(challenger.id, wager, 'rps_duel_refund', `tie:${challenger.id}:${Date.now()}`, 'RPS duel tie refund');
+                    await CoinTransactionLock.grantCoins(opponent.id, wager, 'rps_duel_refund', `tie:${opponent.id}:${Date.now()}`, 'RPS duel tie refund');
+                    const tieContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.warning);
+                    const tieText = `# 🤝 RPS Duel: IT'S A TIE!\n\n` +
+                        `› 👤 <@${challenger.id}> threw: **${moveEmojis[chalMove]}**\n` +
+                        `› 👤 <@${opponent.id}> threw: **${moveEmojis[oppMove]}**\n\n` +
+                        `Both fighters threw the same move! Neither was able to gain the upper hand.\n\n` +
+                        `### 💰 Refund Summary:\n` +
+                        `› **All Wagers Refunded:** Both players received their \`${wager} COINS\` back in full!`;
+                    tieContainer.addTextDisplayComponents(ComponentsV2.text(tieText));
+                    await targetMsg.edit({ components: [tieContainer], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
+                    return;
+                }
+                const chalWins = (chalMove === 'rock' && oppMove === 'scissors') ||
+                    (chalMove === 'paper' && oppMove === 'rock') ||
+                    (chalMove === 'scissors' && oppMove === 'paper');
+                const winner = chalWins ? challenger : opponent;
+                const loser = chalWins ? opponent : challenger;
+                const winningMove = chalWins ? chalMove : oppMove;
+                const losingMove = chalWins ? oppMove : chalMove;
+                await CoinTransactionLock.grantCoins(winner.id, totalPot, 'rps_duel_win', `rps_pot:${winner.id}:${Date.now()}`, `Won RPS duel against ${loser.username} (+${totalPot} COINS)`);
+                const winVerb = winningMove === 'rock' ? 'smashes' : winningMove === 'paper' ? 'covers' : 'cuts';
+                const winContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.success);
+                const winText = `# 🏆 RPS Duel: <@${winner.id}> Triumphs!\n\n` +
+                    `› 👤 <@${challenger.id}> threw: **${moveEmojis[chalMove]}**\n` +
+                    `› 👤 <@${opponent.id}> threw: **${moveEmojis[oppMove]}**\n\n` +
+                    `💥 **${moveEmojis[winningMove]}** ${winVerb} **${moveEmojis[losingMove]}**!\n\n` +
+                    `### 💰 Spoils of Victory:\n` +
+                    `› 👑 **Victor:** <@${winner.id}>\n` +
+                    `› 🏆 **Pot Claimed:** **${totalPot} COINS** (+${wager} net profit)\n` +
+                    `› 💳 Balance credited instantly to Victus Cloud account!`;
+                winContainer.addTextDisplayComponents(ComponentsV2.text(winText));
+                await targetMsg.edit({ components: [winContainer], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
+                return;
+            }
+            // Case 2: One player timed out, one chose (Forfeit)
+            if (chalMove && !oppMove) {
+                await CoinTransactionLock.grantCoins(challenger.id, totalPot, 'rps_duel_forfeit', `forfeit:${challenger.id}:${Date.now()}`, `Won RPS duel by forfeit vs ${opponent.username}`);
+                const fContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.success);
+                fContainer.addTextDisplayComponents(ComponentsV2.text(`# 🏆 Duel Won by Forfeit!\n\n` +
+                    `<@${opponent.id}> failed to choose within 45 seconds and forfeited!\n\n` +
+                    `› 👑 **Victor:** <@${challenger.id}> claimed the **${totalPot} COINS** pot!`));
+                await targetMsg.edit({ components: [fContainer], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
+                return;
+            }
+            if (oppMove && !chalMove) {
+                await CoinTransactionLock.grantCoins(opponent.id, totalPot, 'rps_duel_forfeit', `forfeit:${opponent.id}:${Date.now()}`, `Won RPS duel by forfeit vs ${challenger.username}`);
+                const fContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.success);
+                fContainer.addTextDisplayComponents(ComponentsV2.text(`# 🏆 Duel Won by Forfeit!\n\n` +
+                    `<@${challenger.id}> failed to choose within 45 seconds and forfeited!\n\n` +
+                    `› 👑 **Victor:** <@${opponent.id}> claimed the **${totalPot} COINS** pot!`));
+                await targetMsg.edit({ components: [fContainer], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
+                return;
+            }
+            // Case 3: Both timed out
+            await CoinTransactionLock.grantCoins(challenger.id, wager, 'rps_duel_refund', `refund:${challenger.id}:${Date.now()}`, 'RPS duel timeout refund');
+            await CoinTransactionLock.grantCoins(opponent.id, wager, 'rps_duel_refund', `refund:${opponent.id}:${Date.now()}`, 'RPS duel timeout refund');
+            const expContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.info);
+            expContainer.addTextDisplayComponents(ComponentsV2.text(`# ⏳ Duel Expired\n\n` +
+                `Neither player made their move in time. The duel was cancelled and all wagers were refunded.`));
+            await targetMsg.edit({ components: [expContainer], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
+        });
+    });
+    inviteCollector.on('end', async (_, reason) => {
+        if (reason === 'time') {
+            const timeoutC = ComponentsV2.baseContainer(ComponentsV2.Accents.info);
+            timeoutC.addTextDisplayComponents(ComponentsV2.text(`# ⏳ Challenge Expired\n\n` +
+                `The Rock Paper Scissors duel challenge to <@${opponent.id}> timed out with no response.`));
+            await targetMsg.edit({ components: [timeoutC], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
+        }
+    });
+}
 export const rpsCommand = {
     data: new SlashCommandBuilder()
         .setName('rockpaperscissors')
-        .setDescription('Play Rock Paper Scissors with Victus Cloud COINS (OwO style: !rps <bet> <r/p/s>)')
+        .setDescription('Play Rock Paper Scissors solo or duel a friend with COINS (OwO style: !rps <bet>)')
         .addStringOption((opt) => opt
         .setName('amount')
         .setDescription('Amount of COINS to wager (or "all", "half")')
         .setRequired(true))
         .addStringOption((opt) => opt
         .setName('choice')
-        .setDescription('Pick rock, paper, or scissors')
-        .setRequired(true)
-        .addChoices({ name: '🪨 Rock (r)', value: 'rock' }, { name: '📰 Paper (p)', value: 'paper' }, { name: '✂️ Scissors (s)', value: 'scissors' })),
+        .setDescription('Pick rock, paper, or scissors (for solo play against bot)')
+        .setRequired(false)
+        .addChoices({ name: '🪨 Rock (r)', value: 'rock' }, { name: '📰 Paper (p)', value: 'paper' }, { name: '✂️ Scissors (s)', value: 'scissors' }))
+        .addUserOption((opt) => opt
+        .setName('opponent')
+        .setDescription('Challenge another player to a 1v1 RPS Duel! (Optional)')
+        .setRequired(false)),
     cooldown: 3,
     async execute(interaction) {
         let rawAmountStr = interaction.options.getString?.('amount') ?? interaction.options.getInteger?.('amount') ?? null;
         let choice = interaction.options.getString?.('choice') ?? null;
+        let opponent = interaction.options.getUser?.('opponent') ?? null;
         const userId = interaction.user.id;
-        // Support OwO prefix arguments: !rps 50 r, !rps rock 100, !rps all s
+        // Support OwO prefix arguments: !rps 50 r, !rps @user 50, !rps 50 @user, !rps duel @user 50
         const rawMessage = interaction.message;
         if (rawMessage?.content) {
+            if (rawMessage.mentions?.users?.size > 0) {
+                const mentioned = rawMessage.mentions.users.find((u) => u.id !== interaction.user.id);
+                if (mentioned)
+                    opponent = mentioned;
+            }
             const parts = rawMessage.content.trim().split(/\s+/).slice(1);
             for (const part of parts) {
                 const lower = part.toLowerCase();
@@ -348,11 +637,22 @@ export const rpsCommand = {
                 else if (['all', 'max', 'half'].includes(lower) || /^\d+$/.test(lower)) {
                     rawAmountStr = lower;
                 }
+                else if (/^<@!?(\d+)>$/.test(part) && !opponent) {
+                    const match = part.match(/\d+/);
+                    if (match && interaction.client) {
+                        opponent = interaction.client.users.cache.get(match[0]) || null;
+                    }
+                }
             }
+        }
+        // If an opponent was specified, launch the 2-player duel!
+        if (opponent) {
+            await executeRpsDuel(interaction, interaction.user, opponent, rawAmountStr);
+            return;
         }
         if (!choice) {
             await interaction.reply({
-                content: '❌ Please pick rock, paper, or scissors (e.g. `/rps amount:50 choice:rock` or `!rps 50 r`).',
+                content: '❌ Please pick rock, paper, or scissors for solo play, or mention a user to duel! (e.g. `/rps amount:50 choice:rock` or `/rps amount:50 opponent:@User` or `!rps @User 50`).',
                 flags: MessageFlags.Ephemeral,
             });
             return;
@@ -436,6 +736,32 @@ export const rpsCommand = {
             `› **${tx.newBalance} COINS** (Synced live with [victuscloud.com](https://victuscloud.com))\n`;
         container.addTextDisplayComponents(ComponentsV2.text(text));
         await interaction.editReply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 });
+    },
+};
+export const rpsDuelCommand = {
+    data: new SlashCommandBuilder()
+        .setName('rps-duel')
+        .setDescription('Challenge another player to a 1v1 Rock Paper Scissors Duel for COINS!')
+        .addUserOption((opt) => opt
+        .setName('opponent')
+        .setDescription('The player to challenge')
+        .setRequired(true))
+        .addStringOption((opt) => opt
+        .setName('amount')
+        .setDescription('Amount of COINS to wager (or "all", "half")')
+        .setRequired(true)),
+    cooldown: 3,
+    async execute(interaction) {
+        const opponent = interaction.options.getUser?.('opponent');
+        const rawAmountStr = interaction.options.getString?.('amount');
+        if (!opponent) {
+            await interaction.reply({
+                content: '❌ Please specify an opponent to duel! e.g. `/rps-duel opponent:@user amount:50`',
+                flags: MessageFlags.Ephemeral,
+            });
+            return;
+        }
+        await executeRpsDuel(interaction, interaction.user, opponent, rawAmountStr);
     },
 };
 const SUITS = ['♠️', '♥️', '♦️', '♣️'];
