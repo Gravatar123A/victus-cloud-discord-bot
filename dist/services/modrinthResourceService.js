@@ -281,80 +281,102 @@ class ModrinthResourceService {
     }
     /**
      * Post a single resource item as a thread into a ForumChannel.
+     * Automatically handles Discord 429 rate limits with dynamic backoff and retries.
      */
-    async publishItemToForum(channel, item) {
-        try {
-            // Trim title to Discord 100 character thread name limit
-            let threadName = `${item.title}`.trim();
-            if (threadName.length > 95) {
-                threadName = `${threadName.slice(0, 92)}...`;
-            }
-            const cleanDescription = item.description.length > 600
-                ? `${item.description.slice(0, 590)}...`
-                : item.description;
-            const versionsSnippet = item.versions.length > 0
-                ? item.versions.slice(-6).reverse().join(', ')
-                : 'All versions';
-            const tagsSnippet = item.categories.length > 0
-                ? item.categories.slice(0, 6).map((c) => `\`${c}\``).join(' ')
-                : '`General`';
-            const embed = new EmbedBuilder()
-                .setColor(0x1bd96a) // Modrinth Emerald Green
-                .setTitle(`📦 ${item.title}`)
-                .setURL(item.url)
-                .setDescription(`### 📖 About this Resource\n` +
-                `${cleanDescription}\n\n` +
-                `### 📊 Details & Metrics\n` +
-                `› 📥 **Downloads:** **${item.downloads.toLocaleString()}**\n` +
-                `› ⭐ **Followers:** **${item.follows.toLocaleString()}**\n` +
-                `› 👤 **Author:** \`${item.author}\`\n` +
-                `› ⚖️ **License:** \`${item.license}\`\n` +
-                `› 🎮 **Latest Versions:** \`${versionsSnippet}\`\n` +
-                `› 🏷️ **Categories:** ${tagsSnippet}\n\n` +
-                `_Hosted & published via Modrinth open-source repository._`)
-                .setFooter({
-                text: 'Victus Cloud Community Resource Hub • Free Minecraft Hosting at victuscloud.com/free',
-            })
-                .setTimestamp();
-            if (item.iconUrl && item.iconUrl.startsWith('http')) {
-                embed.setThumbnail(item.iconUrl);
-            }
-            const actionRow = new ActionRowBuilder().addComponents(new ButtonBuilder()
-                .setStyle(ButtonStyle.Link)
-                .setLabel('Download on Modrinth')
-                .setURL(item.url)
-                .setEmoji('📥'), new ButtonBuilder()
-                .setStyle(ButtonStyle.Link)
-                .setLabel('Victus Cloud Free Hosting')
-                .setURL('https://victuscloud.com/free')
-                .setEmoji('⚡'));
-            // Match applied tags from available forum tags
-            const appliedTags = [];
-            if (channel.availableTags && channel.availableTags.length > 0) {
-                for (const t of channel.availableTags) {
-                    if (item.categories.some((c) => c.toLowerCase() === t.name.toLowerCase()) ||
-                        item.title.toLowerCase().includes(t.name.toLowerCase())) {
-                        appliedTags.push(t.id);
-                        if (appliedTags.length >= 5)
-                            break;
-                    }
+    async publishItemToForum(channel, item, maxRetries = 3) {
+        // Trim title to Discord 100 character thread name limit
+        let threadName = `${item.title}`.trim();
+        if (threadName.length > 95) {
+            threadName = `${threadName.slice(0, 92)}...`;
+        }
+        const cleanDescription = item.description.length > 600
+            ? `${item.description.slice(0, 590)}...`
+            : item.description;
+        const versionsSnippet = item.versions.length > 0
+            ? item.versions.slice(-6).reverse().join(', ')
+            : 'All versions';
+        const tagsSnippet = item.categories.length > 0
+            ? item.categories.slice(0, 6).map((c) => `\`${c}\``).join(' ')
+            : '`General`';
+        const embed = new EmbedBuilder()
+            .setColor(0x1bd96a) // Modrinth Emerald Green
+            .setTitle(`📦 ${item.title}`)
+            .setURL(item.url)
+            .setDescription(`### 📖 About this Resource\n` +
+            `${cleanDescription}\n\n` +
+            `### 📊 Details & Metrics\n` +
+            `› 📥 **Downloads:** **${item.downloads.toLocaleString()}**\n` +
+            `› ⭐ **Followers:** **${item.follows.toLocaleString()}**\n` +
+            `› 👤 **Author:** \`${item.author}\`\n` +
+            `› ⚖️ **License:** \`${item.license}\`\n` +
+            `› 🎮 **Latest Versions:** \`${versionsSnippet}\`\n` +
+            `› 🏷️ **Categories:** ${tagsSnippet}\n\n` +
+            `_Hosted & published via Modrinth open-source repository._`)
+            .setFooter({
+            text: 'Victus Cloud Community Resource Hub • Free Minecraft Hosting at victuscloud.com/free',
+        })
+            .setTimestamp();
+        if (item.iconUrl && item.iconUrl.startsWith('http')) {
+            embed.setThumbnail(item.iconUrl);
+        }
+        const actionRow = new ActionRowBuilder().addComponents(new ButtonBuilder()
+            .setStyle(ButtonStyle.Link)
+            .setLabel('Download on Modrinth')
+            .setURL(item.url)
+            .setEmoji('📥'), new ButtonBuilder()
+            .setStyle(ButtonStyle.Link)
+            .setLabel('Victus Cloud Free Hosting')
+            .setURL('https://victuscloud.com/free')
+            .setEmoji('⚡'));
+        // Match applied tags from available forum tags
+        const appliedTags = [];
+        if (channel.availableTags && channel.availableTags.length > 0) {
+            for (const t of channel.availableTags) {
+                if (item.categories.some((c) => c.toLowerCase() === t.name.toLowerCase()) ||
+                    item.title.toLowerCase().includes(t.name.toLowerCase())) {
+                    appliedTags.push(t.id);
+                    if (appliedTags.length >= 5)
+                        break;
                 }
             }
-            await channel.threads.create({
-                name: threadName,
-                appliedTags: appliedTags.length > 0 ? appliedTags : undefined,
-                message: {
-                    embeds: [embed],
-                    components: [actionRow],
-                },
-                reason: `Victus Cloud automated resource ingestion for ${item.title}`,
-            });
-            return true;
         }
-        catch (err) {
-            logger.warn(`[ModrinthService] Failed to post thread "${item.title}":`, err?.message || err);
-            return false;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                await channel.threads.create({
+                    name: threadName,
+                    appliedTags: appliedTags.length > 0 ? appliedTags : undefined,
+                    message: {
+                        embeds: [embed],
+                        components: [actionRow],
+                    },
+                    reason: `Victus Cloud automated resource ingestion for ${item.title}`,
+                });
+                return true;
+            }
+            catch (err) {
+                const errMsg = err?.message || String(err);
+                const isRateLimit = err?.status === 429 ||
+                    err?.code === 429 ||
+                    errMsg.toLowerCase().includes('rate limit') ||
+                    errMsg.toLowerCase().includes('too many requests');
+                if (isRateLimit && attempt <= maxRetries) {
+                    let waitMs = 20000;
+                    if (typeof err.retryAfter === 'number') {
+                        waitMs = err.retryAfter > 1000 ? err.retryAfter : Math.ceil(err.retryAfter * 1000);
+                    }
+                    else if (typeof err.rawError?.retry_after === 'number') {
+                        waitMs = Math.ceil(err.rawError.retry_after * 1000);
+                    }
+                    waitMs = Math.max(5000, waitMs) + 2000;
+                    logger.warn(`[ModrinthService] Discord thread rate limit hit on "${item.title}". Waiting ${Math.ceil(waitMs / 1000)}s before retry (${attempt}/${maxRetries})...`);
+                    await new Promise((r) => setTimeout(r, waitMs));
+                    continue;
+                }
+                logger.warn(`[ModrinthService] Failed to post thread "${item.title}": ${errMsg}`);
+                return false;
+            }
         }
+        return false;
     }
     /**
      * Start background pulling of 100 resources for specified categories.
@@ -406,39 +428,54 @@ class ModrinthResourceService {
                     catStatus.completed = true;
                     continue;
                 }
+                // Scan active threads currently in the channel to prevent duplicates
+                try {
+                    const activeThreads = await channel.threads.fetchActive().catch(() => null);
+                    if (activeThreads?.threads) {
+                        for (const [_, th] of activeThreads.threads) {
+                            publishedSet.add(`${catKey}:${th.name.toLowerCase()}`);
+                        }
+                    }
+                }
+                catch {
+                    // Ignore
+                }
                 // Fetch top resources
                 const items = await this.fetchTopResources(catKey, targetCount);
                 catStatus.totalFetched = items.length;
                 for (const item of items) {
                     if (this.stopSignals.has(guild.id))
                         break;
-                    const dedupKey = `${catKey}:${item.slug}`;
-                    if (publishedSet.has(dedupKey)) {
+                    const dedupKeySlug = `${catKey}:${item.slug.toLowerCase()}`;
+                    const dedupKeyTitle = `${catKey}:${item.title.toLowerCase()}`;
+                    if (publishedSet.has(dedupKeySlug) || publishedSet.has(dedupKeyTitle)) {
                         catStatus.totalPosted++;
                         continue;
                     }
                     const ok = await this.publishItemToForum(channel, item);
                     if (ok) {
                         catStatus.totalPosted++;
-                        publishedSet.add(dedupKey);
+                        publishedSet.add(dedupKeySlug);
+                        publishedSet.add(dedupKeyTitle);
+                        // Periodically persist progress every 5 posts
+                        if (catStatus.totalPosted % 5 === 0) {
+                            await supabase.saveCustomEmbed(guild.id, '_modrinth_published', {
+                                description: JSON.stringify(Array.from(publishedSet)),
+                            }).catch(() => null);
+                        }
                     }
-                    // Pacing delay: 1800ms between forum thread creates to comfortably stay under Discord rate limits
-                    await new Promise((r) => setTimeout(r, 1800));
+                    // Pacing delay: 3500ms between thread creates to stay under Discord rate limits
+                    await new Promise((r) => setTimeout(r, 3500));
                 }
                 catStatus.completed = true;
                 logger.info(`[ModrinthService] Finished category ${catKey}: ${catStatus.totalPosted}/${catStatus.totalFetched} published.`);
-            }
-            progress.isRunning = false;
-            logger.info(`[ModrinthService] Bulk ingestion completed for guild ${guild.name}. Total published: ${publishedSet.size}`);
-            // Save published set
-            try {
+                // Save published set after each category
                 await supabase.saveCustomEmbed(guild.id, '_modrinth_published', {
                     description: JSON.stringify(Array.from(publishedSet)),
-                });
+                }).catch(() => null);
             }
-            catch {
-                // Ignore
-            }
+            progress.isRunning = false;
+            logger.info(`[ModrinthService] Bulk ingestion completed for guild ${guild.name}. Total tracked published: ${publishedSet.size}`);
         })().catch((err) => {
             logger.error(`[ModrinthService] Fatal ingestion error for guild ${guild.id}:`, err);
             progress.isRunning = false;
