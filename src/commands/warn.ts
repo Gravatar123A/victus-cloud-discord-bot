@@ -20,6 +20,20 @@ import { supabase } from '../services/supabase.js';
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
 const EPH = undefined as any;
 
+/**
+ * Discord-native admin check for sensitive warn subcommands.
+ * Works for both slash (ChatInputCommandInteraction) and prefix
+ * (PrefixInteraction) invocations: slash exposes `memberPermissions`,
+ * prefix exposes `member.permissions`.
+ */
+function isDiscordAdmin(interaction: any): boolean {
+    const memberPerms = interaction?.memberPermissions;
+    if (memberPerms?.has?.(PermissionFlagsBits.Administrator)) return true;
+    const member = interaction?.member;
+    if (member?.permissions?.has?.(PermissionFlagsBits.Administrator)) return true;
+    return false;
+}
+
 function renderWarnDashboard(config: WarnConfig): any {
     const c = ComponentsV2.baseContainer(config.enabled ? ComponentsV2.Accents.success : ComponentsV2.Accents.warning);
     
@@ -79,7 +93,7 @@ export const warnCommand: Command = {
         )
         .addSubcommand(sub =>
             sub.setName('reset')
-                .setDescription('Clear all warnings for a user')
+                .setDescription('Clear all warnings for a user (Admin only)')
                 .addUserOption(opt => opt.setName('user').setDescription('The user to clear warnings for').setRequired(true))
         )
         .addSubcommand(sub =>
@@ -266,6 +280,10 @@ export const warnCommand: Command = {
             }
         }
         else if (sub === 'reset') {
+            if (!isDiscordAdmin(interaction)) {
+                await interaction.reply({ content: '❌ Only administrators can reset warnings.', flags: EPH });
+                return;
+            }
             await warnSettings.resetWarnings(interaction.guildId!, targetUser.id);
             if (isPrefix) {
                 const successEmbed = new EmbedBuilder()
