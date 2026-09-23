@@ -63,12 +63,32 @@ const SOURCE_META: Record<string, { emoji: string; label: string; color: string 
     resource_upgrade: { emoji: '⬆️', label: 'Resource Upgrade', color: '#ef4444' },
     boost: { emoji: '🚀', label: 'Boost', color: '#a78bfa' },
     invite: { emoji: '✉️', label: 'Invite Reward', color: '#22c55e' },
+    unscramble_reward: { emoji: '🔀', label: 'Unscramble Win', color: '#10b981' },
+    gtn_reward: { emoji: '🎯', label: 'Guess Number Win', color: '#10b981' },
+    airdrop_claim: { emoji: '🪂', label: 'AirDrop', color: '#06b6d4' },
+    world_boss_raid: { emoji: '👹', label: 'World Boss', color: '#ef4444' },
+    rpg_market_sell: { emoji: '🗡️', label: 'RPG Market', color: '#8b5cf6' },
+    battle_win: { emoji: '⚔️', label: 'Duel Win', color: '#f59e0b' },
+    gambling: { emoji: '🎰', label: 'Game', color: '#a78bfa' },
+    owner_unique_user_bonus: { emoji: '🌟', label: 'Activity Bonus', color: '#f59e0b' },
+    guild_referral_verified: { emoji: '👥', label: 'Referral', color: '#8b5cf6' },
     economy_ledger: { emoji: '🧾', label: 'Economy', color: '#6366f1' },
     cp: { emoji: '✨', label: 'XP', color: '#f59e0b' },
 };
 
 function sourceMeta(source: string) {
-    return SOURCE_META[source] || { emoji: '•', label: source, color: '#6b7280' };
+    const exact = SOURCE_META[source];
+    if (exact) return exact;
+    if (source.endsWith('_wager')) return { emoji: '🎲', label: 'Game Wager', color: '#ef4444' };
+    if (source.endsWith('_win')) return { emoji: '🏆', label: 'Game Win', color: '#22c55e' };
+    if (source.endsWith('_refund')) return { emoji: '↩️', label: 'Game Refund', color: '#3b82f6' };
+    if (source.endsWith('_target_loss')) return { emoji: '🥷', label: 'Heist Loss', color: '#ef4444' };
+    if (source.endsWith('_team_payout')) return { emoji: '🥷', label: 'Heist Share', color: '#22c55e' };
+    if (source.startsWith('gambling')) return SOURCE_META.gambling;
+    if (source.startsWith('rps_duel') || source.startsWith('duel') || source.startsWith('battle')) {
+        return { emoji: '⚔️', label: 'Duel', color: '#f59e0b' };
+    }
+    return { emoji: '•', label: source, color: '#6b7280' };
 }
 
 interface UnifiedTx {

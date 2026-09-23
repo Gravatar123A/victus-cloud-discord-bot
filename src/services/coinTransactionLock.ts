@@ -157,6 +157,14 @@ export class CoinTransactionLock {
                     `${description} (Wager: -${wagerAmount} COINS)`
                 );
                 await supabase.mirrorProfileCoinsFromPaymenter(user.userId, postWagerBalance, `${source} wager`);
+                await supabase.recordEconomyLedger({
+                    userId: user.userId,
+                    kind: `${source}_wager`,
+                    amount: -wagerAmount,
+                    balanceAfter: postWagerBalance,
+                    reason: `${description} (Wager: -${wagerAmount} COINS)`,
+                    meta: { reference: `${reference}:wager` },
+                });
             } catch (deductErr: any) {
                 return {
                     success: false,
@@ -180,6 +188,14 @@ export class CoinTransactionLock {
                         `Refund for failed game interaction`
                     );
                     await supabase.mirrorProfileCoinsFromPaymenter(user.userId, refundBal, `${source} refund`);
+                    await supabase.recordEconomyLedger({
+                        userId: user.userId,
+                        kind: `${source}_refund`,
+                        amount: wagerAmount,
+                        balanceAfter: refundBal,
+                        reason: `Refund for failed game interaction`,
+                        meta: { reference: `${reference}:refund` },
+                    });
                 } catch {}
                 return {
                     success: false,
@@ -198,6 +214,14 @@ export class CoinTransactionLock {
                         `${description} (Winnings: +${result.payoutAmount} COINS)`
                     );
                     await supabase.mirrorProfileCoinsFromPaymenter(user.userId, postWagerBalance, `${source} win`);
+                    await supabase.recordEconomyLedger({
+                        userId: user.userId,
+                        kind: `${source}_win`,
+                        amount: result.payoutAmount,
+                        balanceAfter: postWagerBalance,
+                        reason: `${description} (Winnings: +${result.payoutAmount} COINS)`,
+                        meta: { reference: `${reference}:win` },
+                    });
                 } catch (winErr: any) {
                     logger.error(`Failed to credit win payout to ${user.email}:`, winErr);
                 }
@@ -296,6 +320,14 @@ export class CoinTransactionLock {
                     description
                 );
                 await supabase.mirrorProfileCoinsFromPaymenter(user.userId, newBalance, `${source} wager deduction`);
+                await supabase.recordEconomyLedger({
+                    userId: user.userId,
+                    kind: source,
+                    amount: -amount,
+                    balanceAfter: newBalance,
+                    reason: description,
+                    meta: { reference },
+                });
 
                 return {
                     success: true,
@@ -347,6 +379,15 @@ export class CoinTransactionLock {
                     description
                 );
                 await supabase.mirrorProfileCoinsFromPaymenter(user.userId, newBalance, `${source} grant`);
+                // Mirror into history so /coin history + /economy show game rewards.
+                await supabase.recordEconomyLedger({
+                    userId: user.userId,
+                    kind: source,
+                    amount,
+                    balanceAfter: newBalance,
+                    reason: description,
+                    meta: { reference },
+                });
 
                 return {
                     success: true,
@@ -414,6 +455,14 @@ export class CoinTransactionLock {
                     `${description} (-${actualStolen} COINS)`
                 );
                 await supabase.mirrorProfileCoinsFromPaymenter(target.userId, newTargetBal, `${source} target loss`);
+                await supabase.recordEconomyLedger({
+                    userId: target.userId,
+                    kind: `${source}_target_loss`,
+                    amount: -actualStolen,
+                    balanceAfter: newTargetBal,
+                    reason: `${description} (-${actualStolen} COINS)`,
+                    meta: { reference: `${reference}:target` },
+                });
             } catch (deductErr: any) {
                 return {
                     success: false,
@@ -439,6 +488,14 @@ export class CoinTransactionLock {
                             `Heist share from ${target.username} (+${share} COINS)`
                         );
                         await supabase.mirrorProfileCoinsFromPaymenter(memberUser.userId, newMemBal, `${source} team payout`);
+                        await supabase.recordEconomyLedger({
+                            userId: memberUser.userId,
+                            kind: `${source}_team_payout`,
+                            amount: share,
+                            balanceAfter: newMemBal,
+                            reason: `Heist share from ${target.username} (+${share} COINS)`,
+                            meta: { reference: `${reference}:member:${memberDiscordId}` },
+                        });
                     } catch {}
                     teamShares.set(memberDiscordId, share);
                 } else {

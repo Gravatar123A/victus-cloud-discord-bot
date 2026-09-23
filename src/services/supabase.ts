@@ -908,6 +908,46 @@ class SupabaseService {
     }
 
     /**
+     * Best-effort mirror of a Paymenter coin movement into the Supabase
+     * economy_ledger so `/coin history` and `/economy` history show it.
+     * Game rewards (unscramble, GTN, gambling, duels, boss, airdrops, …)
+     * mutate Paymenter directly and never touch this ledger otherwise,
+     * which is why they were invisible in history. Never throws — a
+     * ledger miss must never break the economy flow itself.
+     */
+    async recordEconomyLedger(entry: {
+        userId: string;
+        kind: string;
+        amount: number;
+        balanceAfter?: number | null;
+        reason?: string;
+        counterpartyId?: string | null;
+        meta?: Record<string, unknown>;
+    }): Promise<boolean> {
+        try {
+            if (!entry.userId || !entry.kind || !Number.isFinite(entry.amount) || entry.amount === 0) return false;
+            const { error } = await this.client.from('economy_ledger').insert({
+                user_id: entry.userId,
+                counterparty_id: entry.counterpartyId ?? null,
+                kind: entry.kind.slice(0, 100),
+                currency: 'cp',
+                amount: Math.round(entry.amount),
+                balance_after: entry.balanceAfter == null ? null : Math.round(entry.balanceAfter),
+                reason: entry.reason?.slice(0, 500) ?? null,
+                meta: entry.meta ?? {},
+            });
+            if (error) {
+                logger.warn(`recordEconomyLedger insert failed (${entry.kind}): ${error.message}`);
+                return false;
+            }
+            return true;
+        } catch (e) {
+            logger.warn(`recordEconomyLedger failed (${entry.kind}): ${(e as Error).message}`);
+            return false;
+        }
+    }
+
+    /**
      * Check if user is admin
      */
     async isUserAdmin(userIdOrDiscordId: string): Promise<boolean> {
