@@ -242,7 +242,6 @@ async function resilientFetch(input: any, init?: any): Promise<Response> {
 }
 
 class SupabaseService {
-    private readonly paymenterSyncLocks = new Map<string, Promise<boolean>>();
     private paymenterReconciliationRunning = false;
     private botSettingsCache = new Map<string, { settings: BotSettings | null; expiresAt: number }>();
 
@@ -1113,70 +1112,99 @@ class SupabaseService {
     }
 
     /**
-     * Mirror a user's economy wallet to Paymenter using the supported internal
-     * grant/spend routes. Paymenter deliberately rejects unreferenced COINS
-     * increases through the generic admin credit endpoint.
+     * @deprecated Do NOT set Paymenter to an absolute mirror value — a stale
+     * caller-side balance would silently destroy (or fabricate) real coins.
+     * Paymenter is the source of truth: move money with signed deltas via
+     * {@see mutatePaymenterCoins} (idempotent on source+reference), and mirror
+     * the returned absolute back with {@see mirrorProfileCoinsFromPaymenter}.
+     * Kept only so old call sites fail loudly instead of silently diverging.
      */
-    async setPaymenterCoins(target: { email?: string; user_id?: string }, amount: number): Promise<boolean> {
-        const profile = !target.email && target.user_id ? await this.getUserProfile(target.user_id).catch(() => null) : null;
-        const email = String(target.email || profile?.email || '').trim().toLowerCase();
-        if (!email) {
-            logger.warn('setPaymenterCoins skipped: target has no email');
-            return false;
-        }
+    async setPaymenterCoins(): Promise<boolean> {
+        throw new Error('setPaymenterCoins is disabled: use delta mutations against Paymenter instead.');
+    }
 
-        const previous = this.paymenterSyncLocks.get(email) || Promise.resolve(true);
-        const next = previous.catch(() => false).then(() => this.setPaymenterCoinsNow(email, amount));
-        this.paymenterSyncLocks.set(email, next);
+    /**
+     * Apply a signed wallet delta to Paymenter (the source of truth), record it
+     * in the history ledger, and mirror the authoritative balance back to the
+     * local wallet. Used after Supabase-RPC money moves (transfers, bank,
+     * admin adjusts) so both systems converge. Never throws — returns the new
+     * balance or null when Paymenter is unreachable (a later heal retries).
+     */
+    async syncWalletDelta(input: {
+        userId: string;
+        email: string;
+        delta: number;
+        source: string;
+        reference: string;
+        description: string;
+    }): Promise<number | null> {
+        const { userId, email, delta, source, reference, description } = input;
         try {
-            return await next;
-        } finally {
-            if (this.paymenterSyncLocks.get(email) === next) this.paymenterSyncLocks.delete(email);
+            const rounded = Math.round(delta);
+            if (!rounded) {
+                const live = await this.getPaymenterBalances(email).catch(() => null);
+                if (live?.found) {
+                    await this.mirrorProfileCoinsFromPaymenter(userId, live.coins, `${source} verify`).catch(() => undefined);
+                    return live.coins;
+                }
+                return null;
+            }
+            const balance = await this.mutatePaymenterCoins(email, rounded, source, reference, description);
+            await this.recordEconomyLedger({
+                userId,
+                kind: source,
+                amount: rounded,
+                balanceAfter: balance,
+                reason: description,
+                meta: { reference },
+            }).catch(() => undefined);
+            await this.mirrorProfileCoinsFromPaymenter(userId, balance, `${source} sync`).catch(() => undefined);
+            return balance;
+        } catch (error) {
+            logger.warn(`syncWalletDelta failed (${source} ${delta} for ${email}): ${(error as Error).message}`);
+            return null;
         }
     }
 
-    private async setPaymenterCoinsNow(email: string, amount: number): Promise<boolean> {
-        const desired = Math.max(0, Math.round(amount));
-        const internalCurrent = await this.getPaymenterInternalCoins(email);
-        const live = internalCurrent === null ? await this.getPaymenterBalances(email) : null;
-        const current = Math.max(0, Math.round(internalCurrent ?? (live?.found ? live.coins : 0)));
-        if (current === desired) return true;
-
-        if (internalCurrent === null && live && !live.found) {
-            logger.info(`setPaymenterCoins: no Paymenter account for ${email} — will auto-create via grant`);
-            // Do not skip; mutatePaymenterCoins will auto-create the user on first grant
-        }
-
-        let after: number | null = current;
-        let part = 0;
+    /**
+     * Heal one user's drift between the local wallet (profiles.total_cp) and
+     * Paymenter (source of truth). Local-ahead gaps are granted into Paymenter
+     * (idempotent per day+state, so retries never double-apply); Paymenter-ahead
+     * gaps are mirrored down (they can only come from unmirrored grants).
+     * Never throws.
+     */
+    async healUserCoins(userId: string): Promise<'in-sync' | 'healed' | 'failed'> {
         try {
-            while (after !== desired) {
-                const delta = desired - after;
-                const step = Math.sign(delta) * Math.min(1000, Math.abs(delta));
-                after = await this.mutatePaymenterCoins(
-                    email,
-                    step,
-                    'admin_adjust',
-                    `economy_sync:${email}:${current}:${desired}:part-${part}`,
-                    `Economy wallet synchronization (${current} → ${desired} COINS)`,
-                );
-                part++;
-                if (part > 10000) throw new Error('Paymenter synchronization exceeded the safety limit');
+            const profile = await this.getUserProfile(userId).catch(() => null);
+            const email = String((profile as any)?.email || '').trim().toLowerCase();
+            if (!email) return 'failed';
+            const local = Math.max(0, Math.round(Number((profile as any)?.total_cp ?? 0)));
+            const live = await this.getPaymenterBalances(email).catch(() => null);
+            if (!live?.found) {
+                // No billing account yet — nothing to heal against.
+                return 'in-sync';
             }
+            const remote = Math.max(0, Math.round(live.coins));
+            if (local === remote) return 'in-sync';
+            if (local > remote) {
+                const day = new Date().toISOString().slice(0, 10);
+                const gap = local - remote;
+                const healed = await this.syncWalletDelta({
+                    userId,
+                    email,
+                    delta: gap,
+                    source: 'heal',
+                    reference: `heal:${userId}:${day}:${local}:${remote}`,
+                    description: `Drift repair: local wallet ${local} vs Paymenter ${remote} (+${gap} COINS)`,
+                });
+                return healed === null ? 'failed' : 'healed';
+            }
+            await this.mirrorProfileCoinsFromPaymenter(userId, remote, 'heal mirror').catch(() => undefined);
+            return 'healed';
         } catch (error) {
-            logger.warn(`setPaymenterCoins failed for ${email}: ${(error as Error).message}`);
-            after = null;
+            logger.warn(`healUserCoins failed for ${userId}: ${(error as Error).message}`);
+            return 'failed';
         }
-
-        if (after === desired) return true;
-        const verifiedInternal = await this.getPaymenterInternalCoins(email);
-        const verified = verifiedInternal === null
-            ? await this.getPaymenterBalances(email).catch(() => ({ coins: 0, credits: 0, found: false }))
-            : null;
-        const verifiedCoins = verifiedInternal ?? verified?.coins ?? 0;
-        if ((verifiedInternal !== null || verified?.found) && Math.round(verifiedCoins) === desired) return true;
-        logger.warn(`setPaymenterCoins verification failed for ${email}: expected ${desired}, got ${after ?? verifiedCoins}`);
-        return false;
     }
 
     private paymenterInternalToken(): string {
@@ -1264,7 +1292,12 @@ class SupabaseService {
         if (error) logger.warn(`setProfileCoins failed: ${error.message}`);
     }
 
-    /** Pull all profile wallets into Paymenter in a rate-limited repair pass. */
+    /**
+     * Heal drift between local wallets and Paymenter (source of truth) across
+     * all users. Local-ahead gaps are granted into Paymenter idempotently;
+     * Paymenter-ahead gaps are mirrored down. Converges transient failures
+     * from either side without ever overwriting truth from a stale value.
+     */
     async reconcilePaymenterCoins(reason = 'periodic'): Promise<{ total: number; synced: number; failed: number }> {
         if (this.paymenterReconciliationRunning) return { total: 0, synced: 0, failed: 0 };
         this.paymenterReconciliationRunning = true;
@@ -1289,12 +1322,12 @@ class SupabaseService {
         let failed = 0;
         for (let offset = 0; offset < profiles.length; offset += 3) {
             const batch = profiles.slice(offset, offset + 3);
-            const results = await Promise.all(batch.map((profile) => this.setPaymenterCoins({ email: profile.email }, Number(profile.total_cp ?? 0))));
-            synced += results.filter(Boolean).length;
-            failed += results.filter((result) => !result).length;
+            const results = await Promise.all(batch.map((profile) => this.healUserCoins(profile.id)));
+            synced += results.filter((r) => r !== 'failed').length;
+            failed += results.filter((r) => r === 'failed').length;
             await new Promise((resolve) => setTimeout(resolve, 150));
         }
-        logger.info(`Paymenter reconciliation (${reason}): ${synced}/${profiles.length} wallets synchronized${failed ? `, ${failed} failed` : ''}`);
+        logger.info(`Paymenter reconciliation (${reason}): ${synced}/${profiles.length} wallets in sync${failed ? `, ${failed} failed` : ''}`);
         return { total: profiles.length, synced, failed };
         } finally {
             this.paymenterReconciliationRunning = false;

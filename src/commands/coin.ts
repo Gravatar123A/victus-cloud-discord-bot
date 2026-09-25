@@ -104,9 +104,11 @@ interface UnifiedTx {
 async function fetchAllCoinHistory(userId: string, email: string, periodDays: number): Promise<{ txs: UnifiedTx[]; currentBalance: number }> {
     const since = periodDays >= 9999 ? null : new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000);
 
-    // Fetch profile for current balance
+    // Balance truth lives in Paymenter — display live so history always agrees
+    // with /economy and billing. Fall back to the local mirror when unreachable.
     const profile = await supabase.getUserProfile(userId).catch(() => null);
-    const currentBalance = Number((profile as any)?.total_cp ?? 0);
+    const live = email ? await supabase.getPaymenterBalances(email).catch(() => null) : null;
+    const currentBalance = live?.found ? Number(live.coins) : Number((profile as any)?.total_cp ?? 0);
 
     // Fetch from multiple sources in parallel
     const [economyLedger, cpTxs, panelTxs] = await Promise.all([
