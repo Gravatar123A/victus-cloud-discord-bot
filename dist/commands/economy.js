@@ -24,15 +24,20 @@ async function loadCtx(discordId) {
         return null;
     return { discordId, userId: linked.user_id, profile, isAdmin: Boolean(profile.is_admin) };
 }
-// Mirror a user's economy coins balance (Supabase profiles.total_cp) back to
-// their Paymenter coins, so Paymenter stays the synced source of truth.
-async function pushCoins(userId) {
-    const p = await supabase.getUserProfile(userId).catch(() => null);
-    if (!p?.email)
-        return false;
-    const synced = await supabase.setPaymenterCoins({ email: p.email }, Number(p.total_cp ?? 0));
-    if (!synced)
-        logger.warn(`Paymenter COINS mirror pending for economy user ${userId}`);
+// Sync a known wallet delta (already applied locally by an economy RPC) into
+// Paymenter, the source of truth, then mirror the authoritative balance back.
+// Delta-based + idempotent, so concurrent operations commute and retries never
+// double-apply. Failures are healed later by the reconciler — never throw.
+async function syncDelta(input) {
+    const p = await supabase.getUserProfile(input.userId).catch(() => null);
+    const email = String(p?.email || '').trim().toLowerCase();
+    if (!email) {
+        logger.warn(`syncDelta skipped (${input.source}): no email for economy user ${input.userId}`);
+        return null;
+    }
+    const synced = await supabase.syncWalletDelta({ ...input, email });
+    if (synced === null)
+        logger.warn(`Paymenter COINS sync pending for economy user ${input.userId} (${input.source})`);
     return synced;
 }
 // Notify the recipient of a completed transfer via DM. Fails gracefully if the
@@ -74,12 +79,11 @@ async function buildView(view, discordId, page = 0) {
     if (!ctx)
         return notLinked();
     const { userId, profile, isAdmin } = ctx;
-    // Coins are authoritative in Supabase (profiles.total_cp); Paymenter is
-    // only the billing mirror. Do NOT overwrite total_cp on every view — the
-    // previous sync made the dashboard flip between sources and look "not accurate".
-    // Pull Paymenter strictly for the Credits figure.
+    // Coins truth lives in Paymenter — display the live balance so the bot
+    // always agrees with billing (and the panel, which pulls the same source).
+    // Fall back to the local mirror only when billing is unreachable.
     const bal = await supabase.getPaymenterBalances(profile.email).catch(() => ({ coins: 0, credits: 0, found: false }));
-    const coins = Number(profile.total_cp ?? 0);
+    const coins = bal.found ? Number(bal.coins) : Number(profile.total_cp ?? 0);
     const credits = bal.found ? bal.credits : null;
     switch (view) {
         case 'bank':
@@ -254,8 +258,15 @@ export const economyCommand = {
                 return void (await interaction.update({ components: [resultContainer(discordId, false, 'Not enough banked', `You only have **${fmt(bankCp)} Coins** in your bank to withdraw.`, ctx.isAdmin)], flags: V2 }));
             const r = await supabase.econBank(ctx.userId, op === 'bankdep' ? 'deposit' : 'withdraw', amount);
             const ok = !!r?.ok;
-            if (ok)
-                await pushCoins(ctx.userId);
+            if (ok) {
+                await syncDelta({
+                    userId: ctx.userId,
+                    delta: op === 'bankdep' ? -amount : amount,
+                    source: op === 'bankdep' ? 'bank_deposit' : 'bank_withdraw',
+                    reference: `bank:${op}:${ctx.userId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+                    description: `${op === 'bankdep' ? 'Bank deposit' : 'Bank withdrawal'} of ${amount} Coins`,
+                });
+            }
             const body = ok
                 ? `${op === 'bankdep' ? '📥 Deposited' : '📤 Withdrew'} **${fmt(amount)} Coins**.\n💼 Wallet: **${fmt(r.wallet)} Coins** · 🏦 Bank: **${fmt(r.bank)} Coins**`
                 : (r?.error || 'Something went wrong.');
@@ -282,8 +293,20 @@ export const economyCommand = {
                     const r = await supabase.econTransferCp(ctx.userId, toUserId, amount, reason);
                     if (!r?.ok)
                         return { ok: false, title: 'Transfer failed', body: r?.error || 'Something went wrong.' };
-                    await pushCoins(ctx.userId);
-                    await pushCoins(toUserId);
+                    await syncDelta({
+                        userId: ctx.userId,
+                        delta: -amount,
+                        source: 'transfer_out',
+                        reference: `xfer:${token}:out`,
+                        description: `Transfer ${amount} Coins to ${toDiscordId}${reason ? ` (${reason})` : ''}`,
+                    });
+                    await syncDelta({
+                        userId: toUserId,
+                        delta: amount,
+                        source: 'transfer_in',
+                        reference: `xfer:${token}:in`,
+                        description: `Transfer ${amount} Coins from ${discordId}${reason ? ` (${reason})` : ''}`,
+                    });
                     // Notify the recipient (don't let a closed-DM error break the transfer).
                     const recipient = await supabase.getUserProfile(toUserId).catch(() => null);
                     await dmTransferRecipient({
@@ -394,7 +417,13 @@ export const economyCommand = {
                 const r = await supabase.econAdminAdjustCp(ctx.userId, targetUserId, delta, reason);
                 if (!r?.ok)
                     return { ok: false, title: 'Adjustment failed', body: r?.error || 'Something went wrong.' };
-                await pushCoins(targetUserId);
+                await syncDelta({
+                    userId: targetUserId,
+                    delta,
+                    source: 'admin_adjust',
+                    reference: `adj:${token}`,
+                    description: `Admin adjustment ${delta >= 0 ? '+' : ''}${delta} Coins${reason ? ` (${reason})` : ''}`,
+                });
                 return { ok: true, title: 'Adjustment applied', body: `⚖️ ${delta >= 0 ? 'Added' : 'Removed'} **${fmt(Math.abs(delta))} Coins** ${delta >= 0 ? 'to' : 'from'} <@${targetDiscordId}>.\nTheir new balance: **${fmt(r.balance)} Coins**.` };
             });
             return void (await interaction.update({

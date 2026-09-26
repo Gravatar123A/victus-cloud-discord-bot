@@ -6,6 +6,21 @@ import { enforceWarningThreshold } from '../services/moderation.js';
 import { supabase } from '../services/supabase.js';
 const V2 = ComponentsV2.IS_COMPONENTS_V2;
 const EPH = undefined;
+/**
+ * Discord-native admin check for sensitive warn subcommands.
+ * Works for both slash (ChatInputCommandInteraction) and prefix
+ * (PrefixInteraction) invocations: slash exposes `memberPermissions`,
+ * prefix exposes `member.permissions`.
+ */
+function isDiscordAdmin(interaction) {
+    const memberPerms = interaction?.memberPermissions;
+    if (memberPerms?.has?.(PermissionFlagsBits.Administrator))
+        return true;
+    const member = interaction?.member;
+    if (member?.permissions?.has?.(PermissionFlagsBits.Administrator))
+        return true;
+    return false;
+}
 function renderWarnDashboard(config) {
     const c = ComponentsV2.baseContainer(config.enabled ? ComponentsV2.Accents.success : ComponentsV2.Accents.warning);
     const text = `# ⚠️ Warning System Setup\n` +
@@ -47,7 +62,7 @@ export const warnCommand = {
         .addUserOption(opt => opt.setName('user').setDescription('The user to remove warning from').setRequired(true))
         .addStringOption(opt => opt.setName('id').setDescription('The unique Warning ID').setRequired(true)))
         .addSubcommand(sub => sub.setName('reset')
-        .setDescription('Clear all warnings for a user')
+        .setDescription('Clear all warnings for a user (Admin only)')
         .addUserOption(opt => opt.setName('user').setDescription('The user to clear warnings for').setRequired(true)))
         .addSubcommand(sub => sub.setName('setup')
         .setDescription('Open the warning system setup dashboard')),
@@ -212,6 +227,10 @@ export const warnCommand = {
             }
         }
         else if (sub === 'reset') {
+            if (!isDiscordAdmin(interaction)) {
+                await interaction.reply({ content: '❌ Only administrators can reset warnings.', flags: EPH });
+                return;
+            }
             await warnSettings.resetWarnings(interaction.guildId, targetUser.id);
             if (isPrefix) {
                 const successEmbed = new EmbedBuilder()

@@ -201,7 +201,6 @@ async function resilientFetch(input, init) {
     }
 }
 class SupabaseService {
-    paymenterSyncLocks = new Map();
     paymenterReconciliationRunning = false;
     botSettingsCache = new Map();
     client;
@@ -794,6 +793,39 @@ class SupabaseService {
         return data || [];
     }
     /**
+     * Best-effort mirror of a Paymenter coin movement into the Supabase
+     * economy_ledger so `/coin history` and `/economy` history show it.
+     * Game rewards (unscramble, GTN, gambling, duels, boss, airdrops, …)
+     * mutate Paymenter directly and never touch this ledger otherwise,
+     * which is why they were invisible in history. Never throws — a
+     * ledger miss must never break the economy flow itself.
+     */
+    async recordEconomyLedger(entry) {
+        try {
+            if (!entry.userId || !entry.kind || !Number.isFinite(entry.amount) || entry.amount === 0)
+                return false;
+            const { error } = await this.client.from('economy_ledger').insert({
+                user_id: entry.userId,
+                counterparty_id: entry.counterpartyId ?? null,
+                kind: entry.kind.slice(0, 100),
+                currency: 'cp',
+                amount: Math.round(entry.amount),
+                balance_after: entry.balanceAfter == null ? null : Math.round(entry.balanceAfter),
+                reason: entry.reason?.slice(0, 500) ?? null,
+                meta: entry.meta ?? {},
+            });
+            if (error) {
+                logger.warn(`recordEconomyLedger insert failed (${entry.kind}): ${error.message}`);
+                return false;
+            }
+            return true;
+        }
+        catch (e) {
+            logger.warn(`recordEconomyLedger failed (${entry.kind}): ${e.message}`);
+            return false;
+        }
+    }
+    /**
      * Check if user is admin
      */
     async isUserAdmin(userIdOrDiscordId) {
@@ -956,66 +988,94 @@ class SupabaseService {
         return out({}, true);
     }
     /**
-     * Mirror a user's economy wallet to Paymenter using the supported internal
-     * grant/spend routes. Paymenter deliberately rejects unreferenced COINS
-     * increases through the generic admin credit endpoint.
+     * @deprecated Do NOT set Paymenter to an absolute mirror value — a stale
+     * caller-side balance would silently destroy (or fabricate) real coins.
+     * Paymenter is the source of truth: move money with signed deltas via
+     * {@see mutatePaymenterCoins} (idempotent on source+reference), and mirror
+     * the returned absolute back with {@see mirrorProfileCoinsFromPaymenter}.
+     * Kept only so old call sites fail loudly instead of silently diverging.
      */
-    async setPaymenterCoins(target, amount) {
-        const profile = !target.email && target.user_id ? await this.getUserProfile(target.user_id).catch(() => null) : null;
-        const email = String(target.email || profile?.email || '').trim().toLowerCase();
-        if (!email) {
-            logger.warn('setPaymenterCoins skipped: target has no email');
-            return false;
-        }
-        const previous = this.paymenterSyncLocks.get(email) || Promise.resolve(true);
-        const next = previous.catch(() => false).then(() => this.setPaymenterCoinsNow(email, amount));
-        this.paymenterSyncLocks.set(email, next);
-        try {
-            return await next;
-        }
-        finally {
-            if (this.paymenterSyncLocks.get(email) === next)
-                this.paymenterSyncLocks.delete(email);
-        }
+    async setPaymenterCoins() {
+        throw new Error('setPaymenterCoins is disabled: use delta mutations against Paymenter instead.');
     }
-    async setPaymenterCoinsNow(email, amount) {
-        const desired = Math.max(0, Math.round(amount));
-        const internalCurrent = await this.getPaymenterInternalCoins(email);
-        const live = internalCurrent === null ? await this.getPaymenterBalances(email) : null;
-        const current = Math.max(0, Math.round(internalCurrent ?? (live?.found ? live.coins : 0)));
-        if (current === desired)
-            return true;
-        if (internalCurrent === null && live && !live.found) {
-            logger.info(`setPaymenterCoins: no Paymenter account for ${email} — will auto-create via grant`);
-            // Do not skip; mutatePaymenterCoins will auto-create the user on first grant
-        }
-        let after = current;
-        let part = 0;
+    /**
+     * Apply a signed wallet delta to Paymenter (the source of truth), record it
+     * in the history ledger, and mirror the authoritative balance back to the
+     * local wallet. Used after Supabase-RPC money moves (transfers, bank,
+     * admin adjusts) so both systems converge. Never throws — returns the new
+     * balance or null when Paymenter is unreachable (a later heal retries).
+     */
+    async syncWalletDelta(input) {
+        const { userId, email, delta, source, reference, description } = input;
         try {
-            while (after !== desired) {
-                const delta = desired - after;
-                const step = Math.sign(delta) * Math.min(1000, Math.abs(delta));
-                after = await this.mutatePaymenterCoins(email, step, 'admin_adjust', `economy_sync:${email}:${current}:${desired}:part-${part}`, `Economy wallet synchronization (${current} → ${desired} COINS)`);
-                part++;
-                if (part > 10000)
-                    throw new Error('Paymenter synchronization exceeded the safety limit');
+            const rounded = Math.round(delta);
+            if (!rounded) {
+                const live = await this.getPaymenterBalances(email).catch(() => null);
+                if (live?.found) {
+                    await this.mirrorProfileCoinsFromPaymenter(userId, live.coins, `${source} verify`).catch(() => undefined);
+                    return live.coins;
+                }
+                return null;
             }
+            const balance = await this.mutatePaymenterCoins(email, rounded, source, reference, description);
+            await this.recordEconomyLedger({
+                userId,
+                kind: source,
+                amount: rounded,
+                balanceAfter: balance,
+                reason: description,
+                meta: { reference },
+            }).catch(() => undefined);
+            await this.mirrorProfileCoinsFromPaymenter(userId, balance, `${source} sync`).catch(() => undefined);
+            return balance;
         }
         catch (error) {
-            logger.warn(`setPaymenterCoins failed for ${email}: ${error.message}`);
-            after = null;
+            logger.warn(`syncWalletDelta failed (${source} ${delta} for ${email}): ${error.message}`);
+            return null;
         }
-        if (after === desired)
-            return true;
-        const verifiedInternal = await this.getPaymenterInternalCoins(email);
-        const verified = verifiedInternal === null
-            ? await this.getPaymenterBalances(email).catch(() => ({ coins: 0, credits: 0, found: false }))
-            : null;
-        const verifiedCoins = verifiedInternal ?? verified?.coins ?? 0;
-        if ((verifiedInternal !== null || verified?.found) && Math.round(verifiedCoins) === desired)
-            return true;
-        logger.warn(`setPaymenterCoins verification failed for ${email}: expected ${desired}, got ${after ?? verifiedCoins}`);
-        return false;
+    }
+    /**
+     * Heal one user's drift between the local wallet (profiles.total_cp) and
+     * Paymenter (source of truth). Local-ahead gaps are granted into Paymenter
+     * (idempotent per day+state, so retries never double-apply); Paymenter-ahead
+     * gaps are mirrored down (they can only come from unmirrored grants).
+     * Never throws.
+     */
+    async healUserCoins(userId) {
+        try {
+            const profile = await this.getUserProfile(userId).catch(() => null);
+            const email = String(profile?.email || '').trim().toLowerCase();
+            if (!email)
+                return 'failed';
+            const local = Math.max(0, Math.round(Number(profile?.total_cp ?? 0)));
+            const live = await this.getPaymenterBalances(email).catch(() => null);
+            if (!live?.found) {
+                // No billing account yet — nothing to heal against.
+                return 'in-sync';
+            }
+            const remote = Math.max(0, Math.round(live.coins));
+            if (local === remote)
+                return 'in-sync';
+            if (local > remote) {
+                const day = new Date().toISOString().slice(0, 10);
+                const gap = local - remote;
+                const healed = await this.syncWalletDelta({
+                    userId,
+                    email,
+                    delta: gap,
+                    source: 'heal',
+                    reference: `heal:${userId}:${day}:${local}:${remote}`,
+                    description: `Drift repair: local wallet ${local} vs Paymenter ${remote} (+${gap} COINS)`,
+                });
+                return healed === null ? 'failed' : 'healed';
+            }
+            await this.mirrorProfileCoinsFromPaymenter(userId, remote, 'heal mirror').catch(() => undefined);
+            return 'healed';
+        }
+        catch (error) {
+            logger.warn(`healUserCoins failed for ${userId}: ${error.message}`);
+            return 'failed';
+        }
     }
     paymenterInternalToken() {
         return process.env.VICTUS_INTERNAL_API_TOKEN
@@ -1098,7 +1158,12 @@ class SupabaseService {
         if (error)
             logger.warn(`setProfileCoins failed: ${error.message}`);
     }
-    /** Pull all profile wallets into Paymenter in a rate-limited repair pass. */
+    /**
+     * Heal drift between local wallets and Paymenter (source of truth) across
+     * all users. Local-ahead gaps are granted into Paymenter idempotently;
+     * Paymenter-ahead gaps are mirrored down. Converges transient failures
+     * from either side without ever overwriting truth from a stale value.
+     */
     async reconcilePaymenterCoins(reason = 'periodic') {
         if (this.paymenterReconciliationRunning)
             return { total: 0, synced: 0, failed: 0 };
@@ -1124,12 +1189,12 @@ class SupabaseService {
             let failed = 0;
             for (let offset = 0; offset < profiles.length; offset += 3) {
                 const batch = profiles.slice(offset, offset + 3);
-                const results = await Promise.all(batch.map((profile) => this.setPaymenterCoins({ email: profile.email }, Number(profile.total_cp ?? 0))));
-                synced += results.filter(Boolean).length;
-                failed += results.filter((result) => !result).length;
+                const results = await Promise.all(batch.map((profile) => this.healUserCoins(profile.id)));
+                synced += results.filter((r) => r !== 'failed').length;
+                failed += results.filter((r) => r === 'failed').length;
                 await new Promise((resolve) => setTimeout(resolve, 150));
             }
-            logger.info(`Paymenter reconciliation (${reason}): ${synced}/${profiles.length} wallets synchronized${failed ? `, ${failed} failed` : ''}`);
+            logger.info(`Paymenter reconciliation (${reason}): ${synced}/${profiles.length} wallets in sync${failed ? `, ${failed} failed` : ''}`);
             return { total: profiles.length, synced, failed };
         }
         finally {

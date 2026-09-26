@@ -253,9 +253,10 @@ export const readyEvent = {
         await syncAllRankRoles(client);
         restoreVoiceXpSessions(client);
         startLevelUpWorker(client);
-        // Keep Paymenter aligned with the Discord economy wallet. The initial
-        // pass repairs historical missed rewards; later passes recover from
-        // transient billing/API failures without blocking Discord commands.
+        // Heal drift between local wallets and Paymenter (source of truth).
+        // Local-ahead gaps are granted into Paymenter idempotently;
+        // Paymenter-ahead gaps are mirrored down. Converges transient
+        // failures from either side without ever overwriting truth.
         const reconcileCoins = (reason) => {
             if (!supabase.isAvailable())
                 return;

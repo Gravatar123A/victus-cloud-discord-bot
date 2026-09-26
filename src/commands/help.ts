@@ -31,7 +31,7 @@ function getSelectMenu(currentVal?: string) {
         .setPlaceholder('Explore command categories...')
         .addOptions([
             { label: 'Overview', description: 'Main landing page & information', value: 'main' },
-            { label: 'Viral RPG & Hosting', description: 'Minecraft RPG, Gambling, Bosses & Utilities', value: 'viral_rpg' },
+            { label: 'Viral RPG & Hosting', description: 'Minecraft RPG, Bosses & Utilities', value: 'viral_rpg' },
             { label: 'Administration', description: 'Bot configuration, role links & prefixes', value: 'administration' },
             { label: 'Moderation', description: 'Audit logs & suggestion moderations', value: 'moderation' },
             { label: 'Music System', description: 'Compact player & audio controls', value: 'music' },
@@ -98,7 +98,6 @@ export const helpCommand: Command = {
             `Welcome, **${interaction.user.username}**. Synced with the main console, this panel grants access to all operational commands.\n\n` +
             `### 🎮 Featured Fun & RPG Commands (100% Real COINS)\n` +
             `› ⛏️ **Mining & Fishing:** \`/mine\` · \`/fish\` · \`/rpg inv\` · \`/rpg sell\` · \`/rpg craft\`\n` +
-            `› 🎲 **Atomic Gambling:** \`/coinflip <amount>\` · \`/slots <amount>\` · \`/heist @user <amount>\`\n` +
             `› 🐉 **World Bosses & Mobs:** \`/boss\` · \`/attack\` · \`/tame\` · \`/zoo\` · \`/battle @user <wager>\`\n` +
             `› ⚡ **Cross-Server Leveling:** \`/rank\` · \`/level\` · \`/leaderboard\` *(+100 COINS / level up)*\n` +
             `› 🛡️ **Minecraft Server Tools:** \`/server\` · \`/mc-skin\` · \`/mc-status\` · \`/mc-whitelist\` · \`/backup-world\`\n` +
@@ -143,7 +142,6 @@ export const helpCommand: Command = {
                 desc = `Welcome, **${interaction.user.username}**. Synced with the main console, this panel grants access to all operational commands.\n\n` +
                     `### 🎮 Featured Fun & RPG Commands (100% Real COINS)\n` +
                     `› ⛏️ **Mining & Fishing:** \`/mine\` · \`/fish\` · \`/rpg inv\` · \`/rpg sell\` · \`/rpg craft\`\n` +
-                    `› 🎲 **Atomic Gambling:** \`/coinflip <amount>\` · \`/slots <amount>\` · \`/heist @user <amount>\`\n` +
                     `› 🐉 **World Bosses & Mobs:** \`/boss\` · \`/attack\` · \`/tame\` · \`/zoo\` · \`/battle @user <wager>\`\n` +
                     `› ⚡ **Cross-Server Leveling:** \`/rank\` · \`/level\` · \`/leaderboard\` *(+100 COINS / level up)*\n` +
                     `› 🛡️ **Minecraft Server Tools:** \`/server\` · \`/mc-skin\` · \`/mc-status\` · \`/mc-whitelist\` · \`/backup-world\`\n` +
@@ -164,12 +162,6 @@ export const helpCommand: Command = {
                     `› \`/rpg inv\` • View pickaxe & fishing rod gear tiers and material stocks.\n` +
                     `› \`/rpg sell\` • Exchange mined ores & fish for real Victus Cloud COINS!\n` +
                     `› \`/rpg craft\` • Upgrade to Stone, Iron, Diamond, or Netherite equipment.\n\n` +
-                    `### 🎲 High-Stakes Gambling (Real COINS)\n` +
-                    `› \`/coinflip <amount> [choice]\` • Double-or-nothing coinflip (alias \`!cf\`).\n` +
-                    `› \`/rockpaperscissors <bet> [choice] [opponent]\` • Play RPS solo against bot or duel another player 1v1 (alias \`!rps\`, \`/rps-duel\`).\n` +
-                    `› \`/blackjack <bet>\` • High-stakes Blackjack with interactive cards (alias \`!bj\`).\n` +
-                    `› \`/slots <amount>\` • 3-reel Minecraft slots with Wither Skull jackpot.\n` +
-                    `› \`/heist @user <amount>\` • Organize 5-player squad vault heists.\n\n` +
                     `### 🐉 World Boss Raids & Mob Gacha\n` +
                     `› \`/boss\` • View active cross-server Ender Dragon/Wither raid HP.\n` +
                     `› \`/attack [melee/bow/magic]\` • Deal damage to split the 1,000 COINS pool.\n` +
@@ -260,19 +252,13 @@ export const helpCommand: Command = {
 
             case 'fun':
                 title = 'Fun & Entertainment Hub';
-                desc = `Full suite of high-engagement mini-games, RPG systems, and betting — all backed by real COINS!\n\n` +
+                desc = `Full suite of high-engagement mini-games and RPG systems — all backed by real COINS!\n\n` +
                     `### ⛏️ Minecraft RPG Engine\n` +
                     `› \`/mine\` • Mine underground stone, coal, iron, gold, diamond, netherite.\n` +
                     `› \`/fish\` • Cast line into rivers, oceans, and deep trenches.\n` +
                     `› \`/rpg inv\` • View equipment tier, durability, and raw materials.\n` +
                     `› \`/rpg sell\` • Liquidate gathered resources into real Victus COINS.\n` +
                     `› \`/rpg craft\` • Forge higher tier pickaxes and rods.\n\n` +
-                    `### 🎲 COINS Gambling & Heists\n` +
-                    `› \`/coinflip <amount> [choice]\` • Fast double-or-nothing wagers (alias \`!cf\`).\n` +
-                    `› \`/rockpaperscissors <bet> [choice] [opponent]\` • Play RPS solo against bot or duel another player 1v1 (alias \`!rps\`, \`/rps-duel\`).\n` +
-                    `› \`/blackjack <bet>\` • High-stakes Blackjack with interactive cards (alias \`!bj\`).\n` +
-                    `› \`/slots <amount>\` • 3-reel spinning slots with 50x Wither Jackpot.\n` +
-                    `› \`/heist @user <amount>\` • 5-player co-op bank heist minigame.\n\n` +
                     `### 🧩 Word & Chat Games\n` +
                     `› \`/unscramble\` • Unscramble words for rewards & auto-events (alias \`!scramble\`).\n` +
                     `› \`/gtn\` • Guess The Number event with auto-hinting & coins (alias \`!gtn\`).\n` +

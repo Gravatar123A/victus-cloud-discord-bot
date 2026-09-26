@@ -95,7 +95,7 @@ Products & Services:
 - Web Hosting — High-speed NVMe, free SSL certificates, automated backups, 99.9% uptime SLA, cPanel / DirectAdmin.
 - Discord Bot & Code Hosting — 24/7 reliable hosting for Node.js, Python, Java, Go bots with automatic restart on crash and live console.
 - Victus Drive — Cloud file, image, and media hosting with fast global delivery.
-- Victus Coins Economy — 100% real canonical currency earned in Discord through chat activity, level-ups (+100 Coins/level), Guess The Number (/gtn), Word Unscramble (/unscramble), RPG mining & fishing (/mine, /fish), Supply AirDrops (/claim), and gambling (/coinflip, /rockpaperscissors, /blackjack, /slots). Coins can be redeemed for free server upgrades (extra RAM/CPU) or service credits on https://victuscloud.com.
+- Victus Coins Economy — 100% real canonical currency earned in Discord through chat activity, level-ups (+100 Coins/level), Guess The Number (/gtn), Word Unscramble (/unscramble), RPG mining & fishing (/mine, /fish), and Supply AirDrops (/claim). Coins can be redeemed for free server upgrades (extra RAM/CPU) or service credits on https://victuscloud.com.
 
 Canonical Directory (Pick the EXACT right URL):
 - Free Minecraft / Victus Free -> https://victuscloud.com/free
