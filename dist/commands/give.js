@@ -9,17 +9,20 @@ function parseDiscordId(raw) {
 }
 async function resolveTarget(interaction, rawTarget) {
     const cleaned = rawTarget.trim();
-    // Email case: contains @
-    if (cleaned.includes('@')) {
+    // Mentions (<@123>, <@!123>) and raw snowflakes contain an "@" for
+    // mentions, so they must be detected BEFORE the email branch — otherwise
+    // every mention was rejected as an invalid email address.
+    const mentionMatch = cleaned.match(/^<@!?(\d{15,20})>$/);
+    let discordId = mentionMatch ? mentionMatch[1] : parseDiscordId(cleaned);
+    const looksLikeEmail = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(cleaned);
+    // Email case: only when it is actually an email (never a mention/ID)
+    if (looksLikeEmail && !discordId) {
         const email = cleaned.toLowerCase();
-        // Basic email validation
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-            return { error: `Invalid email format: \`${cleaned}\`` };
-        }
         return { email, label: email };
     }
-    // Try to extract Discord ID from mention or raw ID
-    let discordId = parseDiscordId(cleaned);
+    if (cleaned.includes('@') && !discordId) {
+        return { error: `Invalid email format: \`${cleaned}\`` };
+    }
     // If not a mention/ID, try to find by username in guild
     if (!discordId && interaction.guild) {
         const usernameLower = cleaned.toLowerCase().replace(/^@/, '');

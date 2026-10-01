@@ -26,6 +26,7 @@ import { prefixCommand, setprefixCommand } from './prefix.js';
 import { embedCommand, embedListActionButtons, embedLinksRouter } from './embed.js';
 import { suggestCommand, suggestionCommand } from './suggest.js';
 import { giveawayCommand } from './giveaway.js';
+import { leaveCommand } from './leave.js';
 import { customcmdCommand } from './customcmd.js';
 import { welcomeCommand } from './welcome.js';
 import { staffAppCommand } from './staff-app.js';
@@ -124,6 +125,7 @@ const allCommands = [
     suggestCommand,
     suggestionCommand,
     giveawayCommand,
+    leaveCommand,
     customcmdCommand,
     welcomeCommand,
     staffAppCommand,

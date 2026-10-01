@@ -298,14 +298,14 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
 
         // 1. Canvas Background
         const bgGrad = ctx.createLinearGradient(0, 0, width, height);
-        bgGrad.addColorStop(0, '#090b14');
-        bgGrad.addColorStop(0.5, '#0e1224');
-        bgGrad.addColorStop(1, '#05060d');
+        bgGrad.addColorStop(0, '#0a0a0b');
+        bgGrad.addColorStop(0.5, '#141416');
+        bgGrad.addColorStop(1, '#08080a');
         ctx.fillStyle = bgGrad;
         ctx.fillRect(0, 0, width, height);
 
         // Tech grid lines
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
         ctx.lineWidth = 1;
         for (let x = 0; x < width; x += 40) {
             ctx.beginPath();
@@ -321,15 +321,15 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
         }
 
         // Ambient glows
-        const avatarGlow = ctx.createRadialGradient(140, 130, 10, 140, 130, 220);
-        avatarGlow.addColorStop(0, 'rgba(0, 210, 255, 0.22)');
-        avatarGlow.addColorStop(1, 'rgba(0, 210, 255, 0)');
+        const avatarGlow = ctx.createRadialGradient(150, 140, 10, 150, 140, 240);
+        avatarGlow.addColorStop(0, 'rgba(255, 255, 255, 0.10)');
+        avatarGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
         ctx.fillStyle = avatarGlow;
         ctx.fillRect(0, 0, width, height);
 
-        const rightGlow = ctx.createRadialGradient(850, 150, 10, 850, 150, 250);
-        rightGlow.addColorStop(0, 'rgba(245, 158, 11, 0.18)');
-        rightGlow.addColorStop(1, 'rgba(245, 158, 11, 0)');
+        const rightGlow = ctx.createRadialGradient(850, 120, 10, 850, 120, 260);
+        rightGlow.addColorStop(0, 'rgba(255, 255, 255, 0.06)');
+        rightGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
         ctx.fillStyle = rightGlow;
         ctx.fillRect(0, 0, width, height);
 
@@ -339,16 +339,16 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
         const cardW = width - 40;
         const cardH = height - 40;
         roundRect(ctx, cardX, cardY, cardW, cardH, 24);
-        ctx.fillStyle = 'rgba(13, 16, 32, 0.88)';
+        ctx.fillStyle = 'rgba(18, 18, 20, 0.96)';
         ctx.fill();
 
         const borderGrad = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
-        borderGrad.addColorStop(0, 'rgba(0, 210, 255, 0.7)');
-        borderGrad.addColorStop(0.3, 'rgba(255, 255, 255, 0.12)');
-        borderGrad.addColorStop(0.7, 'rgba(245, 158, 11, 0.35)');
-        borderGrad.addColorStop(1, 'rgba(0, 210, 255, 0.25)');
+        borderGrad.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
+        borderGrad.addColorStop(0.35, 'rgba(255, 255, 255, 0.10)');
+        borderGrad.addColorStop(0.75, 'rgba(255, 255, 255, 0.22)');
+        borderGrad.addColorStop(1, 'rgba(255, 255, 255, 0.5)');
         ctx.strokeStyle = borderGrad;
-        ctx.lineWidth = 1.8;
+        ctx.lineWidth = 1.6;
         ctx.stroke();
 
         // 3. Avatar Section
@@ -359,10 +359,10 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
         ctx.save();
         ctx.beginPath();
         ctx.arc(avX + avSize / 2, avY + avSize / 2, avSize / 2 + 5, 0, Math.PI * 2);
-        ctx.strokeStyle = tierColor;
-        ctx.lineWidth = 3.5;
-        ctx.shadowColor = tierColor;
-        ctx.shadowBlur = 16;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+        ctx.shadowBlur = 12;
         ctx.stroke();
         ctx.restore();
 
@@ -377,18 +377,18 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
                 const img = await loadImage(opts.avatarUrl);
                 ctx.drawImage(img, avX, avY, avSize, avSize);
             } catch {
-                ctx.fillStyle = '#1e2438';
+                ctx.fillStyle = '#1c1c1f';
                 ctx.fillRect(avX, avY, avSize, avSize);
-                ctx.fillStyle = '#38bdf8';
+                ctx.fillStyle = '#f4f4f5';
                 ctx.font = 'bold 44px GoogleSans, sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(opts.username.slice(0, 2).toUpperCase(), avX + avSize / 2, avY + avSize / 2);
             }
         } else {
-            ctx.fillStyle = '#1e2438';
+            ctx.fillStyle = '#1c1c1f';
             ctx.fillRect(avX, avY, avSize, avSize);
-            ctx.fillStyle = '#38bdf8';
+            ctx.fillStyle = '#f4f4f5';
             ctx.font = 'bold 44px GoogleSans, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -405,18 +405,18 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
         ctx.save();
         roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 14);
         const badgeGrad = ctx.createLinearGradient(badgeX, badgeY, badgeX + badgeW, badgeY);
-        badgeGrad.addColorStop(0, '#00d2ff');
-        badgeGrad.addColorStop(1, '#2563eb');
+        badgeGrad.addColorStop(0, '#ffffff');
+        badgeGrad.addColorStop(1, '#d4d4d8');
         ctx.fillStyle = badgeGrad;
-        ctx.shadowColor = 'rgba(0, 210, 255, 0.8)';
-        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+        ctx.shadowBlur = 8;
         ctx.fill();
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.2;
         ctx.stroke();
 
         ctx.font = 'bold 14px GoogleSans, sans-serif';
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = '#0a0a0b';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(`LVL ${opts.level}`, badgeX + badgeW / 2, badgeY + badgeH / 2);
@@ -432,21 +432,21 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
         ctx.font = 'bold 11px GoogleSans, sans-serif';
         const tagW = ctx.measureText(tagText).width + 30;
         roundRect(ctx, contentX, 46, tagW, 24, 12);
-        ctx.fillStyle = 'rgba(0, 210, 255, 0.12)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(0, 210, 255, 0.4)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
         ctx.lineWidth = 1;
         ctx.stroke();
 
         ctx.beginPath();
         ctx.arc(contentX + 13, 58, 3.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#38bdf8';
-        ctx.shadowColor = '#38bdf8';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = '#ffffff';
         ctx.shadowBlur = 6;
         ctx.fill();
         ctx.shadowBlur = 0;
 
-        ctx.fillStyle = '#38bdf8';
+        ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillText(tagText, contentX + 22, 58);
@@ -464,7 +464,7 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
 
         // Subtitle
         ctx.font = '15px GoogleSans, sans-serif';
-        ctx.fillStyle = '#94a3b8';
+        ctx.fillStyle = '#a1a1aa';
         const subtitle = isLevelUp
             ? `Advanced to Level ${opts.level}! Cross-guild rewards deposited.`
             : `Synchronized Community Profile · Multi-Guild Rail`;
@@ -478,23 +478,23 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
 
         ctx.save();
         roundRect(ctx, rightBoxX, rightBoxY, rightBoxW, rightBoxH, 18);
-        ctx.fillStyle = 'rgba(20, 24, 44, 0.8)';
+        ctx.fillStyle = 'rgba(28, 28, 31, 0.9)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
         ctx.lineWidth = 1.2;
         ctx.stroke();
 
         ctx.font = 'bold 11px GoogleSans, sans-serif';
-        ctx.fillStyle = '#64748b';
+        ctx.fillStyle = '#71717a';
         ctx.fillText('CURRENT RANK', rightBoxX + 16, rightBoxY + 26);
 
         ctx.font = 'bold 22px GoogleSans, sans-serif';
-        ctx.fillStyle = tierColor;
-        ctx.shadowColor = tierColor;
+        ctx.fillStyle = '#fafafa';
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.25)';
         ctx.shadowBlur = 8;
         ctx.fillText(opts.tierName.toUpperCase(), rightBoxX + 16, rightBoxY + 58);
 
-        drawShieldIcon(ctx, rightBoxX + rightBoxW - 32, rightBoxY + rightBoxH / 2, 36, tierColor);
+        drawVectorStar(ctx, rightBoxX + rightBoxW - 34, rightBoxY + rightBoxH / 2, 5, 18, 8, '#ffffff');
         ctx.restore();
 
         // 5. Progress Bar Section
@@ -505,36 +505,36 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
         const clampedProg = Math.max(0, Math.min(100, Math.round(opts.progress)));
 
         ctx.font = 'bold 13px GoogleSans, sans-serif';
-        ctx.fillStyle = '#e2e8f0';
+        ctx.fillStyle = '#e4e4e7';
         ctx.fillText(`TOTAL XP: ${opts.totalXp.toLocaleString()} XP`, barX, barY - 8);
 
         ctx.textAlign = 'right';
-        ctx.fillStyle = '#38bdf8';
+        ctx.fillStyle = '#ffffff';
         ctx.fillText(`${opts.cpToNext.toLocaleString()} XP to Next Level (${clampedProg}%)`, barX + barW, barY - 8);
         ctx.textAlign = 'left';
 
         ctx.save();
         roundRect(ctx, barX, barY, barW, barH, 11);
-        ctx.fillStyle = '#0f1322';
+        ctx.fillStyle = '#26262a';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
         ctx.lineWidth = 1;
         ctx.stroke();
 
         const fillW = Math.max(16, (barW * clampedProg) / 100);
         roundRect(ctx, barX, barY, fillW, barH, 11);
         const fillGrad = ctx.createLinearGradient(barX, 0, barX + fillW, 0);
-        fillGrad.addColorStop(0, '#00d2ff');
-        fillGrad.addColorStop(0.7, '#3b82f6');
-        fillGrad.addColorStop(1, '#6366f1');
+        fillGrad.addColorStop(0, '#ffffff');
+        fillGrad.addColorStop(0.6, '#e4e4e7');
+        fillGrad.addColorStop(1, '#a1a1aa');
         ctx.fillStyle = fillGrad;
-        ctx.shadowColor = 'rgba(0, 210, 255, 0.7)';
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.45)';
         ctx.shadowBlur = 8;
         ctx.fill();
 
         ctx.beginPath();
         ctx.rect(barX + 6, barY + 2, fillW - 12, barH / 3);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
         ctx.fill();
         ctx.restore();
 
@@ -546,53 +546,73 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
         function drawStatTile(tx: number, ty: number, tw: number, th: number, title: string, value: string, sub: string, iconType: 'coin' | 'gem' | 'shield', accentColor: string) {
             ctx.save();
             roundRect(ctx, tx, ty, tw, th, 18);
-            ctx.fillStyle = 'rgba(18, 22, 40, 0.75)';
+            ctx.fillStyle = 'rgba(26, 26, 29, 0.9)';
             ctx.fill();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
             ctx.lineWidth = 1.2;
             ctx.stroke();
 
             ctx.beginPath();
             ctx.moveTo(tx + 20, ty);
             ctx.lineTo(tx + tw - 20, ty);
-            ctx.strokeStyle = accentColor;
+            ctx.strokeStyle = '#ffffff';
             ctx.lineWidth = 2.5;
-            ctx.shadowColor = accentColor;
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.4)';
             ctx.shadowBlur = 8;
             ctx.stroke();
             ctx.shadowBlur = 0;
 
             ctx.font = 'bold 11px GoogleSans, sans-serif';
-            ctx.fillStyle = '#64748b';
+            ctx.fillStyle = '#71717a';
             ctx.textAlign = 'left';
             ctx.fillText(title, tx + 18, ty + 28);
 
+            // Monochrome icon glyph
+            const ix = tx + 36;
+            const iy = ty + 70;
+            ctx.save();
+            ctx.strokeStyle = '#ffffff';
+            ctx.fillStyle = '#ffffff';
+            ctx.lineWidth = 1.7;
             if (iconType === 'coin') {
-                drawCoinIcon(ctx, tx + 34, ty + 68, 18);
-                ctx.font = 'bold 22px GoogleSans, sans-serif';
-                ctx.fillStyle = '#fbbf24';
-                ctx.shadowColor = 'rgba(251, 191, 36, 0.5)';
-                ctx.shadowBlur = 8;
-                ctx.fillText(value, tx + 62, ty + 75);
+                ctx.beginPath();
+                ctx.arc(ix, iy, 13, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.font = 'bold 15px GoogleSans, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('V', ix, iy + 1);
+                ctx.textAlign = 'left';
             } else if (iconType === 'gem') {
-                drawGemIcon(ctx, tx + 34, ty + 68, 26);
-                ctx.font = 'bold 22px GoogleSans, sans-serif';
-                ctx.fillStyle = '#38bdf8';
-                ctx.shadowColor = 'rgba(56, 189, 248, 0.5)';
-                ctx.shadowBlur = 8;
-                ctx.fillText(value, tx + 62, ty + 75);
+                ctx.beginPath();
+                ctx.moveTo(ix, iy - 14);
+                ctx.lineTo(ix + 12, iy);
+                ctx.lineTo(ix, iy + 14);
+                ctx.lineTo(ix - 12, iy);
+                ctx.closePath();
+                ctx.stroke();
             } else {
-                drawShieldIcon(ctx, tx + 34, ty + 68, 30, accentColor);
-                ctx.font = 'bold 22px GoogleSans, sans-serif';
-                ctx.fillStyle = accentColor;
-                ctx.shadowColor = accentColor;
-                ctx.shadowBlur = 8;
-                ctx.fillText(value, tx + 62, ty + 75);
+                ctx.beginPath();
+                ctx.moveTo(ix, iy - 14);
+                ctx.lineTo(ix + 12, iy - 8);
+                ctx.lineTo(ix + 10, iy + 8);
+                ctx.lineTo(ix, iy + 14);
+                ctx.lineTo(ix - 10, iy + 8);
+                ctx.lineTo(ix - 12, iy - 8);
+                ctx.closePath();
+                ctx.stroke();
             }
+            ctx.restore();
+
+            ctx.font = 'bold 22px GoogleSans, sans-serif';
+            ctx.fillStyle = '#fafafa';
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.35)';
+            ctx.shadowBlur = 6;
+            ctx.fillText(value, tx + 62, ty + 75);
 
             ctx.shadowBlur = 0;
             ctx.font = '13px GoogleSans, sans-serif';
-            ctx.fillStyle = '#94a3b8';
+            ctx.fillStyle = '#a1a1aa';
             ctx.fillText(sub, tx + 18, ty + 115);
             ctx.restore();
         }
@@ -608,13 +628,13 @@ export async function generateLevelCardAttachment(opts: LevelCardOptions): Promi
             ? `+${opts.xpReward ?? 200} XP`
             : '+25 XP / Msg';
 
-        drawStatTile(t1X, tileY, tileW, tileH, 'RANK STATUS', opts.tierName, 'Multi-Guild Synced', 'shield', '#00d2ff');
-        drawStatTile(t2X, tileY, tileW, tileH, isLevelUp ? 'LEVEL REWARD' : 'WALLET BALANCE', coinsVal, 'Free 24/7 Server Credit', 'coin', '#f59e0b');
-        drawStatTile(t3X, tileY, tileW, tileH, isLevelUp ? 'BONUS XP' : 'CHAT MULTIPLIER', xpVal, 'Auto-applied rewards', 'gem', '#a855f7');
+        drawStatTile(t1X, tileY, tileW, tileH, 'RANK STATUS', opts.tierName, 'Multi-Guild Synced', 'shield', '#ffffff');
+        drawStatTile(t2X, tileY, tileW, tileH, isLevelUp ? 'LEVEL REWARD' : 'WALLET BALANCE', coinsVal, 'Free 24/7 Server Credit', 'coin', '#ffffff');
+        drawStatTile(t3X, tileY, tileW, tileH, isLevelUp ? 'BONUS XP' : 'CHAT MULTIPLIER', xpVal, 'Auto-applied rewards', 'gem', '#ffffff');
 
         // Footer watermark
         ctx.font = '12px GoogleSans, sans-serif';
-        ctx.fillStyle = '#475569';
+        ctx.fillStyle = '#52525b';
         ctx.textAlign = 'center';
         ctx.fillText('VICTUS CLOUD  •  Next-Gen Game & Cloud Server Hosting  •  victuscloud.com', width / 2, height - 28);
 

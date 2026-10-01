@@ -205,6 +205,13 @@ export const staffAppCommand = {
         });
     },
     async handleButton(interaction) {
+        // Fast path: skip the settings load for interactions we don't own so the
+        // global button dispatcher stays fast for every other command.
+        if (!interaction.customId.startsWith('staff_app_wiz:') &&
+            !interaction.customId.startsWith('staff_app:') &&
+            !interaction.customId.startsWith('staff_app_action:')) {
+            return;
+        }
         const config = await staffAppSettings.get(interaction.guildId);
         // Wizard routes
         if (interaction.customId.startsWith('staff_app_wiz:')) {

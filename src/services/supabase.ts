@@ -2344,13 +2344,33 @@ class SupabaseService {
         email: string;
         priority?: string;
         custom_answers?: Record<string, string>;
+        ticket_number?: number;
     }): Promise<any | null> {
-        const { data, error } = await this.client
+        // Always persist an explicit ticket number. Relying on the table's
+        // default/sequence let every ticket come back as the same number
+        // (e.g. stuck at 155), so the bot now computes and stores it itself.
+        let ticketNumber = ticketData.ticket_number;
+        if (!ticketNumber) {
+            ticketNumber = await this.getNextTicketNumber(ticketData.guild_id);
+        }
+
+        let response = await this.client
             .from('tickets')
-            .insert(ticketData)
+            .insert({ ...ticketData, ticket_number: ticketNumber })
             .select('*, category:ticket_categories(*)')
             .single();
 
+        // Defensive fallback: if the schema refuses an explicit value (e.g. an
+        // identity/generated column) still create the ticket rather than fail.
+        if (response.error && !response.data) {
+            response = await this.client
+                .from('tickets')
+                .insert(ticketData)
+                .select('*, category:ticket_categories(*)')
+                .single();
+        }
+
+        const { data, error } = response;
         if (error) {
             logger.error('Failed to create ticket:', error);
             return null;
@@ -2464,14 +2484,15 @@ class SupabaseService {
             .from('tickets')
             .select('ticket_number')
             .eq('guild_id', guildId)
+            .not('ticket_number', 'is', null)
             .order('ticket_number', { ascending: false })
             .limit(1)
-            .single();
+            .maybeSingle();
 
         if (error || !data) {
             return 1;
         }
-        return (data.ticket_number || 0) + 1;
+        return (Number(data.ticket_number) || 0) + 1;
     }
 
     // ============================================

@@ -934,6 +934,7 @@ async function handleConfirmTicket(interaction) {
         email: pending.email,
         priority: pending.priorityDefault,
         custom_answers: pending.customAnswers || {},
+        ticket_number: ticketNumber,
     });
     if (!ticket) {
         await ticketChannel.delete().catch(() => { });

@@ -677,6 +677,9 @@ export const reactRolesCommand: Command = {
 
     async handleButton(interaction: ButtonInteraction) {
         if (!interaction.guild) return;
+        // Fast path: ignore interactions that don't belong to this command so the
+        // global button dispatcher doesn't hit the database for every other button.
+        if (!interaction.customId.startsWith('rr_')) return;
         const guildId = interaction.guild.id;
         const config = await reactRolesSettings.get(guildId);
 

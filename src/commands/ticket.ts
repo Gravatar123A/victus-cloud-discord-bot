@@ -1209,6 +1209,7 @@ async function handleConfirmTicket(interaction: any) {
         email: pending.email,
         priority: pending.priorityDefault,
         custom_answers: pending.customAnswers || {},
+        ticket_number: ticketNumber,
     });
 
     if (!ticket) {

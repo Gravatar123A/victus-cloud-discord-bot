@@ -481,35 +481,43 @@ export const giveawayCommand: Command = {
             }
         }
         else if (interaction.customId.startsWith('giveaway:enter:')) {
+            // Acknowledge immediately. The eligibility checks below hit the
+            // database and Discord's invite API; without an early defer the
+            // interaction token expires first and members see "This
+            // interaction failed" instead of being entered.
+            await interaction.deferReply({ flags: EPH }).catch(() => {});
+
             const giveawayId = interaction.customId.split(':')[2];
             const giveaway = await supabase.getGiveaway(giveawayId);
             if (!giveaway || giveaway.status === 'ended') {
-                await interaction.reply({ content: '❌ This giveaway has ended.', flags: EPH });
+                await interaction.editReply({ content: '❌ This giveaway has ended.' });
                 return;
             }
             if (giveaway.status === 'paused') {
-                await interaction.reply({ content: '⏸️ This giveaway is currently paused.', flags: EPH });
+                await interaction.editReply({ content: '⏸️ This giveaway is currently paused.' });
                 return;
             }
 
             const participants = giveaway.participants || [];
             if (participants.includes(interaction.user.id)) {
-                await interaction.reply({ content: '🙋 You have already entered this giveaway!', flags: EPH });
+                await interaction.editReply({ content: '🙋 You have already entered this giveaway!' });
                 return;
             }
 
             const member = interaction.member as GuildMember | null;
-            if (!member) return;
+            if (!member) {
+                await interaction.editReply({ content: '❌ Could not verify your membership in this server.' });
+                return;
+            }
 
             // 0. Account Linking Check (Mandatory for all entrants)
             const linked = await supabase.getLinkedAccount(interaction.user.id).catch(() => null);
             if (!linked) {
-                await interaction.reply({
+                await interaction.editReply({
                     components: [ComponentsV2.errorContainer(
                         'Account Not Linked', 
                         'You must link your Discord account to Victus Cloud to participate in giveaways. Use the link panel or `/account` to link your profile.'
                     )],
-                    flags: V2 | EPH
                 });
                 return;
             }
@@ -519,9 +527,8 @@ export const giveawayCommand: Command = {
             if (rId) {
                 const hasRole = member.roles.cache.has(rId);
                 if (!hasRole) {
-                    await interaction.reply({
+                    await interaction.editReply({
                         components: [ComponentsV2.errorContainer('Entry Blocked', `You do not have the required role: <@&${rId}>.`)],
-                        flags: V2 | EPH
                     });
                     return;
                 }
@@ -537,9 +544,8 @@ export const giveawayCommand: Command = {
                 }
 
                 if (level < lvl) {
-                    await interaction.reply({
+                    await interaction.editReply({
                         components: [ComponentsV2.errorContainer('Entry Blocked', `Your Level is too low. Required: **Level ${lvl}** (You: **Level ${level}**). Link account and check levels via \`/account\`.`)],
-                        flags: V2 | EPH
                     });
                     return;
                 }
@@ -553,9 +559,8 @@ export const giveawayCommand: Command = {
                 const uses = userInvites ? userInvites.reduce((sum, i) => sum + (i.uses || 0), 0) : 0;
 
                 if (uses < invs) {
-                    await interaction.reply({
+                    await interaction.editReply({
                         components: [ComponentsV2.errorContainer('Entry Blocked', `You do not have enough invites. Required: **\`${invs}\`** (You: **\`${uses}\`**).`)],
-                        flags: V2 | EPH
                     });
                     return;
                 }
@@ -566,27 +571,33 @@ export const giveawayCommand: Command = {
             if (bst) {
                 const isBooster = member.premiumSince !== null;
                 if (!isBooster) {
-                    await interaction.reply({
+                    await interaction.editReply({
                         components: [ComponentsV2.errorContainer('Entry Blocked', 'This giveaway is restricted to server boosters only.')],
-                        flags: V2 | EPH
                     });
                     return;
                 }
             }
 
-            // Save participant
-            const updatedParticipants = [...participants, interaction.user.id];
+            // Save participant (re-read first so concurrent entries are merged
+            // instead of overwriting each other).
+            const fresh = await supabase.getGiveaway(giveawayId).catch(() => null);
+            const base = fresh?.participants || participants;
+            if (base.includes(interaction.user.id)) {
+                await interaction.editReply({ content: '🙋 You have already entered this giveaway!' });
+                return;
+            }
+            const updatedParticipants = [...base, interaction.user.id];
             await supabase.updateGiveaway(giveawayId, { participants: updatedParticipants });
             
             // Refresh card message
-            const card = buildGiveawayCard(giveaway, updatedParticipants.length);
+            const card = buildGiveawayCard(fresh || giveaway, updatedParticipants.length);
             const channel = interaction.guild?.channels.cache.get(giveaway.channel_id);
             if (channel && 'messages' in channel) {
                 const message = await channel.messages.fetch(giveaway.message_id).catch(() => null);
                 if (message) await message.edit({ components: [card], flags: V2 }).catch(() => {});
             }
 
-            await interaction.reply({ content: '🎉 You have successfully entered the giveaway! Good luck!', flags: EPH });
+            await interaction.editReply({ content: '🎉 You have successfully entered the giveaway! Good luck!' });
         }
     },
 
