@@ -218,7 +218,7 @@ function drawGlobeIcon(ctx, x, y, size, color) {
     ctx.restore();
 }
 /**
- * Generates Canva-style Level Up or Community Profile visual card.
+ * Generates a clean, premium Level Up or Community Profile visual card.
  */
 export async function generateLevelCardAttachment(opts) {
     try {
@@ -228,313 +228,332 @@ export async function generateLevelCardAttachment(opts) {
         const height = 430;
         const canvas = createCanvas(width, height);
         const ctx = canvas.getContext('2d');
-        const tierColor = opts.tierColorHex || '#00d2ff';
         const isLevelUp = opts.mode !== 'profile';
-        // 1. Canvas Background
+        const progress = Math.max(0, Math.min(100, opts.progress));
+        const fontOf = (size, bold = true) => `${bold ? 'bold ' : ''}${size}px GoogleSans, sans-serif`;
+        // Shrinks text to fit, then ellipsizes as a last resort. Leaves ctx.font set for the caller.
+        const fitText = (text, maxW, size, minSize, bold = true) => {
+            let s = size;
+            ctx.font = fontOf(s, bold);
+            while (ctx.measureText(text).width > maxW && s > minSize) {
+                s -= 0.5;
+                ctx.font = fontOf(s, bold);
+            }
+            let out = text;
+            if (ctx.measureText(out).width > maxW) {
+                while (out.length > 1 && ctx.measureText(`${out}\u2026`).width > maxW) {
+                    out = out.slice(0, -1);
+                }
+                out = `${out}\u2026`;
+            }
+            return { text: out, size: s };
+        };
+        // ---------- 1. Background ----------
         const bgGrad = ctx.createLinearGradient(0, 0, width, height);
         bgGrad.addColorStop(0, '#0a0a0b');
         bgGrad.addColorStop(0.5, '#141416');
         bgGrad.addColorStop(1, '#08080a');
         ctx.fillStyle = bgGrad;
         ctx.fillRect(0, 0, width, height);
-        // Tech grid lines
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-        ctx.lineWidth = 1;
-        for (let x = 0; x < width; x += 40) {
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, height);
-            ctx.stroke();
+        // Fine dotted grid
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+        for (let x = 20; x < width; x += 40) {
+            for (let y = 20; y < height; y += 40) {
+                ctx.fillRect(x, y, 1.4, 1.4);
+            }
         }
-        for (let y = 0; y < height; y += 40) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(width, y);
-            ctx.stroke();
-        }
-        // Ambient glows
-        const avatarGlow = ctx.createRadialGradient(150, 140, 10, 150, 140, 240);
+        // Diagonal light sweep
+        const sweep = ctx.createLinearGradient(0, height, width, 0);
+        sweep.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        sweep.addColorStop(0.5, 'rgba(255, 255, 255, 0.03)');
+        sweep.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = sweep;
+        ctx.fillRect(0, 0, width, height);
+        // Ambient glow behind the avatar
+        const avatarGlow = ctx.createRadialGradient(130, 120, 8, 130, 120, 220);
         avatarGlow.addColorStop(0, 'rgba(255, 255, 255, 0.10)');
         avatarGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
         ctx.fillStyle = avatarGlow;
         ctx.fillRect(0, 0, width, height);
-        const rightGlow = ctx.createRadialGradient(850, 120, 10, 850, 120, 260);
-        rightGlow.addColorStop(0, 'rgba(255, 255, 255, 0.06)');
-        rightGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        ctx.fillStyle = rightGlow;
+        // Vignette for depth
+        const vignette = ctx.createRadialGradient(width / 2, height / 2, 160, width / 2, height / 2, 640);
+        vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        vignette.addColorStop(1, 'rgba(0, 0, 0, 0.5)');
+        ctx.fillStyle = vignette;
         ctx.fillRect(0, 0, width, height);
-        // 2. Main Glass Card Container
+        // ---------- 2. Glass Card Container ----------
         const cardX = 20;
         const cardY = 20;
         const cardW = width - 40;
         const cardH = height - 40;
-        roundRect(ctx, cardX, cardY, cardW, cardH, 24);
-        ctx.fillStyle = 'rgba(18, 18, 20, 0.96)';
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+        ctx.shadowBlur = 34;
+        ctx.shadowOffsetY = 14;
+        roundRect(ctx, cardX, cardY, cardW, cardH, 26);
+        ctx.fillStyle = 'rgba(18, 18, 20, 0.97)';
         ctx.fill();
-        const borderGrad = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
-        borderGrad.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
-        borderGrad.addColorStop(0.35, 'rgba(255, 255, 255, 0.10)');
-        borderGrad.addColorStop(0.75, 'rgba(255, 255, 255, 0.22)');
-        borderGrad.addColorStop(1, 'rgba(255, 255, 255, 0.5)');
-        ctx.strokeStyle = borderGrad;
-        ctx.lineWidth = 1.6;
-        ctx.stroke();
-        // 3. Avatar Section
-        const avX = 55;
-        const avY = 46;
-        const avSize = 120;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(avX + avSize / 2, avY + avSize / 2, avSize / 2 + 5, 0, Math.PI * 2);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 3;
-        ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
-        ctx.shadowBlur = 12;
-        ctx.stroke();
         ctx.restore();
+        const borderGrad = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
+        borderGrad.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
+        borderGrad.addColorStop(0.32, 'rgba(255, 255, 255, 0.08)');
+        borderGrad.addColorStop(0.72, 'rgba(255, 255, 255, 0.18)');
+        borderGrad.addColorStop(1, 'rgba(255, 255, 255, 0.45)');
+        roundRect(ctx, cardX, cardY, cardW, cardH, 26);
+        ctx.strokeStyle = borderGrad;
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+        // Subtle level watermark anchoring the header's right side
+        ctx.save();
+        ctx.font = fontOf(opts.level >= 1000 ? 86 : opts.level >= 100 ? 102 : 118);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.fillText(String(opts.level), cardX + cardW - 42, 142);
+        ctx.restore();
+        // ---------- 3. Avatar + Progress Ring ----------
+        const avCx = 120;
+        const avCy = 114;
+        const avR = 54;
+        const ringR = 60;
+        // Ring track
+        ctx.beginPath();
+        ctx.arc(avCx, avCy, ringR, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.13)';
+        ctx.lineWidth = 6;
+        ctx.stroke();
+        // Ring progress
+        if (progress > 0) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(avCx, avCy, ringR, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * progress) / 100);
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.55)';
+            ctx.shadowBlur = 9;
+            ctx.stroke();
+            ctx.restore();
+        }
+        // Avatar image / initials
         ctx.save();
         ctx.beginPath();
-        ctx.arc(avX + avSize / 2, avY + avSize / 2, avSize / 2, 0, Math.PI * 2);
+        ctx.arc(avCx, avCy, avR, 0, Math.PI * 2);
         ctx.closePath();
         ctx.clip();
+        let drewAvatar = false;
         if (opts.avatarUrl) {
             try {
                 const img = await loadImage(opts.avatarUrl);
-                ctx.drawImage(img, avX, avY, avSize, avSize);
+                ctx.drawImage(img, avCx - avR, avCy - avR, avR * 2, avR * 2);
+                drewAvatar = true;
             }
             catch {
-                ctx.fillStyle = '#1c1c1f';
-                ctx.fillRect(avX, avY, avSize, avSize);
-                ctx.fillStyle = '#f4f4f5';
-                ctx.font = 'bold 44px GoogleSans, sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(opts.username.slice(0, 2).toUpperCase(), avX + avSize / 2, avY + avSize / 2);
+                drewAvatar = false;
             }
         }
-        else {
-            ctx.fillStyle = '#1c1c1f';
-            ctx.fillRect(avX, avY, avSize, avSize);
+        if (!drewAvatar) {
+            const avGrad = ctx.createLinearGradient(avCx - avR, avCy - avR, avCx + avR, avCy + avR);
+            avGrad.addColorStop(0, '#2a2a2e');
+            avGrad.addColorStop(1, '#151517');
+            ctx.fillStyle = avGrad;
+            ctx.fillRect(avCx - avR, avCy - avR, avR * 2, avR * 2);
             ctx.fillStyle = '#f4f4f5';
-            ctx.font = 'bold 44px GoogleSans, sans-serif';
+            ctx.font = fontOf(40);
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(opts.username.slice(0, 2).toUpperCase(), avX + avSize / 2, avY + avSize / 2);
+            ctx.fillText(opts.username.slice(0, 2).toUpperCase(), avCx, avCy + 1);
         }
         ctx.restore();
-        // Badge on Avatar corner
-        const badgeW = 72;
-        const badgeH = 28;
-        const badgeX = avX + avSize - badgeW / 2 - 8;
-        const badgeY = avY + avSize - badgeH / 2 - 4;
+        // Avatar hairline
+        ctx.beginPath();
+        ctx.arc(avCx, avCy, avR + 0.5, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        // Level badge seated on the ring
+        const badgeW = 78;
+        const badgeH = 26;
+        const badgeX = avCx - badgeW / 2;
+        const badgeY = avCy + ringR - badgeH / 2 + 3;
         ctx.save();
-        roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 14);
-        const badgeGrad = ctx.createLinearGradient(badgeX, badgeY, badgeX + badgeW, badgeY);
+        roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 13);
+        const badgeGrad = ctx.createLinearGradient(badgeX, badgeY, badgeX, badgeY + badgeH);
         badgeGrad.addColorStop(0, '#ffffff');
         badgeGrad.addColorStop(1, '#d4d4d8');
         ctx.fillStyle = badgeGrad;
-        ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
-        ctx.shadowBlur = 8;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+        ctx.shadowBlur = 10;
         ctx.fill();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-        ctx.font = 'bold 14px GoogleSans, sans-serif';
+        ctx.restore();
+        ctx.font = fontOf(13);
         ctx.fillStyle = '#0a0a0b';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(`LVL ${opts.level}`, badgeX + badgeW / 2, badgeY + badgeH / 2);
-        ctx.restore();
-        // 4. Header Section
-        const contentX = 210;
+        ctx.fillText(`LVL ${opts.level}`, avCx, badgeY + badgeH / 2 + 0.5);
+        ctx.textBaseline = 'alphabetic';
+        // ---------- 4. Header ----------
+        const contentX = 212;
         const tagText = isLevelUp
-            ? (opts.rankedUp ? 'RANK PROMOTION' : 'LEVEL UP EVENT')
+            ? (opts.rankedUp ? 'RANK PROMOTION' : 'LEVEL UP')
             : 'COMMUNITY PROFILE';
         ctx.save();
-        ctx.font = 'bold 11px GoogleSans, sans-serif';
-        const tagW = ctx.measureText(tagText).width + 30;
-        roundRect(ctx, contentX, 46, tagW, 24, 12);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.font = fontOf(11);
+        const tagW = ctx.measureText(tagText).width + 34;
+        roundRect(ctx, contentX, 44, tagW, 25, 12.5);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.beginPath();
-        ctx.arc(contentX + 13, 58, 3.5, 0, Math.PI * 2);
+        ctx.arc(contentX + 14, 56.5, 3.5, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
         ctx.shadowColor = '#ffffff';
-        ctx.shadowBlur = 6;
+        ctx.shadowBlur = 8;
         ctx.fill();
-        ctx.shadowBlur = 0;
+        ctx.restore();
+        ctx.font = fontOf(11);
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText(tagText, contentX + 22, 58);
-        ctx.restore();
-        // Username
+        ctx.fillText(tagText, contentX + 24, 57);
+        ctx.textBaseline = 'alphabetic';
+        // Username (auto-shrinks / ellipsizes rather than colliding with the watermark)
+        const fittedUser = fitText(opts.username, 520, 30, 18);
         ctx.save();
-        ctx.font = 'bold 30px GoogleSans, sans-serif';
+        ctx.font = fontOf(fittedUser.size);
         ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = 'rgba(255, 255, 255, 0.3)';
-        ctx.shadowBlur = 8;
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.28)';
+        ctx.shadowBlur = 10;
         ctx.textAlign = 'left';
-        ctx.fillText(`@${opts.username}`, contentX, 102);
+        ctx.fillText(`@${fittedUser.text}`, contentX, 104);
         ctx.restore();
         // Subtitle
-        ctx.font = '15px GoogleSans, sans-serif';
+        ctx.font = fontOf(14.5, false);
         ctx.fillStyle = '#a1a1aa';
-        const subtitle = isLevelUp
-            ? `Advanced to Level ${opts.level}! Cross-guild rewards deposited.`
-            : `Synchronized Community Profile · Multi-Guild Rail`;
-        ctx.fillText(subtitle, contentX, 128);
-        // Right Rank Showcase Tile
-        const rightBoxW = 195;
-        const rightBoxH = 88;
-        const rightBoxX = width - cardX - rightBoxW - 20;
-        const rightBoxY = 44;
-        ctx.save();
-        roundRect(ctx, rightBoxX, rightBoxY, rightBoxW, rightBoxH, 18);
-        ctx.fillStyle = 'rgba(28, 28, 31, 0.9)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-        ctx.font = 'bold 11px GoogleSans, sans-serif';
-        ctx.fillStyle = '#71717a';
-        ctx.fillText('CURRENT RANK', rightBoxX + 16, rightBoxY + 26);
-        ctx.font = 'bold 22px GoogleSans, sans-serif';
-        ctx.fillStyle = '#fafafa';
-        ctx.shadowColor = 'rgba(255, 255, 255, 0.25)';
-        ctx.shadowBlur = 8;
-        ctx.fillText(opts.tierName.toUpperCase(), rightBoxX + 16, rightBoxY + 58);
-        drawVectorStar(ctx, rightBoxX + rightBoxW - 34, rightBoxY + rightBoxH / 2, 5, 18, 8, '#ffffff');
-        ctx.restore();
-        // 5. Progress Bar Section
+        ctx.textAlign = 'left';
+        ctx.fillText(isLevelUp
+            ? `Advanced to Level ${opts.level} \u00b7 rewards deposited`
+            : 'Community profile \u00b7 synced across guilds', contentX, 128);
+        // ---------- 5. Progress Bar ----------
         const barX = contentX;
-        const barY = 160;
-        const barW = width - cardX - barX - 20;
-        const barH = 22;
-        const clampedProg = Math.max(0, Math.min(100, Math.round(opts.progress)));
-        ctx.font = 'bold 13px GoogleSans, sans-serif';
+        const barY = 166;
+        const barW = cardX + cardW - barX - 22;
+        const barH = 20;
+        ctx.font = fontOf(13);
         ctx.fillStyle = '#e4e4e7';
-        ctx.fillText(`TOTAL XP: ${opts.totalXp.toLocaleString()} XP`, barX, barY - 8);
+        ctx.textAlign = 'left';
+        ctx.fillText(`TOTAL XP: ${opts.totalXp.toLocaleString()}`, barX, barY - 10);
         ctx.textAlign = 'right';
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(`${opts.cpToNext.toLocaleString()} XP to Next Level (${clampedProg}%)`, barX + barW, barY - 8);
+        ctx.fillText(`${opts.cpToNext.toLocaleString()} XP TO NEXT LEVEL \u00b7 ${Math.round(progress)}%`, barX + barW, barY - 10);
         ctx.textAlign = 'left';
-        ctx.save();
-        roundRect(ctx, barX, barY, barW, barH, 11);
-        ctx.fillStyle = '#26262a';
+        // Track
+        roundRect(ctx, barX, barY, barW, barH, barH / 2);
+        ctx.fillStyle = '#232326';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
         ctx.lineWidth = 1;
         ctx.stroke();
-        const fillW = Math.max(16, (barW * clampedProg) / 100);
-        roundRect(ctx, barX, barY, fillW, barH, 11);
-        const fillGrad = ctx.createLinearGradient(barX, 0, barX + fillW, 0);
-        fillGrad.addColorStop(0, '#ffffff');
-        fillGrad.addColorStop(0.6, '#e4e4e7');
-        fillGrad.addColorStop(1, '#a1a1aa');
-        ctx.fillStyle = fillGrad;
-        ctx.shadowColor = 'rgba(255, 255, 255, 0.45)';
-        ctx.shadowBlur = 8;
-        ctx.fill();
-        ctx.beginPath();
-        ctx.rect(barX + 6, barY + 2, fillW - 12, barH / 3);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-        ctx.fill();
-        ctx.restore();
-        // 6. 3 Glass Stat Cards
-        const tileY = 208;
-        const tileH = 145;
-        const tileW = (cardW - 70) / 3;
-        function drawStatTile(tx, ty, tw, th, title, value, sub, iconType, accentColor) {
+        // Fill
+        const fillW = Math.max(barH, (barW * progress) / 100);
+        if (progress > 0) {
             ctx.save();
+            roundRect(ctx, barX, barY, fillW, barH, barH / 2);
+            const fillGrad = ctx.createLinearGradient(barX, 0, barX + fillW, 0);
+            fillGrad.addColorStop(0, '#ffffff');
+            fillGrad.addColorStop(0.55, '#e4e4e7');
+            fillGrad.addColorStop(1, '#a1a1aa');
+            ctx.fillStyle = fillGrad;
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.35)';
+            ctx.shadowBlur = 6;
+            ctx.fill();
+            // Glossy top band
+            ctx.beginPath();
+            ctx.rect(barX + barH / 2, barY + 3, Math.max(0, fillW - barH), barH / 3.2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.24)';
+            ctx.fill();
+            // Leading knob
+            ctx.beginPath();
+            ctx.arc(barX + fillW - barH / 2, barY + barH / 2, 5.5, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.85)';
+            ctx.shadowBlur = 9;
+            ctx.fill();
+            ctx.restore();
+        }
+        // ---------- 6. Stat Tiles ----------
+        const tileY = 206;
+        const tileH = 154;
+        const tileGap = 14;
+        const tileW = (cardW - 48 - tileGap * 2) / 3;
+        function drawStatTile(tx, ty, tw, th, label, value, sub) {
+            ctx.save();
+            // Tile body
             roundRect(ctx, tx, ty, tw, th, 18);
             ctx.fillStyle = 'rgba(26, 26, 29, 0.9)';
             ctx.fill();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
             ctx.lineWidth = 1.2;
             ctx.stroke();
+            // Top sheen
+            ctx.save();
+            roundRect(ctx, tx, ty, tw, th, 18);
+            ctx.clip();
+            const sheen = ctx.createLinearGradient(tx, ty, tx, ty + 70);
+            sheen.addColorStop(0, 'rgba(255, 255, 255, 0.055)');
+            sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            ctx.fillStyle = sheen;
+            ctx.fillRect(tx, ty, tw, 70);
+            ctx.restore();
+            // Accent tick
             ctx.beginPath();
-            ctx.moveTo(tx + 20, ty);
-            ctx.lineTo(tx + tw - 20, ty);
+            ctx.moveTo(tx + 24, ty + 0.5);
+            ctx.lineTo(tx + 64, ty + 0.5);
             ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2.5;
-            ctx.shadowColor = 'rgba(255, 255, 255, 0.4)';
+            ctx.lineWidth = 2;
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.45)';
             ctx.shadowBlur = 8;
             ctx.stroke();
             ctx.shadowBlur = 0;
-            ctx.font = 'bold 11px GoogleSans, sans-serif';
-            ctx.fillStyle = '#71717a';
             ctx.textAlign = 'left';
-            ctx.fillText(title, tx + 18, ty + 28);
-            // Monochrome icon glyph
-            const ix = tx + 36;
-            const iy = ty + 70;
-            ctx.save();
-            ctx.strokeStyle = '#ffffff';
-            ctx.fillStyle = '#ffffff';
-            ctx.lineWidth = 1.7;
-            if (iconType === 'coin') {
-                ctx.beginPath();
-                ctx.arc(ix, iy, 13, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.font = 'bold 15px GoogleSans, sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('V', ix, iy + 1);
-                ctx.textAlign = 'left';
-            }
-            else if (iconType === 'gem') {
-                ctx.beginPath();
-                ctx.moveTo(ix, iy - 14);
-                ctx.lineTo(ix + 12, iy);
-                ctx.lineTo(ix, iy + 14);
-                ctx.lineTo(ix - 12, iy);
-                ctx.closePath();
-                ctx.stroke();
-            }
-            else {
-                ctx.beginPath();
-                ctx.moveTo(ix, iy - 14);
-                ctx.lineTo(ix + 12, iy - 8);
-                ctx.lineTo(ix + 10, iy + 8);
-                ctx.lineTo(ix, iy + 14);
-                ctx.lineTo(ix - 10, iy + 8);
-                ctx.lineTo(ix - 12, iy - 8);
-                ctx.closePath();
-                ctx.stroke();
-            }
-            ctx.restore();
-            ctx.font = 'bold 22px GoogleSans, sans-serif';
+            ctx.textBaseline = 'alphabetic';
+            // Label
+            ctx.font = fontOf(11);
+            ctx.fillStyle = '#71717a';
+            ctx.fillText(label, tx + 24, ty + 36);
+            // Value
+            const fittedValue = fitText(value, tw - 48, 30, 15);
+            ctx.font = fontOf(fittedValue.size);
             ctx.fillStyle = '#fafafa';
-            ctx.shadowColor = 'rgba(255, 255, 255, 0.35)';
-            ctx.shadowBlur = 6;
-            ctx.fillText(value, tx + 62, ty + 75);
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.3)';
+            ctx.shadowBlur = 7;
+            ctx.fillText(fittedValue.text, tx + 24, ty + 88);
             ctx.shadowBlur = 0;
-            ctx.font = '13px GoogleSans, sans-serif';
+            // Sub label
+            ctx.font = fontOf(12.5, false);
             ctx.fillStyle = '#a1a1aa';
-            ctx.fillText(sub, tx + 18, ty + 115);
+            ctx.fillText(sub, tx + 24, ty + 126);
             ctx.restore();
         }
         const t1X = cardX + 24;
-        const t2X = t1X + tileW + 11;
-        const t3X = t2X + tileW + 11;
+        const t2X = t1X + tileW + tileGap;
+        const t3X = t2X + tileW + tileGap;
         const coinsVal = isLevelUp
             ? `+${opts.coinsReward ?? 100} COINS`
             : `${(opts.coins ?? 0).toLocaleString()} COINS`;
         const xpVal = isLevelUp
             ? `+${opts.xpReward ?? 200} XP`
             : '+25 XP / Msg';
-        drawStatTile(t1X, tileY, tileW, tileH, 'RANK STATUS', opts.tierName, 'Multi-Guild Synced', 'shield', '#ffffff');
-        drawStatTile(t2X, tileY, tileW, tileH, isLevelUp ? 'LEVEL REWARD' : 'WALLET BALANCE', coinsVal, 'Free 24/7 Server Credit', 'coin', '#ffffff');
-        drawStatTile(t3X, tileY, tileW, tileH, isLevelUp ? 'BONUS XP' : 'CHAT MULTIPLIER', xpVal, 'Auto-applied rewards', 'gem', '#ffffff');
-        // Footer watermark
-        ctx.font = '12px GoogleSans, sans-serif';
+        drawStatTile(t1X, tileY, tileW, tileH, 'RANK STATUS', opts.tierName, 'Tier progress tracked');
+        drawStatTile(t2X, tileY, tileW, tileH, isLevelUp ? 'LEVEL REWARD' : 'WALLET BALANCE', coinsVal, 'Free 24/7 server credit');
+        drawStatTile(t3X, tileY, tileW, tileH, isLevelUp ? 'BONUS XP' : 'CHAT MULTIPLIER', xpVal, 'Auto-applied rewards');
+        // ---------- 7. Footer ----------
+        ctx.font = fontOf(12, false);
         ctx.fillStyle = '#52525b';
         ctx.textAlign = 'center';
-        ctx.fillText('VICTUS CLOUD  •  Next-Gen Game & Cloud Server Hosting  •  victuscloud.com', width / 2, height - 28);
+        ctx.fillText('VICTUS CLOUD  \u00b7  Next-Gen Game & Cloud Server Hosting  \u00b7  victuscloud.com', width / 2, height - 38);
         const buffer = await canvas.encode('png');
         const filename = isLevelUp ? 'level_up_card.png' : 'level_card.png';
         return new AttachmentBuilder(buffer, { name: filename });
