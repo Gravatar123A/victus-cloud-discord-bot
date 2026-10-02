@@ -259,8 +259,8 @@ export const playCommand: Command = {
 
         switch (action) {
             case 'open_controls': {
-                const controls = musicControlsContainer(player);
-                await interaction.reply({ embeds: [], components: controls.components, flags: EPH | V2 });
+                const controls = await musicControlsContainer(player);
+                await interaction.reply({ embeds: [], components: controls.components, files: controls.files, flags: EPH | V2 });
                 return;
             }
             case 'like': {
@@ -316,6 +316,42 @@ export const playCommand: Command = {
                 await player.play({ clientTrack: prev });
                 await interaction.reply({ content: '⏮️ Playing the previous track.', ephemeral: true });
                 return;
+            }
+            case 'shuffle': {
+                if (player.queue.tracks.length < 2) {
+                    await interaction.reply({ content: '🔀 Add at least two tracks before shuffling the queue.', ephemeral: true });
+                    return;
+                }
+                await player.queue.shuffle();
+                break;
+            }
+            case 'clear': {
+                if (!player.queue.tracks.length) {
+                    await interaction.reply({ content: '🗑️ The queue is already empty.', ephemeral: true });
+                    return;
+                }
+                await player.queue.splice(0, player.queue.tracks.length);
+                break;
+            }
+            case 'voldown': {
+                await player.setVolume(Math.max(0, player.volume - 10));
+                break;
+            }
+            case 'volup': {
+                await player.setVolume(Math.min(150, player.volume + 10));
+                break;
+            }
+            case 'seekback':
+            case 'seekfwd': {
+                const current = player.queue.current;
+                if (!current || current.info.isStream) {
+                    await interaction.reply({ content: '⏩ You cannot seek inside a live stream.', ephemeral: true });
+                    return;
+                }
+                const delta = action === 'seekback' ? -10000 : 10000;
+                const target = Math.max(0, Math.min(current.info.duration || 0, (player.position || 0) + delta));
+                await player.seek(target);
+                break;
             }
             case 'stop': {
                 await player.destroy();
@@ -380,8 +416,8 @@ export const playCommand: Command = {
         await refreshNowPlaying(player);
 
         if (interaction.message.flags.has(MessageFlags.Ephemeral)) {
-            const controls = musicControlsContainer(player);
-            await interaction.update({ embeds: [], components: controls.components });
+            const controls = await musicControlsContainer(player);
+            await interaction.update({ embeds: [], components: controls.components, files: controls.files });
         } else {
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.deferUpdate().catch(() => undefined);
@@ -537,8 +573,8 @@ export const playCommand: Command = {
         await refreshNowPlaying(player);
 
         if (interaction.message?.flags.has(MessageFlags.Ephemeral)) {
-            const controls = musicControlsContainer(player);
-            await (interaction as any).update({ embeds: [], components: controls.components });
+            const controls = await musicControlsContainer(player);
+            await (interaction as any).update({ embeds: [], components: controls.components, files: controls.files });
         } else {
             await interaction.reply({ content: `🔊 Volume set to **${level}%**.`, ephemeral: true });
         }

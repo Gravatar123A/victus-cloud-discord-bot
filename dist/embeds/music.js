@@ -3,8 +3,9 @@
  * for the Lavalink music feature (Now Playing, queue, "added" confirmations)
  * plus the custom buttons control row.
  */
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, ContainerBuilder, TextDisplayBuilder, SeparatorBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder, } from 'discord.js';
-import { config } from '../config.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, ContainerBuilder, TextDisplayBuilder, SeparatorBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder, SectionBuilder, ThumbnailBuilder, } from 'discord.js';
+import path from 'node:path';
+import fs from 'node:fs';
 import { logger } from '../utils/logger.js';
 const SOURCE_ICON = {
     youtube: '▶️',
@@ -19,6 +20,25 @@ const SOURCE_ICON = {
 };
 export function sourceIcon(source) {
     return SOURCE_ICON[(source || '').toLowerCase()] || '🎵';
+}
+const SOURCE_LABEL = {
+    youtube: 'YouTube',
+    soundcloud: 'SoundCloud',
+    bandcamp: 'Bandcamp',
+    twitch: 'Twitch',
+    vimeo: 'Vimeo',
+    spotify: 'Spotify',
+    deezer: 'Deezer',
+    applemusic: 'Apple Music',
+    http: 'Direct link',
+    local: 'Local file',
+};
+/** Human-readable platform name for a LavaLink source id. */
+export function sourceLabel(source) {
+    const key = (source || '').toLowerCase();
+    if (!key)
+        return 'Unknown source';
+    return SOURCE_LABEL[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
 }
 /** Escape Discord markdown so track titles can't break the layout. */
 export function escapeMd(value) {
@@ -72,49 +92,10 @@ export async function nowPlayingContainer(player, guild) {
     const pos = Math.min(player.position ?? 0, duration);
     const reqId = requesterId(track);
     const live = !!info?.isStream;
-    // Canvas is an optional enhancement. Some Pterodactyl images cannot load the
-    // platform-specific @napi-rs/canvas binding, so never import it at module load
-    // time or a music dependency failure will take the whole Discord bot offline.
-    let cardBuffer = Buffer.alloc(0);
-    try {
-        const [{ Bloom }, { createCanvas, loadImage }] = await Promise.all([
-            import('musicard'),
-            import('@napi-rs/canvas'),
-        ]);
-        cardBuffer = await Bloom({
-            trackName: info?.title || 'Unknown Title',
-            artistName: info?.author || 'Unknown Artist',
-            albumArt: info?.artworkUrl || config.branding.logo,
-            fallbackArt: config.branding.logo,
-            isExplicit: false,
-            timeAdjust: {
-                timeStart: formatDuration(pos),
-                timeEnd: live ? 'LIVE' : formatDuration(duration)
-            },
-            progressBar: live ? 100 : (duration > 0 ? (pos / duration) * 100 : 0),
-            backgroundColor: '#07070a',
-            styleConfig: {
-                trackStyle: {
-                    textColor: '#ffffff',
-                    textGlow: true,
-                },
-                artistStyle: {
-                    textColor: '#a5b4fc',
-                    textGlow: false,
-                },
-                timeStyle: {
-                    textColor: '#cbd5e1',
-                },
-                progressBarStyle: {
-                    barColor: '#6366f1',
-                    barColorDuo: true
-                }
-            }
-        });
-    }
-    catch (err) {
-        logger.warn('Music card renderer unavailable; using the text music panel instead:', err);
-    }
+    // The banner is an optional enhancement: renderMusicCard degrades to null when
+    // the platform-specific @napi-rs/canvas binding is missing, and the panel then
+    // falls back to a text layout instead of taking the bot offline.
+    const cardBuffer = (await renderMusicCard(player, guild)) ?? Buffer.alloc(0);
     const files = [];
     const container = new ContainerBuilder();
     const nextTrack = player.queue.tracks[0];
@@ -122,44 +103,7 @@ export async function nowPlayingContainer(player, guild) {
         ? `⏭️ **Next up:** [${escapeMd(nextTrack.info?.title)}](${nextTrack.info?.uri})`
         : `⏭️ **Next up:** _Queue end_`;
     if (cardBuffer.length > 0) {
-        let finalBuffer = cardBuffer;
-        try {
-            const { createCanvas, loadImage } = await import('@napi-rs/canvas');
-            const loopName = player.repeatMode === 'off' ? 'Off' : player.repeatMode === 'track' ? 'Track' : 'Queue';
-            const sourceName = info?.sourceName ? info.sourceName.charAt(0).toUpperCase() + info.sourceName.slice(1) : 'Unknown';
-            let reqName = 'System';
-            if (reqId && guild) {
-                const member = guild.members.cache.get(reqId);
-                reqName = member?.displayName || member?.user?.username || 'Unknown';
-            }
-            const img = await loadImage(cardBuffer);
-            const canvas = createCanvas(img.width, img.height + 70);
-            const ctx = canvas.getContext('2d');
-            // Fill canvas background
-            ctx.fillStyle = '#07070a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            // Draw original musicard
-            ctx.drawImage(img, 0, 0);
-            // Add separator line
-            ctx.strokeStyle = '#1e1e24';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(30, img.height);
-            ctx.lineTo(canvas.width - 30, img.height);
-            ctx.stroke();
-            // Draw text info
-            ctx.font = '22px sans-serif';
-            ctx.fillStyle = '#94a3b8';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            const textStr = `Requester: ${reqName}   •   Volume: ${player.volume}%   •   Loop: ${loopName}   •   Source: ${sourceName}`;
-            ctx.fillText(textStr, canvas.width / 2, img.height + 35);
-            finalBuffer = canvas.toBuffer('image/png');
-        }
-        catch (err) {
-            logger.error('Failed to extend musicard with metadata:', err);
-        }
-        files.push(new AttachmentBuilder(finalBuffer, { name: 'musicard.png' }));
+        files.push(new AttachmentBuilder(cardBuffer, { name: 'musicard.png' }));
         container.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://musicard.png')));
         container.addTextDisplayComponents(new TextDisplayBuilder().setContent(nextUpStr));
     }
@@ -188,43 +132,373 @@ export async function nowPlayingContainer(player, guild) {
         files
     };
 }
-export function musicControlsContainer(player) {
+const MUSIC_ACCENT = 0x6366f1;
+const MUSIC_ACCENT_PAUSED = 0xf0b232;
+const COVER_SIZE = 512;
+/**
+ * Solid two-tone track used instead of a ruler of dashes with an emoji knob.
+ * Discord cannot draw a real progress bar, so this is the cleanest option.
+ */
+export function progressTrack(pos, duration, length = 14) {
+    const ratio = duration > 0 ? Math.max(0, Math.min(1, pos / duration)) : 0;
+    const filled = Math.max(0, Math.min(length, Math.round(ratio * length)));
+    return `${'▰'.repeat(filled)}${'▱'.repeat(length - filled)}`;
+}
+/**
+ * Branded cover tile used when the source gives us no album art. It renders at
+ * thumbnail scale, so it carries a monogram and nothing else.
+ * Canvas is an optional dependency, exactly like the Now Playing renderer.
+ */
+async function renderCoverTile(title) {
+    try {
+        const { createCanvas, GlobalFonts } = await import('@napi-rs/canvas');
+        try {
+            const fontPath = path.resolve(process.cwd(), 'assets', 'fonts', 'GoogleSans.ttf');
+            if (fs.existsSync(fontPath))
+                GlobalFonts.registerFromPath(fontPath, 'GoogleSans');
+        }
+        catch {
+            // Bundled font is optional — canvas falls back to sans-serif.
+        }
+        const canvas = createCanvas(COVER_SIZE, COVER_SIZE);
+        const ctx = canvas.getContext('2d');
+        const bg = ctx.createLinearGradient(0, 0, COVER_SIZE, COVER_SIZE);
+        bg.addColorStop(0, '#242457');
+        bg.addColorStop(0.55, '#141432');
+        bg.addColorStop(1, '#0a0a17');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, COVER_SIZE, COVER_SIZE);
+        const glow = ctx.createRadialGradient(COVER_SIZE * 0.3, COVER_SIZE * 0.22, 10, COVER_SIZE * 0.3, COVER_SIZE * 0.22, COVER_SIZE * 0.95);
+        glow.addColorStop(0, 'rgba(148, 163, 255, 0.75)');
+        glow.addColorStop(0.5, 'rgba(99, 102, 241, 0.18)');
+        glow.addColorStop(1, 'rgba(99, 102, 241, 0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, COVER_SIZE, COVER_SIZE);
+        const words = title.replace(/[^\p{L}\p{N} ]+/gu, ' ').trim().split(/\s+/).filter(Boolean);
+        const monogram = (words.slice(0, 2).map((word) => word[0]).join('') || 'VC').toUpperCase();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+        ctx.font = 'bold 240px GoogleSans, sans-serif';
+        ctx.fillText(monogram, COVER_SIZE / 2, COVER_SIZE / 2 + 10);
+        return canvas.toBuffer('image/png');
+    }
+    catch (err) {
+        logger.warn('Music cover generator unavailable; continuing without artwork:', err);
+        return null;
+    }
+}
+const CARD_W = 1000;
+const CARD_H = 340;
+const CARD_PAD = 28;
+const CARD_ART = 284;
+function roundRectPath(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+/** Shrinks text until it fits `maxW`, then ellipsizes. Leaves ctx.font set for the caller. */
+function fitCardText(ctx, value, maxW, size, minSize, bold = true) {
+    const font = (s) => `${bold ? 'bold ' : ''}${s}px GoogleSans, sans-serif`;
+    let s = size;
+    ctx.font = font(s);
+    while (ctx.measureText(value).width > maxW && s > minSize) {
+        s -= 1;
+        ctx.font = font(s);
+    }
+    if (ctx.measureText(value).width <= maxW)
+        return value;
+    let out = value;
+    while (out.length > 1 && ctx.measureText(`${out}...`).width > maxW)
+        out = out.slice(0, -1);
+    return `${out}...`;
+}
+/** Album art fetch with a hard timeout — a slow CDN must never stall an interaction. */
+async function loadArtwork(url) {
+    if (!url || !url.startsWith('http'))
+        return null;
+    try {
+        const { loadImage } = await import('@napi-rs/canvas');
+        const pending = loadImage(url).catch(() => null);
+        const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 3000));
+        return (await Promise.race([pending, timeout])) ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Lavalink players expose get/set for arbitrary state. Guarded so a stub player
+ * (or a cache error) can never take the banner down with it.
+ */
+function readCardCache(player) {
+    try {
+        return player.get?.('musicCard');
+    }
+    catch {
+        return undefined;
+    }
+}
+function writeCardCache(player, value) {
+    try {
+        player.set?.('musicCard', value);
+    }
+    catch {
+        // Memoisation is an optimisation — never let it break rendering.
+    }
+}
+/**
+ * The Now Playing banner: album art, track identity, a real progress bar and a
+ * row of metadata chips. Shared by the public card and the control panel so both
+ * surfaces show the same artwork, and memoised per playback state because a
+ * single button press refreshes both messages.
+ *
+ * Returns null when canvas is unavailable so callers can fall back to text.
+ */
+async function renderMusicCard(player, guild) {
+    const track = player.queue.current;
+    if (!track)
+        return null;
+    const info = track.info;
+    const reqId = requesterId(track);
+    const live = !!info.isStream;
+    const duration = info.duration ?? 0;
+    const pos = live ? 0 : Math.min(player.position ?? 0, duration);
+    const ratio = live ? 1 : duration > 0 ? Math.max(0, Math.min(1, pos / duration)) : 0;
+    const cacheKey = [
+        info.uri,
+        Math.round((player.position ?? 0) / 5000),
+        player.paused ? 'p' : 'r',
+        player.volume,
+        player.repeatMode,
+        reqId ?? '',
+    ].join('|');
+    const cached = readCardCache(player);
+    if (cached && cached.key === cacheKey)
+        return cached.buffer;
+    try {
+        const { createCanvas, GlobalFonts } = await import('@napi-rs/canvas');
+        try {
+            const fontPath = path.resolve(process.cwd(), 'assets', 'fonts', 'GoogleSans.ttf');
+            if (fs.existsSync(fontPath))
+                GlobalFonts.registerFromPath(fontPath, 'GoogleSans');
+        }
+        catch {
+            // Bundled font is optional — canvas falls back to sans-serif.
+        }
+        const canvas = createCanvas(CARD_W, CARD_H);
+        const ctx = canvas.getContext('2d');
+        const art = await loadArtwork(typeof info.artworkUrl === 'string' ? info.artworkUrl : null);
+        // Backdrop: base gradient, a blurred wash of the album art, then a vignette.
+        const bg = ctx.createLinearGradient(0, 0, CARD_W, CARD_H);
+        bg.addColorStop(0, '#101018');
+        bg.addColorStop(0.5, '#17171d');
+        bg.addColorStop(1, '#0c0c12');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, CARD_W, CARD_H);
+        if (art) {
+            ctx.save();
+            ctx.globalAlpha = 0.26;
+            try {
+                ctx.filter = 'blur(52px)';
+            }
+            catch {
+                // Filter support varies by build — an unblurred wash still reads fine.
+            }
+            ctx.drawImage(art, CARD_W - 520, -140, 640, 640);
+            ctx.filter = 'none';
+            ctx.restore();
+        }
+        // Album art tile, or a generated monogram when the source has none.
+        ctx.save();
+        roundRectPath(ctx, CARD_PAD, CARD_PAD, CARD_ART, CARD_ART, 24);
+        ctx.clip();
+        if (art) {
+            ctx.drawImage(art, CARD_PAD, CARD_PAD, CARD_ART, CARD_ART);
+        }
+        else {
+            const tile = ctx.createLinearGradient(CARD_PAD, CARD_PAD, CARD_PAD + CARD_ART, CARD_PAD + CARD_ART);
+            tile.addColorStop(0, '#242457');
+            tile.addColorStop(0.55, '#141432');
+            tile.addColorStop(1, '#0a0a17');
+            ctx.fillStyle = tile;
+            ctx.fillRect(CARD_PAD, CARD_PAD, CARD_ART, CARD_ART);
+            const words = (info.title ?? '').replace(/[^\p{L}\p{N} ]+/gu, ' ').trim().split(/\s+/).filter(Boolean);
+            const monogram = (words.slice(0, 2).map((word) => word[0]).join('') || 'VC').toUpperCase();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = 'bold 132px GoogleSans, sans-serif';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+            ctx.fillText(monogram, CARD_PAD + CARD_ART / 2, CARD_PAD + CARD_ART / 2 + 4);
+        }
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.lineWidth = 2;
+        roundRectPath(ctx, CARD_PAD, CARD_PAD, CARD_ART, CARD_ART, 24);
+        ctx.stroke();
+        const x0 = CARD_PAD + CARD_ART + 36;
+        const x1 = CARD_W - CARD_PAD;
+        const colW = x1 - x0;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.font = 'bold 19px GoogleSans, sans-serif';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.38)';
+        ctx.fillText(live ? 'VICTUS CLOUD • LIVE STREAM' : player.paused ? 'VICTUS CLOUD • PAUSED' : 'VICTUS CLOUD • NOW PLAYING', x0, 56);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(fitCardText(ctx, info.title || 'Unknown title', colW, 44, 26), x0, 110);
+        ctx.font = '26px GoogleSans, sans-serif';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+        ctx.fillText(fitCardText(ctx, info.author || 'Unknown artist', colW, 26, 18, false), x0, 152);
+        ctx.font = '21px GoogleSans, sans-serif';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.fillText(live ? 'LIVE' : formatDuration(pos), x0, 200);
+        if (!live) {
+            ctx.textAlign = 'right';
+            ctx.fillText(formatDuration(duration), x1, 200);
+            ctx.textAlign = 'left';
+        }
+        const barY = 216;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+        roundRectPath(ctx, x0, barY, colW, 10, 5);
+        ctx.fill();
+        if (ratio > 0) {
+            const fill = ctx.createLinearGradient(x0, 0, x0 + colW, 0);
+            fill.addColorStop(0, '#6366f1');
+            fill.addColorStop(1, '#a5b4fc');
+            ctx.fillStyle = fill;
+            roundRectPath(ctx, x0, barY, Math.max(12, colW * ratio), 10, 5);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x0 + colW * ratio, barY + 5, 9, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+        }
+        const chips = [
+            `Volume ${player.volume}%`,
+            `Loop ${player.repeatMode === 'off' ? 'off' : player.repeatMode}`,
+            `${player.queue.tracks.length} in queue`,
+            sourceLabel(info.sourceName),
+        ];
+        if (reqId && guild?.members?.cache) {
+            const member = guild.members.cache.get(reqId);
+            chips.push(member?.displayName || member?.user?.username || 'Unknown');
+        }
+        ctx.font = '20px GoogleSans, sans-serif';
+        ctx.textBaseline = 'middle';
+        let chipX = x0;
+        for (const label of chips) {
+            const width = ctx.measureText(label).width + 36;
+            if (chipX + width > x1)
+                break;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
+            roundRectPath(ctx, chipX, 248, width, 42, 21);
+            ctx.fill();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
+            ctx.fillText(label, chipX + 18, 270);
+            chipX += width + 10;
+        }
+        const buffer = canvas.toBuffer('image/png');
+        writeCardCache(player, { key: cacheKey, buffer });
+        return buffer;
+    }
+    catch (err) {
+        logger.warn('Music card renderer unavailable; using the text music panel instead:', err);
+        return null;
+    }
+}
+/**
+ * Ephemeral control panel opened from the Now Playing card.
+ *
+ * Album art rides in a compact section thumbnail beside the track identity,
+ * followed by one progress line, one status line and four labelled button
+ * rows. Every visible button maps to a real transport action.
+ */
+export async function musicControlsContainer(player) {
     const track = player.queue.current;
     if (!track) {
         const container = new ContainerBuilder()
-            .setAccentColor(0x6366f1)
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# 🎵 MUSIC SYSTEM • CONTROLS\n` +
-            `# Inactive Session\n\n` +
-            `There is no music playing right now.`));
-        return { embeds: [], components: [container] };
+            .setAccentColor(MUSIC_ACCENT)
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ♪ VICTUS CLOUD • MUSIC CONTROL\n` +
+            `# Nothing playing\n\n` +
+            `Start a track with \`/play\` and reopen this panel.`));
+        return { embeds: [], components: [container], files: [] };
     }
     const info = track.info;
-    const isPaused = player.paused;
-    const loopMode = player.repeatMode;
-    const vol = player.volume;
-    const container = new ContainerBuilder()
-        .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# 🎛️ MUSIC SYSTEM • CONTROL PANEL\n` +
-        `# Audio Dashboard\n\n` +
-        `### Active Track\n` +
-        `› **Title:** [${escapeMd(info.title)}](${info.uri})\n` +
-        `› **Artist:** \`${escapeMd(info.author || 'Unknown Artist')}\`\n\n` +
-        `### Audio Settings\n` +
-        `› **State:** ${isPaused ? '⏸️ Paused' : '▶️ Playing'}\n` +
-        `› **Volume:** \`${vol}%\` • **Loop:** \`${loopMode.toUpperCase()}\`\n` +
-        `› **Queue Length:** \`${player.queue.tracks.length} tracks\`\n\n` +
-        `### Interactive Transport Controls\n` +
-        `Use the button rows below to govern playback, adjust settings, and manage your libraries.`));
-    const playbackRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:previous').setEmoji('⏮️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:pause').setEmoji(player.paused ? '▶️' : '⏸️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:stop').setEmoji('❌').setStyle(ButtonStyle.Danger));
-    const musicRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:queue').setEmoji('📊').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:filters').setEmoji('🎛️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:add').setEmoji('➕').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:search').setEmoji('🔍').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:lyrics').setEmoji('🎵').setStyle(ButtonStyle.Secondary));
-    const controlsRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:like').setEmoji('🤍').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:volume').setEmoji('🔊').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:eq').setEmoji('🎚️').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:preset').setEmoji('🟣').setStyle(ButtonStyle.Secondary));
-    const libraryRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:library_playlists').setEmoji('📁').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:history').setEmoji('🕒').setStyle(ButtonStyle.Secondary));
-    container.addActionRowComponents(playbackRow);
-    container.addActionRowComponents(musicRow);
-    container.addActionRowComponents(controlsRow);
-    container.addActionRowComponents(libraryRow);
+    const live = !!info.isStream;
+    const duration = info.duration ?? 0;
+    const pos = live ? 0 : Math.min(player.position ?? 0, duration);
+    const paused = player.paused;
+    const queueLen = player.queue.tracks.length;
+    const loopLabel = player.repeatMode === 'off' ? 'off' : player.repeatMode === 'track' ? 'track' : 'queue';
+    const loopEmoji = player.repeatMode === 'off' ? '🔁' : player.repeatMode === 'track' ? '🔂' : '🔁';
+    const files = [];
+    const container = new ContainerBuilder().setAccentColor(paused ? MUSIC_ACCENT_PAUSED : MUSIC_ACCENT);
+    // The header is the same banner /play posts. If canvas is unavailable the panel
+    // falls back to a compact text header rather than losing its artwork entirely.
+    const card = await renderMusicCard(player);
+    if (card) {
+        files.push(new AttachmentBuilder(card, { name: 'musicard.png' }));
+        container
+            .addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://musicard.png')))
+            .addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+    }
+    else {
+        // Fallback header: real album art when the source has it, else a generated tile.
+        let artwork = typeof info.artworkUrl === 'string' && info.artworkUrl.startsWith('http') ? info.artworkUrl : null;
+        if (!artwork) {
+            const cover = await renderCoverTile(info.title ?? '');
+            if (cover) {
+                files.push(new AttachmentBuilder(cover, { name: 'music-cover.png' }));
+                artwork = 'attachment://music-cover.png';
+            }
+        }
+        const identity = new TextDisplayBuilder().setContent(`-# ♪ VICTUS CLOUD • MUSIC CONTROL\n` +
+            `# ${escapeMd(info.title)}\n` +
+            `-# ${escapeMd(info.author || 'Unknown artist')} • ${sourceLabel(info.sourceName)}`);
+        if (artwork) {
+            container.addSectionComponents(new SectionBuilder()
+                .addTextDisplayComponents(identity)
+                .setThumbnailAccessory(new ThumbnailBuilder().setURL(artwork).setDescription('Album art')));
+        }
+        else {
+            container.addTextDisplayComponents(identity);
+        }
+        container
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(live
+            ? '🔴 Live stream'
+            : `\`${formatDuration(pos)}\` ${progressTrack(pos, duration)} \`${formatDuration(duration)}\``))
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ${paused ? '⏸️ Paused' : '▶️ Playing'} • 🔊 ${player.volume}% • ${loopEmoji} Loop ${loopLabel} • 📋 ${queueLen} in queue`))
+            .addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+    }
+    const playbackRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:previous').setEmoji('⏮️').setLabel('Previous').setStyle(ButtonStyle.Secondary), new ButtonBuilder()
+        .setCustomId('music:pause')
+        .setEmoji(paused ? '▶️' : '⏸️')
+        .setLabel(paused ? 'Resume' : 'Pause')
+        .setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId('music:skip').setEmoji('⏭️').setLabel('Skip').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:stop').setEmoji('⏹️').setLabel('Stop').setStyle(ButtonStyle.Danger));
+    const queueRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:queue').setEmoji('📋').setLabel(`Queue · ${queueLen}`).setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:shuffle').setEmoji('🔀').setLabel('Shuffle').setStyle(ButtonStyle.Secondary), new ButtonBuilder()
+        .setCustomId('music:loop')
+        .setEmoji(loopEmoji)
+        .setLabel(`Loop · ${loopLabel.charAt(0).toUpperCase()}${loopLabel.slice(1)}`)
+        .setStyle(player.repeatMode === 'off' ? ButtonStyle.Secondary : ButtonStyle.Primary), new ButtonBuilder().setCustomId('music:clear').setEmoji('🗑️').setLabel('Clear').setStyle(ButtonStyle.Secondary));
+    const audioRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:seekback').setEmoji('⏪').setLabel('10s').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:seekfwd').setEmoji('⏩').setLabel('10s').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:voldown').setEmoji('🔉').setLabel('−10%').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:volup').setEmoji('🔊').setLabel('+10%').setStyle(ButtonStyle.Secondary));
+    const libraryRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('music:volume').setEmoji('🎚️').setLabel('Volume').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:like').setEmoji('🤍').setLabel('Favorite').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:library_playlists').setEmoji('📁').setLabel('Playlists').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId('music:history').setEmoji('🕒').setLabel('History').setStyle(ButtonStyle.Secondary));
+    container
+        .addActionRowComponents(playbackRow)
+        .addActionRowComponents(queueRow)
+        .addActionRowComponents(audioRow)
+        .addActionRowComponents(libraryRow);
     return {
         embeds: [],
-        components: [container]
+        components: [container],
+        files
     };
 }
 /** Confirmation shown when a track (or playlist) is queued. */

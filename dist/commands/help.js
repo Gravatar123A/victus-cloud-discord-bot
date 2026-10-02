@@ -187,7 +187,7 @@ export const helpCommand = {
                     `› \`/music\` • Open the interactive Now Playing & controls panel.\n` +
                     `› \`/play <query/URL>\` • Starts a track from YouTube, SoundCloud, or direct URLs.\n` +
                     `› \`/playrandom\` • Play a curated random track by category and language.\n` +
-                    `› \`/nowplaying\` • Spawns the compact Bloom music player.\n` +
+                    `› \`/nowplaying\` • Spawns the live Now Playing card with transport buttons.\n` +
                     `› \`/skip\` • Skip current song.\n` +
                     `› \`/stop\` • Halt audio, clear queue, and disconnect.\n` +
                     `› \`/volume <level>\` • Adjust volume (0-150%).\n` +
