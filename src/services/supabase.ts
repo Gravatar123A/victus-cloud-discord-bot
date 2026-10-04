@@ -1530,8 +1530,8 @@ class SupabaseService {
     // ============================================
 
     /**
-     * Grant 100 COINS for linking Discord via /link. Idempotent: only grants once
-     * per discord_linked_accounts row (coins_granted flag). Uses the canonical
+     * Grant 100 COINS for linking Discord via /link. Paymenter's permanent
+     * transaction history enforces one reward per account across relinks. Uses the canonical
      * victus/coins/grant rail so the credit is Paymenter-authoritative and appears
      * in the panel's Coin History as source=discord_link.
      */
@@ -1554,6 +1554,9 @@ class SupabaseService {
         } else if ((row as any)?.coins_granted) {
             logger.debug(`grantDiscordLinkCoins: already granted for ${linked.discord_id}, skipping`);
             return true;
+        }
+        if ((row as any)?.coins_last_error === 'already_claimed') {
+            return false;
         }
         if ((row as any)?.coins_revoked) {
             logger.info(`grantDiscordLinkCoins: ${linked.discord_id} previously revoked (left server), not re-granting until re-link`);
@@ -1581,26 +1584,16 @@ class SupabaseService {
             logger.info(`grantDiscordLinkCoins: +${amount} COINS to ${email} (discord ${linked.discord_id})`);
             return true;
         } catch (e) {
-            logger.warn(`grantDiscordLinkCoins Paymenter failed for ${linked.discord_id}: ${(e as Error).message} — falling back to Supabase wallet`);
-            try {
-                const ok = await this.fallbackIncrementCp(linked.user_id, amount, 'discord link fallback');
-                if (ok) {
-                    await this.client.from('discord_linked_accounts').update({
-                        coins_granted: true,
-                        coins_granted_at: new Date().toISOString(),
-                        coins_amount: amount,
-                        coins_revoked: false,
-                        coins_revoked_at: null,
-                        coins_last_error: null,
-                    } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id);
-                    logger.info(`grantDiscordLinkCoins: fallback +${amount} COINS to ${email} (discord ${linked.discord_id})`);
-                    return true;
-                }
-            } catch (fb) {
-                logger.error(`grantDiscordLinkCoins fallback failed for ${linked.discord_id}: ${(fb as Error).message}`);
+            const message = String((e as Error).message);
+            const alreadyClaimed = message.includes('Discord link reward already claimed');
+            // A local-wallet fallback can be replayed after unlink deletes this
+            // row. Never mint this one-time reward outside Paymenter's ledger.
+            await this.client.from('discord_linked_accounts').update({
+                coins_last_error: alreadyClaimed ? 'already_claimed' : message.slice(0, 500),
+            } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, () => {});
+            if (!alreadyClaimed) {
+                logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${message}`);
             }
-            await this.client.from('discord_linked_accounts').update({ coins_last_error: String((e as Error).message).slice(0, 500) } as any).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => {}, () => {});
-            logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${(e as Error).message}`);
             return false;
         }
     }
