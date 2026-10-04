@@ -1266,6 +1266,9 @@ class SupabaseService {
                 let data: any = {};
                 try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
                 if (response.ok) {
+                    if (data?.already_claimed) {
+                        throw new Error('Discord link reward already claimed');
+                    }
                     const balance = this.paymenterCoinBalance(data);
                     if (balance !== null) return balance;
                     throw new Error('Paymenter returned no COINS balance');
@@ -1274,6 +1277,7 @@ class SupabaseService {
                 if (response.status < 500 && response.status !== 429) break;
             } catch (error) {
                 lastError = (error as Error).message;
+                if (lastError === 'Discord link reward already claimed') break;
             }
             await new Promise((resolve) => setTimeout(resolve, attempt * 500));
         }
