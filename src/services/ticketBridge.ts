@@ -18,6 +18,7 @@ const DC_PREFIX = 'dc:'; // marks a ticket_message that originated from Discord
 // every single message in busy channels.
 const notTicketUntil = new Map<string, number>();
 const NOT_TICKET_TTL_MS = 60_000;
+const creatingWebTickets = new Set<string>();
 
 const CHANNEL_PERMS = [
     PermissionFlagsBits.ViewChannel,
@@ -42,6 +43,18 @@ export function initTicketBridge(client: Client<true>): void {
                 logger.error('ticketBridge: relayWebMessageToDiscord failed:', e));
         },
     );
+    const reconcile = async () => {
+        const tickets = await supabase.getWebTicketsWithoutChannel();
+        for (const ticket of tickets) {
+            await handleNewWebTicket(client, ticket).catch((e) => logger.error('ticketBridge: ticket reconciliation failed:', e));
+        }
+        const messages = await supabase.getUnbridgedTicketMessages();
+        for (const message of messages) {
+            await relayWebMessageToDiscord(client, message).catch((e) => logger.error('ticketBridge: message reconciliation failed:', e));
+        }
+    };
+    void reconcile();
+    setInterval(() => { void reconcile(); }, 2 * 60_000);
     logger.info('🎫 Ticket bridge initialized.');
 }
 
@@ -49,8 +62,19 @@ export function initTicketBridge(client: Client<true>): void {
 async function handleNewWebTicket(client: Client<true>, ticket: any): Promise<void> {
     if (!ticket || ticket.guild_id !== WEB_GUILD_ID) return;
     if (ticket.channel_id) return;                       // already has a Discord channel
-    if (!ticket.user_id) return;                          // guest / public-group: nothing to bridge
     if (ticket.custom_answers?.support_group === 'public') return;
+    if (creatingWebTickets.has(ticket.id)) return;
+    creatingWebTickets.add(ticket.id);
+    try {
+        await createWebTicketChannel(client, ticket);
+    } finally {
+        creatingWebTickets.delete(ticket.id);
+    }
+}
+
+async function createWebTicketChannel(client: Client<true>, ticket: any): Promise<void> {
+    const current = await supabase.getTicket(ticket.id).catch(() => null);
+    if (!current || current.channel_id) return;
 
     const supportGuildId = config.bot.supportGuildId;
     if (!supportGuildId) {
@@ -60,7 +84,9 @@ async function handleNewWebTicket(client: Client<true>, ticket: any): Promise<vo
     const guild = await client.guilds.fetch(supportGuildId).catch(() => null);
     if (!guild) return;
 
-    const linked = await supabase.getLinkedAccountByUserId(ticket.user_id).catch(() => null);
+    const linked = ticket.user_id
+        ? await supabase.getLinkedAccountByUserId(ticket.user_id).catch(() => null)
+        : null;
     const settings = await supabase.getBotSettings(guild.id).catch(() => null);
 
     const adminRoleIds = (settings?.ticket_admin_role_ids || []).filter((id: string) => guild.roles.cache.has(id));
@@ -96,7 +122,10 @@ async function handleNewWebTicket(client: Client<true>, ticket: any): Promise<vo
     }).catch((e) => { logger.error('ticketBridge: channel create failed:', e); return null; });
     if (!channel) return;
 
-    await supabase.setTicketChannel(ticket.id, channel.id);
+    if (!(await supabase.setTicketChannel(ticket.id, channel.id))) {
+        await channel.delete().catch(() => undefined);
+        return;
+    }
 
     // First message = the full ticket control panel (entered details, custom
     // answers, /link reminder, Close / Add Member / etc. buttons) + staff ping —
@@ -130,6 +159,7 @@ async function handleNewWebTicket(client: Client<true>, ticket: any): Promise<vo
                 `${staffPing}\n` +
                 `🎫 **Website ticket #${ticket.ticket_number ?? ''}** from ${opener}\n` +
                 `**Subject:** ${truncate(ticket.subject, 200)}\n\n` +
+                `**Web staff inbox:** https://victuscloud.com/admin/support?ticket=${encodeURIComponent(ticket.id)}\n` +
                 `_Reply in this channel to answer — messages sync to the website ticket._`,
             allowedMentions: { parse: ['roles', 'users'] },
         }).catch(() => undefined);
@@ -141,7 +171,8 @@ async function handleNewWebTicket(client: Client<true>, ticket: any): Promise<vo
     for (const msg of pending) {
         if (typeof msg.author_discord_id === 'string' && msg.author_discord_id.startsWith(DC_PREFIX)) continue;
         if (await supabase.claimMessageForBridge(msg.id)) {
-            await postWebMessage(channel, msg).catch(() => undefined);
+            try { await postWebMessage(channel, msg); }
+            catch { await supabase.releaseMessageBridgeClaim(msg.id); }
         }
     }
 }
@@ -153,13 +184,17 @@ async function relayWebMessageToDiscord(client: Client<true>, message: any): Pro
     if (typeof message.author_discord_id === 'string' && message.author_discord_id.startsWith(DC_PREFIX)) return;
 
     const ticket = await supabase.getTicket(message.ticket_id).catch(() => null);
-    if (!ticket || ticket.guild_id !== WEB_GUILD_ID || !ticket.channel_id) return;
+    if (!ticket || !ticket.channel_id) return;
 
     const channel = await client.channels.fetch(ticket.channel_id).catch(() => null);
     if (!channel || !channel.isTextBased()) return;
 
     if (!(await supabase.claimMessageForBridge(message.id))) return; // someone else relayed it
-    await postWebMessage(channel as any, message).catch(() => undefined);
+    try { await postWebMessage(channel as any, message); }
+    catch (error) {
+        await supabase.releaseMessageBridgeClaim(message.id);
+        throw error;
+    }
 }
 
 /**
@@ -191,7 +226,17 @@ async function postWebMessage(channel: any, msg: any): Promise<void> {
     const who = msg.author_username || (msg.author_is_staff ? 'Staff' : 'User');
     const lines = [`**${tag}${who}** (website):`, truncate(msg.content || '', 1800)];
     if (Array.isArray(msg.attachments) && msg.attachments.length) {
-        lines.push(msg.attachments.slice(0, 5).join('\n'));
+        for (const raw of msg.attachments.slice(0, 6)) {
+            try {
+                const attachment = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                const url = typeof attachment === 'string' ? attachment : attachment?.url;
+                if (typeof url !== 'string' || !/^https:\/\//i.test(url)) continue;
+                const name = typeof attachment?.name === 'string' ? attachment.name : 'Attachment';
+                lines.push(`📎 ${truncate(name, 100)}: ${url}`);
+            } catch {
+                if (typeof raw === 'string' && /^https:\/\//i.test(raw)) lines.push(`📎 ${raw}`);
+            }
+        }
     }
     await channel.send({ content: lines.join('\n'), allowedMentions: { parse: [] } });
 }

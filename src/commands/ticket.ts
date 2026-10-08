@@ -1368,6 +1368,7 @@ export function createTicketControlPanel(ticket: Ticket, user: any, linked?: any
                 `» **Status:** ${statusEmoji} ${status.charAt(0).toUpperCase() + status.slice(1)}\n` +
                 `» **Priority:** ${priorityEmoji} ${priority.charAt(0).toUpperCase() + priority.slice(1)}\n` +
                 `» **Created:** ${createdAgo}\n` +
+                `» **Web staff inbox:** https://victuscloud.com/admin/support?ticket=${encodeURIComponent(ticket.id)}\n` +
                 (ticket.claimed_by ? `» **Assigned:** <@${ticket.claimed_by}>\n` : '') +
                 `━━━━━━━━━━━━━━━━━━\n` +
                 `### 📝 Issue Details\n` +

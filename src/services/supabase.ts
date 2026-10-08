@@ -352,6 +352,37 @@ class SupabaseService {
         return true;
     }
 
+    async getWebTicketsWithoutChannel(limit = 100): Promise<any[]> {
+        const { data, error } = await this.client.from('tickets')
+            .select('*').eq('guild_id', 'victus-web').is('channel_id', null)
+            .neq('email', 'public-group@support.victuscloud.local')
+            .order('created_at', { ascending: true }).limit(limit);
+        if (error) logger.error('Failed to load unbridged web tickets:', error);
+        return data || [];
+    }
+
+    async getUnbridgedTicketMessages(limit = 200): Promise<any[]> {
+        const { data: linkedTickets, error: ticketsError } = await this.client.from('tickets')
+            .select('id').not('channel_id', 'is', null).limit(1000);
+        if (ticketsError) {
+            logger.error('Failed to load linked ticket channels:', ticketsError);
+            return [];
+        }
+        const ids = (linkedTickets || []).map((ticket) => ticket.id);
+        if (!ids.length) return [];
+        const { data, error } = await this.client.from('ticket_messages')
+            .select('*').in('ticket_id', ids).is('bridged_at', null).not('author_discord_id', 'like', 'dc:%')
+            .order('created_at', { ascending: true }).limit(limit);
+        if (error) logger.error('Failed to load unbridged ticket messages:', error);
+        return data || [];
+    }
+
+    async releaseMessageBridgeClaim(messageId: string): Promise<void> {
+        const { error } = await this.client.from('ticket_messages')
+            .update({ bridged_at: null }).eq('id', messageId);
+        if (error) logger.error('Failed to release ticket message bridge claim:', error);
+    }
+
     /**
      * Atomically claim a website message for relaying to Discord. Returns true
      * only for the caller that wins the race (bridged_at was null), so the
