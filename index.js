@@ -1,5 +1,6 @@
-import { existsSync, statSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, statSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -42,21 +43,29 @@ let hasCompleteDist =
     existsSync(loggerFile) &&
     existsSync(commandsIndex);
 
-// GitHub sync updates source files but leaves the tracked dist tree present.
-// Rebuild when any TypeScript source is newer than the compiled entrypoint.
-function newestSourceTime(dir) {
-    let newest = 0;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+// GitHub sync may restore an old tracked dist tree with timestamps equal to src.
+// A source fingerprint makes the rebuild decision independent of file times.
+function hashSources(dir, hash) {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
         const file = path.join(dir, entry.name);
-        if (entry.isDirectory()) newest = Math.max(newest, newestSourceTime(file));
-        else if (entry.isFile() && /\.tsx?$/.test(entry.name)) newest = Math.max(newest, statSync(file).mtimeMs);
+        if (entry.isDirectory()) hashSources(file, hash);
+        else if (entry.isFile() && /\.tsx?$/.test(entry.name)) {
+            hash.update(path.relative(rootDir, file));
+            hash.update(readFileSync(file));
+        }
     }
-    return newest;
 }
 
 const sourceDir = path.join(rootDir, "src");
-const sourceIsNewer = existsSync(sourceDir) &&
-    (!hasCompleteDist || newestSourceTime(sourceDir) > statSync(entrypoint).mtimeMs);
+const buildStamp = path.join(rootDir, ".victus-source-hash");
+let sourceHash = null;
+if (existsSync(sourceDir)) {
+    const hash = createHash("sha256");
+    hashSources(sourceDir, hash);
+    sourceHash = hash.digest("hex");
+}
+const sourceIsNewer = sourceHash !== null &&
+    (!hasCompleteDist || !existsSync(buildStamp) || readFileSync(buildStamp, "utf8").trim() !== sourceHash);
 
 if (!hasCompleteDist) {
     console.log("[Victus Bot] dist files incomplete or missing. Restoring pre-built dist from git...");
@@ -84,6 +93,7 @@ if (sourceIsNewer || !hasCompleteDist) {
         shell: process.platform === "win32",
     });
     hasCompleteDist = build.status === 0 && existsSync(entrypoint) && existsSync(loggerFile);
+    if (hasCompleteDist && sourceHash) writeFileSync(buildStamp, sourceHash);
 }
 
 // 4. Launch bot (with tsx fallback if dist is unavailable)
