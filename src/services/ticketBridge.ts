@@ -87,6 +87,9 @@ async function createWebTicketChannel(client: Client<true>, ticket: any): Promis
     const linked = ticket.user_id
         ? await supabase.getLinkedAccountByUserId(ticket.user_id).catch(() => null)
         : null;
+    const linkedMember = linked?.discord_id
+        ? await guild.members.fetch(linked.discord_id).catch(() => null)
+        : null;
     const settings = await supabase.getBotSettings(guild.id).catch(() => null);
 
     const adminRoleIds = (settings?.ticket_admin_role_ids || []).filter((id: string) => guild.roles.cache.has(id));
@@ -119,7 +122,7 @@ async function createWebTicketChannel(client: Client<true>, ticket: any): Promis
     }
 
     const overwrites: any[] = [{ id: guild.id, deny: [PermissionFlagsBits.ViewChannel] }];
-    if (linked?.discord_id) overwrites.push({ id: linked.discord_id, allow: CHANNEL_PERMS });
+    if (linkedMember) overwrites.push({ id: linkedMember.id, allow: CHANNEL_PERMS });
     for (const id of staffRoleIds) overwrites.push({ id, allow: CHANNEL_PERMS });
     for (const id of adminRoleIds) {
         overwrites.push({ id, allow: [...CHANNEL_PERMS, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ManageChannels] });
@@ -143,7 +146,7 @@ async function createWebTicketChannel(client: Client<true>, ticket: any): Promis
     // answers, /link reminder, Close / Add Member / etc. buttons) + staff ping —
     // the same panel the Discord /ticket flow posts.
     const staffPing = [...adminRoleIds, ...staffRoleIds].map((id: string) => `<@&${id}>`).join(' ');
-    const ownerPing = linked?.discord_id ? `<@${linked.discord_id}>` : '';
+    const ownerPing = linkedMember ? `<@${linkedMember.id}>` : '';
     try {
         const controlPanel = createTicketControlPanel(ticket, null, linked);
         await channel.send({
@@ -165,7 +168,7 @@ async function createWebTicketChannel(client: Client<true>, ticket: any): Promis
         }).catch(() => undefined);
     } catch (e) {
         logger.error('ticketBridge: control panel send failed, falling back to text:', e);
-        const opener = linked?.discord_id ? `<@${linked.discord_id}>` : (ticket.email ?? 'A website user');
+        const opener = linkedMember ? `<@${linkedMember.id}>` : (ticket.email ?? 'A website user');
         await channel.send({
             content:
                 `${staffPing}\n` +
