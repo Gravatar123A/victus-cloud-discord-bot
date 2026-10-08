@@ -1,6 +1,8 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
+import { lookup as dnsLookup } from 'node:dns';
 import ws from 'ws';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type {
@@ -23,6 +25,58 @@ const DEFAULT_DM_PREFERENCES = {
     dm_security: true,
     dm_promotions: true,
 };
+
+// Supabase close actions need to keep working during Cloudflare-to-origin 522s.
+// This direct route keeps the Supabase hostname/SNI and verifies the origin
+// certificate against Cloudflare's published Origin CA root.
+const CLOUDFLARE_ORIGIN_CA = `-----BEGIN CERTIFICATE-----
+MIIEADCCAuigAwIBAgIID+rOSdTGfGcwDQYJKoZIhvcNAQELBQAwgYsxCzAJBgNV
+BAYTAlVTMRkwFwYDVQQKExBDbG91ZEZsYXJlLCBJbmMuMTQwMgYDVQQLEytDbG91
+ZEZsYXJlIE9yaWdpbiBTU0wgQ2VydGlmaWNhdGUgQXV0aG9yaXR5MRYwFAYDVQQH
+Ew1TYW4gRnJhbmNpc2NvMRMwEQYDVQQIEwpDYWxpZm9ybmlhMB4XDTE5MDgyMzIx
+MDgwMFoXDTI5MDgxNTE3MDAwMFowgYsxCzAJBgNVBAYTAlVTMRkwFwYDVQQKExBD
+bG91ZEZsYXJlLCBJbmMuMTQwMgYDVQQLEytDbG91ZEZsYXJlIE9yaWdpbiBTU0wg
+Q2VydGlmaWNhdGUgQXV0aG9yaXR5MRYwFAYDVQQHEw1TYW4gRnJhbmNpc2NvMRMw
+EQYDVQQIEwpDYWxpZm9ybmlhMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+AQEAwEiVZ/UoQpHmFsHvk5isBxRehukP8DG9JhFev3WZtG76WoTthvLJFRKFCHXm
+V6Z5/66Z4S09mgsUuFwvJzMnE6Ej6yIsYNCb9r9QORa8BdhrkNn6kdTly3mdnykb
+OomnwbUfLlExVgNdlP0XoRoeMwbQ4598foiHblO2B/LKuNfJzAMfS7oZe34b+vLB
+yrP/1bgCSLdc1AxQc1AC0EsQQhgcyTJNgnG4va1c7ogPlwKyhbDyZ4e59N5lbYPJ
+SmXI/cAe3jXj1FBLJZkwnoDKe0v13xeF+nF32smSH0qB7aJX2tBMW4TWtFPmzs5I
+lwrFSySWAdwYdgxw180yKU0dvwIDAQABo2YwZDAOBgNVHQ8BAf8EBAMCAQYwEgYD
+VR0TAQH/BAgwBgEB/wIBAjAdBgNVHQ4EFgQUJOhTV118NECHqeuU27rhFnj8KaQw
+HwYDVR0jBBgwFoAUJOhTV118NECHqeuU27rhFnj8KaQwDQYJKoZIhvcNAQELBQAD
+ggEBAHwOf9Ur1l0Ar5vFE6PNrZWrDfQIMyEfdgSKofCdTckbqXNTiXdgbHs+TWoQ
+wAB0pfJDAHJDXOTCWRyTeXOseeOi5Btj5CnEuw3P0oXqdqevM1/+uWp0CM35zgZ8
+VD4aITxity0djzE6Qnx3Syzz+ZkoBgTnNum7d9A66/V636x4vTeqbZFBr9erJzgz
+hhurjcoacvRNhnjtDRM0dPeiCJ50CP3wEYuvUzDHUaowOsnLCjQIkWbR7Ni6KEIk
+MOz2U0OBSif3FTkhCgZWQKOOLo1P42jHC3ssUZAtVNXrCk3fw9/E15k8NPkBazZ6
+0iykLhH1trywrKRMVw67F44IE8Y=
+-----END CERTIFICATE-----`;
+const SUPABASE_DIRECT_HOST = 'db.victuscloud.com';
+const SUPABASE_DIRECT_IP = process.env.SUPABASE_DIRECT_ORIGIN_IP || '51.77.58.191';
+const supabaseDirectAgent = new Agent({
+    connect: {
+        ca: CLOUDFLARE_ORIGIN_CA,
+        lookup: ((hostname: string, options: any, callback: (...args: any[]) => void) => {
+            if (hostname !== SUPABASE_DIRECT_HOST) return dnsLookup(hostname, options, callback as any);
+            const addresses = [{ address: SUPABASE_DIRECT_IP, family: 4 }];
+            return options?.all ? callback(null, addresses) : callback(null, SUPABASE_DIRECT_IP, 4);
+        }) as any,
+    },
+});
+
+function createDirectSupabaseClient(): SupabaseClient {
+    const directFetch = ((input: any, init?: any) => undiciFetch(input, {
+        ...init,
+        dispatcher: supabaseDirectAgent,
+        signal: AbortSignal.timeout(8000),
+    } as any)) as typeof fetch;
+    return createClient(config.supabase.url, config.supabase.serviceKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+        global: { fetch: directFetch },
+    });
+}
 
 function isCertError(error: unknown): boolean {
     const msg = String((error as any)?.message || error || '');
@@ -2440,10 +2494,7 @@ class SupabaseService {
 
     /** Bypass the background-query circuit breaker for an explicit close-button action. */
     async getTicketForClose(id: string, channelId: string): Promise<any | null> {
-        const direct = createClient(config.supabase.url, config.supabase.serviceKey, {
-            auth: { autoRefreshToken: false, persistSession: false },
-            global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(8000) }) },
-        });
+        const direct = createDirectSupabaseClient();
         for (const [column, value] of [['id', id], ['channel_id', channelId]]) {
             if (!value) continue;
             try {
@@ -2464,10 +2515,7 @@ class SupabaseService {
 
     async closeTicketDirect(id: string): Promise<boolean> {
         try {
-            const direct = createClient(config.supabase.url, config.supabase.serviceKey, {
-                auth: { autoRefreshToken: false, persistSession: false },
-                global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(8000) }) },
-            });
+            const direct = createDirectSupabaseClient();
             const { data, error } = await direct.from('tickets')
                 .update({ status: 'closed', closed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
                 .eq('id', id).select('id').maybeSingle();
