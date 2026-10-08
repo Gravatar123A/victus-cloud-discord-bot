@@ -93,17 +93,29 @@ async function createWebTicketChannel(client: Client<true>, ticket: any): Promis
     const staffRoleIds = (settings?.ticket_staff_role_ids || [])
         .filter((id: string) => guild.roles.cache.has(id) && !adminRoleIds.includes(id));
 
-    // Resolve / create the parent "Tickets" category.
+    // Discord caps each category at 50 channels. Continue into numbered ticket
+    // categories when the configured category fills up.
     let parentId: string | null = settings?.ticket_parent_category_id || null;
     if (parentId) {
         const parent = await guild.channels.fetch(parentId).catch(() => null);
-        if (!parent || parent.type !== ChannelType.GuildCategory) parentId = null;
+        if (!parent || parent.type !== ChannelType.GuildCategory ||
+            guild.channels.cache.filter((c) => c.parentId === parentId).size >= 50) parentId = null;
     }
     if (!parentId) {
-        let cat = guild.channels.cache.find(
-            (c) => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === 'tickets');
-        if (!cat) cat = await guild.channels.create({ name: 'Tickets', type: ChannelType.GuildCategory });
-        parentId = cat.id;
+        for (let index = 1; index <= 20; index++) {
+            const name = index === 1 ? 'Tickets' : `Tickets ${index}`;
+            let cat = guild.channels.cache.find(
+                (c) => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === name.toLowerCase());
+            if (!cat) cat = await guild.channels.create({ name, type: ChannelType.GuildCategory });
+            if (guild.channels.cache.filter((c) => c.parentId === cat!.id).size < 50) {
+                parentId = cat.id;
+                break;
+            }
+        }
+        if (!parentId) {
+            logger.error('ticketBridge: all ticket categories are full.');
+            return;
+        }
     }
 
     const overwrites: any[] = [{ id: guild.id, deny: [PermissionFlagsBits.ViewChannel] }];
