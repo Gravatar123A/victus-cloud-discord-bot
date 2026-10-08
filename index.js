@@ -1,4 +1,4 @@
-import { existsSync, statSync, mkdirSync } from "node:fs";
+import { existsSync, statSync, mkdirSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -42,6 +42,22 @@ let hasCompleteDist =
     existsSync(loggerFile) &&
     existsSync(commandsIndex);
 
+// GitHub sync updates source files but leaves the tracked dist tree present.
+// Rebuild when any TypeScript source is newer than the compiled entrypoint.
+function newestSourceTime(dir) {
+    let newest = 0;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const file = path.join(dir, entry.name);
+        if (entry.isDirectory()) newest = Math.max(newest, newestSourceTime(file));
+        else if (entry.isFile() && /\.tsx?$/.test(entry.name)) newest = Math.max(newest, statSync(file).mtimeMs);
+    }
+    return newest;
+}
+
+const sourceDir = path.join(rootDir, "src");
+const sourceIsNewer = existsSync(sourceDir) &&
+    (!hasCompleteDist || newestSourceTime(sourceDir) > statSync(entrypoint).mtimeMs);
+
 if (!hasCompleteDist) {
     console.log("[Victus Bot] dist files incomplete or missing. Restoring pre-built dist from git...");
     // Attempt 1: Git checkout pre-built dist (fastest, 0 memory, guaranteed clean)
@@ -58,20 +74,16 @@ if (!hasCompleteDist) {
         existsSync(loggerFile) &&
         existsSync(commandsIndex);
 
-    // Attempt 2: Compile TypeScript if git restore didn't populate it
-    if (!hasCompleteDist) {
-        console.log("[Victus Bot] Building TypeScript before startup...");
-        const build = spawnSync("npm", ["run", "build"], {
-            cwd: rootDir,
-            stdio: "inherit",
-            shell: process.platform === "win32",
-        });
+}
 
-        hasCompleteDist =
-            build.status === 0 &&
-            existsSync(entrypoint) &&
-            existsSync(loggerFile);
-    }
+if (sourceIsNewer || !hasCompleteDist) {
+    console.log("[Victus Bot] Building updated TypeScript before startup...");
+    const build = spawnSync("npm", ["run", "build"], {
+        cwd: rootDir,
+        stdio: "inherit",
+        shell: process.platform === "win32",
+    });
+    hasCompleteDist = build.status === 0 && existsSync(entrypoint) && existsSync(loggerFile);
 }
 
 // 4. Launch bot (with tsx fallback if dist is unavailable)
