@@ -2438,6 +2438,51 @@ class SupabaseService {
         return data;
     }
 
+    /** Bypass the background-query circuit breaker for an explicit close-button action. */
+    async getTicketForClose(id: string, channelId: string): Promise<any | null> {
+        const direct = createClient(config.supabase.url, config.supabase.serviceKey, {
+            auth: { autoRefreshToken: false, persistSession: false },
+            global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(8000) }) },
+        });
+        for (const [column, value] of [['id', id], ['channel_id', channelId]]) {
+            if (!value) continue;
+            try {
+                const { data, error } = await direct.from('tickets')
+                    .select('*, category:ticket_categories(*)')
+                    .eq(column, value).maybeSingle();
+                if (data && data.channel_id === channelId) {
+                    resetSupabaseCircuit();
+                    return data;
+                }
+                if (error) logger.warn(`Ticket close lookup failed (${column}): ${error.message}`);
+            } catch (error) {
+                logger.warn(`Ticket close lookup failed (${column}): ${String(error)}`);
+            }
+        }
+        return null;
+    }
+
+    async closeTicketDirect(id: string): Promise<boolean> {
+        try {
+            const direct = createClient(config.supabase.url, config.supabase.serviceKey, {
+                auth: { autoRefreshToken: false, persistSession: false },
+                global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(8000) }) },
+            });
+            const { data, error } = await direct.from('tickets')
+                .update({ status: 'closed', closed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+                .eq('id', id).select('id').maybeSingle();
+            if (error || !data) {
+                logger.error('Direct ticket close failed:', error || 'Ticket not found');
+                return false;
+            }
+            resetSupabaseCircuit();
+            return true;
+        } catch (error) {
+            logger.error('Direct ticket close failed:', error);
+            return false;
+        }
+    }
+
     /**
      * Update ticket
      */

@@ -1512,28 +1512,41 @@ async function sendTicketArchiveSummary(interaction: any, ticket: Ticket, settin
 }
 
 async function handleCloseTicket(interaction: any) {
-    const ticketId = interaction.customId.split('_')[2];
-    const ticket = await supabase.getTicket(ticketId);
+    await interaction.deferUpdate();
+    const ticketId = interaction.customId.slice('ticket_close_'.length);
+    let ticket = await supabase.getTicket(ticketId);
+    if (!ticket && interaction.channelId) ticket = await supabase.getTicketByChannel(interaction.channelId);
+    if (!ticket && interaction.channelId) ticket = await supabase.getTicketForClose(ticketId, interaction.channelId);
 
-    if (!ticket) {
-        await interaction.reply({
-            content: '❌ Ticket not found.',
-            ephemeral: true,
+    if (!ticket || ticket.channel_id !== interaction.channelId) {
+        await interaction.followUp({
+            content: '❌ Ticket data could not be loaded. Please try again shortly.',
+            flags: MessageFlags.Ephemeral,
         });
         return;
     }
 
-    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    const settings = await supabase.getBotSettings(interaction.guildId || ticket.guild_id).catch(() => null);
     if (!canCloseTicket(interaction, ticket, settings)) {
-        await denyTicketAction(interaction, 'Only the ticket owner or configured staff roles can close this ticket.');
+        await interaction.followUp({
+            content: 'Only the ticket owner or configured staff roles can close this ticket.',
+            flags: MessageFlags.Ephemeral,
+        });
         return;
     }
 
-    // Update ticket status
-    await supabase.updateTicket(ticketId, {
+    let updated = await supabase.updateTicket(ticket.id, {
         status: 'closed',
         closed_at: new Date().toISOString(),
     });
+    if (!updated) updated = await supabase.closeTicketDirect(ticket.id);
+    if (!updated) {
+        await interaction.followUp({
+            content: '❌ Ticket could not be closed right now. Please try again shortly.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
 
     await sendTicketArchiveSummary(interaction, ticket, settings);
 
@@ -1544,7 +1557,7 @@ async function handleCloseTicket(interaction: any) {
         `The channel will be deleted in 10 seconds.`
     );
 
-    await interaction.update({
+    await interaction.editReply({
         components: [container],
     });
 
