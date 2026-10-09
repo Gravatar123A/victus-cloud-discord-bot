@@ -61,21 +61,21 @@ export const configCommand: Command = {
         .addSubcommand((sub) =>
             sub
                 .setName('moderation-enable')
-                .setDescription('Enable AI language and conduct moderation')
+                .setDescription('Enable automatic curse-word warnings')
         )
         .addSubcommand((sub) =>
             sub
                 .setName('moderation-disable')
-                .setDescription('Disable AI language and conduct moderation')
+                .setDescription('Disable automatic curse-word warnings')
         )
         .addSubcommand((sub) =>
             sub
                 .setName('language-channel')
-                .setDescription('Set the channel where non-English messages are flagged')
+                .setDescription('Store a language channel preference (no automatic language warnings)')
                 .addChannelOption((opt) =>
                     opt
                         .setName('channel')
-                        .setDescription('Channel where English is required')
+                        .setDescription('Preferred English-language channel')
                         .addChannelTypes(ChannelType.GuildText)
                         .setRequired(true)
                 )
@@ -165,9 +165,9 @@ export const configCommand: Command = {
                     `**Linked Role:** ${roleId !== 'Not set' ? `<@&${roleId}>` : '`Not set`'}\n` +
                     `**Audit Logs:** ${logChannelId !== 'Not set' ? `<#${logChannelId}>` : '`Not set`'}\n` +
                     `**AI Support Channel:** ${aiChannelId !== 'Not set' ? `<#${aiChannelId}>` : '`Not set`'}\n` +
-                    `**AI Moderation:** ${settings?.moderation_enabled ? '`Enabled`' : '`Disabled`'}\n` +
-                    `**English-Only Channel:** ${moderationLanguageChannelId !== 'Not set' ? `<#${moderationLanguageChannelId}>` : '`Not set`'}\n` +
-                    `**Other Languages Channel:** ${moderationOtherLanguagesChannelId !== 'Not set' ? `<#${moderationOtherLanguagesChannelId}>` : '`Not set`'}\n` +
+                    `**Curse-word Filter:** ${settings?.moderation_enabled ? '`Enabled`' : '`Disabled`'}\n` +
+                    `**English Channel (no auto-warnings):** ${moderationLanguageChannelId !== 'Not set' ? `<#${moderationLanguageChannelId}>` : '`Not set`'}\n` +
+                    `**Other Languages Channel (no auto-warnings):** ${moderationOtherLanguagesChannelId !== 'Not set' ? `<#${moderationOtherLanguagesChannelId}>` : '`Not set`'}\n` +
                     `**Moderation Logs:** ${moderationLogChannelId !== 'Not set' ? `<#${moderationLogChannelId}>` : '`Not set`'}\n` +
                     `**Ticket Panel Channel:** ${ticketPanelChannelId !== 'Not set' ? `<#${ticketPanelChannelId}>` : '`Not set`'}\n` +
                     `**Default Ticket Category:** ${ticketParentCategoryId !== 'Not set' ? `\`${ticketParentCategoryId}\`` : '`Not set`'}\n` +
@@ -291,9 +291,9 @@ export const configCommand: Command = {
                 if (!success) throw new Error('Database update failed');
                 await interaction.editReply({
                     components: [ComponentsV2.successContainer(
-                        enabled ? 'AI Moderation Enabled' : 'AI Moderation Disabled',
+                        enabled ? 'Curse-word Filter Enabled' : 'Curse-word Filter Disabled',
                         enabled
-                            ? 'Language and conduct checks are now active. If no English-only channel is configured, language checks apply to all guild channels except the optional other-language channel.'
+                            ? 'Automatic warnings now apply only when a message contains a word in the profanity list.'
                             : 'The bot will stop automatically flagging messages. Existing warnings remain available to moderators.',
                     )],
                     flags: ComponentsV2.IS_COMPONENTS_V2,
@@ -309,9 +309,9 @@ export const configCommand: Command = {
                         ? 'moderation_other_languages_channel_id'
                         : 'moderation_log_channel_id';
                 const label = subcommand === 'language-channel'
-                    ? 'English-only channel'
+                    ? 'English channel preference (no automatic language warnings)'
                     : subcommand === 'languages-channel'
-                        ? 'Other-languages channel'
+                        ? 'Other-languages channel preference (no automatic language warnings)'
                         : 'Moderation log channel';
                 const success = await supabase.updateBotSettings(interaction.guildId, { [key]: channel.id });
                 if (!success) throw new Error('Database update failed');

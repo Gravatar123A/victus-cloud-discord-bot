@@ -4,7 +4,7 @@ A next-generation Discord bot that functions as a full extension of the Victus C
 
 ## Features
 
-- **AI Moderation** - Optional English-only detection, conduct filtering, warning logs, and escalation policy
+- **Curse-word moderation** - Optional multilingual profanity filter, warning logs, and escalation policy
 - **Currency and Pricing Utilities** - `/currency` conversion GUI and `/pricing` website-synced catalog
 
 - 🔐 **Secure Account Linking** - Link Discord to Victus Cloud account
@@ -149,16 +149,14 @@ To disable automatic channel replies:
 /config ai-disable
 ```
 
-To configure optional AI moderation, use the admin-only commands:
+To configure optional curse-word moderation, use the admin-only commands:
 
 ```text
-/config language-channel channel:#english
-/config languages-channel channel:#other-languages
 /config moderation-logs channel:#moderation-logs
 /config moderation-enable
 ```
 
-Moderation sends a short-lived Components V2 notice, a private DM, and a staff log. Three active warnings create a service suspension; three suspensions create a ban. Use `/warn remove` or `/warn reset` to manually correct a warning record. The website admin panel exposes the same settings.
+Automatic moderation warns only for words in the profanity list. Ordinary phrases and AI conduct judgments do not create warnings. A profanity warning sends a short-lived Components V2 notice, a private DM, and a staff log. Three active warnings create a service suspension; three suspensions create a ban. Use `/warn remove` or `/warn reset` to manually correct a warning record. The website admin panel exposes the same settings.
 
 If your Pterodactyl panel shows `preg_match(): Unknown modifier '-'`, do not add regex validation rules for Groq values. Use plain `nullable|string` style validation, or only set `GROQ_API_KEY` and let the bot defaults handle the model/base URL.
 

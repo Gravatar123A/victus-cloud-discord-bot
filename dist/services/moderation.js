@@ -1,31 +1,16 @@
 import { EmbedBuilder, GuildMember, PermissionFlagsBits, } from 'discord.js';
 import { supabase } from './supabase.js';
-import { groqAi } from './groqAi.js';
 import { warnSettings } from './warnSettings.js';
 import { whitelistSettings } from './whitelistSettings.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { logger } from '../utils/logger.js';
+import { containsProfanity } from '../data/badWords.js';
 const SETTINGS_TTL_MS = 20_000;
 const WARNING_LIMIT = 3;
 const SUSPENSION_LIMIT = 3;
 const SUSPENSION_MS = 24 * 60 * 60 * 1000;
 const settingsCache = new Map();
 const activeChecks = new Set();
-// Profanity detection is now STRICTLY based on the multilingual bad-words database.
-// Language detection has been REMOVED per operator request — only actual bad words trigger warnings.
-import { containsProfanity } from '../data/badWords.js';
-function hasExplicitAbuse(content) {
-    return containsProfanity(content).matched;
-}
-async function classifyWithTimeout(content) {
-    return Promise.race([
-        groqAi.classifyModeration(content),
-        new Promise((resolve) => setTimeout(() => resolve(null), 6_000)),
-    ]);
-}
-function policyText() {
-    return 'Please keep conversations respectful. Avoid profanity and harassment.';
-}
 async function getSettings(guildId) {
     const cached = settingsCache.get(guildId);
     if (cached && cached.expiresAt > Date.now())
@@ -104,7 +89,7 @@ async function recordAutomaticWarning(message, reason, category, deleteMessage) 
         userId: message.author.id,
         userName: message.author.username,
         moderatorId: message.client.user?.id || 'victus-ai-moderation',
-        moderatorName: 'Victus AI Moderation',
+        moderatorName: 'Victus Auto Moderation',
         reason,
         timestamp: new Date().toISOString(),
         source: 'ai_moderation',
@@ -114,7 +99,7 @@ async function recordAutomaticWarning(message, reason, category, deleteMessage) 
     if (deleteMessage)
         await message.delete().catch(() => undefined);
     const logChannelId = settings?.moderation_log_channel_id || warnConfig.warnChannelId;
-    await sendStaffLog(message.guild, logChannelId, `# 🛡️ AI moderation case\n\n` +
+    await sendStaffLog(message.guild, logChannelId, `# 🛡️ Automatic moderation case\n\n` +
         `> **User:** <@${message.author.id}> (${message.author.username})\n` +
         `> **Channel:** <#${message.channelId}>\n` +
         `> **Category:** \`${category}\`\n` +
@@ -122,7 +107,7 @@ async function recordAutomaticWarning(message, reason, category, deleteMessage) 
         `> **Warning ID:** \`${warningId}\`\n` +
         `> **Reason:** ${reason}\n\n` +
         `**Active warnings:** ${warnings.length}/${WARNING_LIMIT}`);
-    const dmText = `Please keep conversations respectful. ${reason}`;
+    const dmText = `Your message contained a blocked curse word. ${reason}`;
     await message.author.send({
         embeds: [new EmbedBuilder()
                 .setColor(0xf59e0b)
@@ -146,7 +131,7 @@ async function recordAutomaticWarning(message, reason, category, deleteMessage) 
     }
 }
 export async function inspectModerationMessage(message) {
-    // Language detection has been DISABLED — only actual profanity (multilingual bad-words DB) triggers a warning.
+    // Ordinary insults and AI classifications cannot trigger automatic warnings.
     if (!message.inGuild() || message.author.bot || !message.content.trim())
         return false;
     const settings = await getSettings(message.guildId);
@@ -163,17 +148,13 @@ export async function inspectModerationMessage(message) {
     activeChecks.add(key);
     try {
         const content = message.content.trim().slice(0, 1800);
-        const explicitAbuse = hasExplicitAbuse(content);
-        const classification = content.length >= 4 ? await classifyWithTimeout(content) : null;
-        const isCussImmune = await whitelistSettings.isImmune(message.guildId, message.author.id, 'cuss').catch(() => false);
-        // Only actual bad words (local DB) OR high-confidence AI abuse. Language signals are ignored.
         const profanity = containsProfanity(content);
-        const abusive = !isCussImmune && (explicitAbuse || profanity.matched || Boolean(classification?.abusive && (classification.abuseConfidence >= 0.92)));
-        if (abusive) {
-            const reason = profanity.matched
-                ? profanity.reason || 'Profanity detected (multilingual bad-words database).'
-                : (classification?.reason || 'Disrespectful, abusive, or prohibited language.');
-            await recordAutomaticWarning(message, reason, classification?.category || 'abuse', true);
+        if (!profanity.matched)
+            return false;
+        const isCussImmune = await whitelistSettings.isImmune(message.guildId, message.author.id, 'cuss').catch(() => false);
+        if (!isCussImmune) {
+            const reason = profanity.reason || 'Profanity detected (multilingual bad-words database).';
+            await recordAutomaticWarning(message, reason, 'profanity', true);
             return true;
         }
         return false;
