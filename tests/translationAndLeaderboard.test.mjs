@@ -120,7 +120,7 @@ test('memberStatsService tracks messages and voice airtime accurately', async ()
 test('leaderboardService builds Components V2 layouts for all categories and pages', async () => {
     const testGuild = 'test_guild_999';
 
-    for (const view of ['overview', 'coins', 'xp', 'messages', 'voice']) {
+    for (const view of ['overview', 'coins', 'xp', 'messages', 'voice', 'gtn']) {
         // Page 1
         const containerP1 = await leaderboardService.buildLeaderboardContainer(testGuild, view, 1);
         assert.ok(containerP1, `Container failed for view: ${view} page 1`);
@@ -130,9 +130,11 @@ test('leaderboardService builds Components V2 layouts for all categories and pag
 
         // Check button rows
         const tabRow = jsonP1.components[1];
-        assert.equal(tabRow.components.length, 5); // overview, coins, xp, messages, voice
+        assert.equal(tabRow.components.length, 4); // overview, coins, xp, messages
+        const secondTabRow = jsonP1.components[2];
+        assert.deepEqual(secondTabRow.components.map(button => button.custom_id.split(':')[1]), ['voice', 'gtn']);
 
-        const navRow = jsonP1.components[2];
+        const navRow = jsonP1.components[3];
         assert.equal(navRow.components.length, 4); // prev, page indicator, next, refresh
         assert.ok(navRow.components[0].custom_id.startsWith('lb_page:'));
         assert.ok(navRow.components[1].custom_id.startsWith('lb_noop:'));

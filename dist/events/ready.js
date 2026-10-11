@@ -1,3 +1,4 @@
+import { startPvpRecovery } from '../commands/pvp.js';
 import { ActivityType } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
@@ -354,6 +355,7 @@ export const readyEvent = {
         logger.info('Live Leaderboard 1-minute auto-update scheduler started');
         // Viral Expansion Engine initialization
         viralExpansionService.init(client);
+        startPvpRecovery(client);
         // Live Minecraft Server Discovery Forum Directory initialization
         forumDirectoryService.start(client);
         // Main Hub Minecraft <-> Discord Chat & Join/Leave Bridge

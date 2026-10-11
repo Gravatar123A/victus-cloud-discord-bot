@@ -1,3 +1,6 @@
+import { worldBossService } from './worldBossService.js';
+import { withGameLock } from './gameLock.js';
+import { rpgService } from './rpgService.js';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MediaGalleryBuilder, MediaGalleryItemBuilder } from 'discord.js';
 import { viralExpansionStore } from './viralExpansionStore.js';
 import { CoinTransactionLock } from './coinTransactionLock.js';
@@ -304,110 +307,31 @@ export class ViralExpansionService {
         }
     }
     async tameWildMob(guildId, user) {
-        const active = this.activeWildMob.get(guildId);
-        if (!active || Date.now() > active.expiresAt) {
-            return { success: false, message: 'There is no wild mob nearby to tame!' };
-        }
-        const inv = await viralExpansionStore.getInventory(user.id);
-        const newMob = {
-            id: `mob_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            name: active.mobName,
-            species: active.species,
-            rarity: active.rarity,
-            power: active.power,
-            health: active.power * 2,
-            capturedAt: new Date().toISOString(),
-            stars: active.rarity === 'mythic' ? 5 : active.rarity === 'legendary' ? 4 : active.rarity === 'epic' ? 3 : 2,
-        };
-        inv.mobs_json.push(newMob);
-        await viralExpansionStore.saveInventory(inv);
-        this.activeWildMob.delete(guildId);
-        return {
-            success: true,
-            message: `✨ **Tamed!** You captured a **${active.mobName}** [${active.rarity.toUpperCase()}] with **${active.power} Combat Power**! View your collection anytime with \`/zoo\`.`,
-        };
+        return withGameLock(`mob:${guildId}`, async () => {
+            const active = this.activeWildMob.get(guildId);
+            if (!active || Date.now() > active.expiresAt) {
+                return { success: false, message: 'There is no wild mob nearby to tame!' };
+            }
+            await rpgService.mutateInventory(user.id, inventory => {
+                inventory.mobs_json.push({
+                    id: `mob_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                    name: active.mobName, species: active.species, rarity: active.rarity,
+                    power: active.power, health: active.power * 2, capturedAt: new Date().toISOString(),
+                    stars: active.rarity === 'mythic' ? 5 : active.rarity === 'legendary' ? 4 : active.rarity === 'epic' ? 3 : 2,
+                });
+            });
+            this.activeWildMob.delete(guildId);
+            return { success: true, message: `Tamed **${active.mobName}** [${active.rarity.toUpperCase()}] with **${active.power} Combat Power**! View your collection with /zoo.` };
+        });
     }
     // ============================================
     // MODULE B: CROSS-SERVER WORLD BOSS RAIDS
     // ============================================
     async attackWorldBoss(user, actionType) {
-        let boss = await viralExpansionStore.getActiveWorldBoss();
-        if (!boss || boss.status !== 'active') {
-            // Spawn a new boss if none active (Ender Dragon 10,000 HP or Wither 7,500 HP)
-            const isDragon = Math.random() > 0.5;
-            boss = {
-                id: `boss_${Date.now()}`,
-                boss_type: isDragon ? 'ender_dragon' : 'wither',
-                max_hp: isDragon ? 10000 : 7500,
-                current_hp: isDragon ? 10000 : 7500,
-                pool_coins: isDragon ? 1000 : 750,
-                participants_json: {},
-                channel_ids: [],
-                status: 'active',
-                spawned_at: new Date().toISOString(),
-            };
-            await viralExpansionStore.saveWorldBoss(boss);
-        }
-        const inv = await viralExpansionStore.getInventory(user.id);
-        const pickaxeMultipliers = {
-            wood: 1,
-            stone: 1.5,
-            iron: 2.2,
-            diamond: 3.5,
-            netherite: 5.0,
-        };
-        const mult = pickaxeMultipliers[inv.pickaxe_tier] || 1;
-        let baseDmg = actionType === 'magic' ? 40 : actionType === 'bow' ? 25 : 15;
-        // Add random variance (+/- 20%)
-        const variance = (Math.random() * 0.4) + 0.8;
-        const damageDealt = Math.round(baseDmg * mult * variance);
-        const newHp = Math.max(0, boss.current_hp - damageDealt);
-        boss.current_hp = newHp;
-        // Record participant
-        const prev = boss.participants_json[user.id] || { damage: 0, name: user.username, hits: 0 };
-        prev.damage += damageDealt;
-        prev.hits += 1;
-        boss.participants_json[user.id] = prev;
-        let defeated = false;
-        let rewardSummary;
-        if (newHp <= 0) {
-            boss.status = 'defeated';
-            boss.defeated_at = new Date().toISOString();
-            defeated = true;
-            // Split COINS pool proportionally among participants!
-            const totalDmg = Object.values(boss.participants_json).reduce((sum, p) => sum + p.damage, 0);
-            const payouts = [];
-            for (const [pUserId, data] of Object.entries(boss.participants_json)) {
-                const ratio = data.damage / (totalDmg || 1);
-                let rewardCoins = Math.max(5, Math.floor(boss.pool_coins * ratio));
-                // MVP or finishing blow bonus
-                if (pUserId === user.id) {
-                    rewardCoins += 25; // finishing blow bonus
-                }
-                await CoinTransactionLock.grantCoins(pUserId, rewardCoins, 'world_boss_raid', `boss:${boss.id}:${pUserId}`, `World Boss ${boss.boss_type} defeat reward (+${rewardCoins} COINS)`).catch(() => { });
-                payouts.push(`<@${pUserId}>: **+${rewardCoins} COINS** (${data.damage.toLocaleString()} DMG)`);
-            }
-            rewardSummary = payouts.slice(0, 5).join('\n');
-        }
-        await viralExpansionStore.saveWorldBoss(boss);
-        return {
-            success: true,
-            damageDealt,
-            remainingHp: newHp,
-            defeated,
-            rewardSummary,
-        };
+        return worldBossService.attack(user, actionType);
     }
     async tickBossAndWars() {
-        // Boss expiration check (active for 24h)
-        const boss = await viralExpansionStore.getActiveWorldBoss();
-        if (boss && boss.status === 'active') {
-            const age = Date.now() - new Date(boss.spawned_at).getTime();
-            if (age > 24 * 60 * 60 * 1000) {
-                boss.status = 'expired';
-                await viralExpansionStore.saveWorldBoss(boss);
-            }
-        }
+        await worldBossService.maintain().catch(error => logger.warn('Raid maintenance deferred:', error));
     }
 }
 export const viralExpansionService = new ViralExpansionService();

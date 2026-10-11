@@ -1,3 +1,4 @@
+import { rpsCommand, ticTacToeCommand, connect4Command } from './pvp.js';
 import { Collection } from 'discord.js';
 import { logger } from '../utils/logger.js';
 // Import commands
@@ -86,6 +87,7 @@ import { resourceSyncCommand } from './resourceSync.js';
 export const commands = new Collection();
 // Register all commands
 const allCommands = [
+    rpsCommand, ticTacToeCommand, connect4Command,
     pingCommand,
     pingAdminCommand,
     staffaiCommand,

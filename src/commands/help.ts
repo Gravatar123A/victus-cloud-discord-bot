@@ -254,18 +254,23 @@ export const helpCommand: Command = {
                 title = 'Fun & Entertainment Hub';
                 desc = `Full suite of high-engagement mini-games and RPG systems — all backed by real COINS!\n\n` +
                     `### ⛏️ Minecraft RPG Engine\n` +
-                    `› \`/mine\` • Mine underground stone, coal, iron, gold, diamond, netherite.\n` +
+                    `› \`/mine\` • Get an instant drop and keep mining with one button.\n` +
                     `› \`/fish\` • Cast line into rivers, oceans, and deep trenches.\n` +
-                    `› \`/rpg inv\` • View equipment tier, durability, and raw materials.\n` +
-                    `› \`/rpg sell\` • Liquidate gathered resources into real Victus COINS.\n` +
+                    `› \`/rpg inv\` • View equipment tiers, materials, and upgrade progress.\n` +
+                    `› \`/rpg sell\` • Choose materials and quantities to sell for COINS.\n` +
                     `› \`/rpg craft\` • Forge higher tier pickaxes and rods.\n\n` +
+                    `### Player versus Player\n` +
+                    `- \`/rps opponent amount\` - Hidden choices and equal stakes.\n` +
+                    `- \`/tictactoe opponent amount\` - Three in a row with a friend.\n` +
+                    `- \`/connect4 opponent amount\` - Drop counters and connect four.\n` +
+                    `Winner gets the full pot in Paymenter; draws refund both. 10-second cooldown.\n\n` +
                     `### 🧩 Word & Chat Games\n` +
                     `› \`/unscramble\` • Unscramble words for rewards & auto-events (alias \`!scramble\`).\n` +
                     `› \`/gtn\` • Guess The Number event with auto-hinting & coins (alias \`!gtn\`).\n` +
                     `› \`/counting\` • Server counting channel minigame.\n\n` +
                     `### 🐉 World Bosses & Arena Pets\n` +
                     `› \`/boss\` • Check global World Boss raid status (Ender Dragon, Wither).\n` +
-                    `› \`/attack [melee/bow/magic]\` • Deal damage and claim shares of 1,000 COINS bounty.\n` +
+                    `› \`/attack [melee/bow/magic]\` • Attack every 15s for a share of the displayed bounty.\n` +
                     `› \`/tame\` & \`/zoo\` • Capture wild mobs and view your pet bestiary.\n` +
                     `› \`/battle @user <wager>\` • PvP pet battles with wagered COINS.\n\n` +
                     `### ⚡ Progression & AirDrops\n` +

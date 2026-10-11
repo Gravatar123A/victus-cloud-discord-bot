@@ -1,4 +1,5 @@
-import { ChannelType, EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, } from 'discord.js';
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
+import { ChannelType, EmbedBuilder, MessageFlags, SlashCommandBuilder, } from 'discord.js';
 import { unscrambleService, parseTimeDuration, formatDuration } from '../services/unscrambleService.js';
 export const unscrambleCommand = {
     data: new SlashCommandBuilder()
@@ -90,10 +91,8 @@ export const unscrambleCommand = {
             });
             return;
         }
-        const member = interaction.guild.members.cache.get(interaction.user.id);
-        const hasStaffPerms = !!member && (member.permissions.has(PermissionFlagsBits.ManageMessages) ||
-            member.permissions.has(PermissionFlagsBits.ManageGuild) ||
-            member.permissions.has(PermissionFlagsBits.Administrator));
+        // These controls can mint real platform COINS, so guild permissions alone never qualify.
+        const hasStaffPerms = await isVictusStaffOrAdmin(interaction.user, interaction.client);
         let subcommand = null;
         try {
             subcommand = interaction.options.getSubcommand(false);
@@ -181,7 +180,7 @@ export const unscrambleCommand = {
         if (subcommand === 'start') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need **Manage Messages** or **Manage Server** permission to host an Unscramble round.',
+                    content: '⛔ You must be official Victus Cloud staff to host an Unscramble round.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -224,7 +223,7 @@ export const unscrambleCommand = {
         if (subcommand === 'auto') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need **Manage Server** or **Manage Messages** permission to configure automated rounds.',
+                    content: '⛔ You must be official Victus Cloud staff to configure automated rounds.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -282,7 +281,7 @@ export const unscrambleCommand = {
         if (subcommand === 'coins') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need **Manage Server** permission to configure coin rewards.',
+                    content: '⛔ You must be official Victus Cloud staff to configure coin rewards.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -305,7 +304,7 @@ export const unscrambleCommand = {
         if (subcommand === 'role') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need **Manage Server** permission to configure the ping role.',
+                    content: '⛔ You must be official Victus Cloud staff to configure the ping role.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -337,7 +336,7 @@ export const unscrambleCommand = {
         if (subcommand === 'channel') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need **Manage Channels** or **Manage Server** permission to configure arena channels.',
+                    content: '⛔ You must be official Victus Cloud staff to configure arena channels.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -375,7 +374,7 @@ export const unscrambleCommand = {
         if (subcommand === 'end') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need **Manage Messages** permission to end an active game.',
+                    content: '⛔ You must be official Victus Cloud staff to end an active game.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;

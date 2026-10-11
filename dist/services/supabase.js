@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
+import { lookup as dnsLookup } from 'node:dns';
 import ws from 'ws';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { localSettings } from './localSettings.js';
@@ -10,6 +12,57 @@ const DEFAULT_DM_PREFERENCES = {
     dm_security: true,
     dm_promotions: true,
 };
+// Supabase close actions need to keep working during Cloudflare-to-origin 522s.
+// This direct route keeps the Supabase hostname/SNI and verifies the origin
+// certificate against Cloudflare's published Origin CA root.
+const CLOUDFLARE_ORIGIN_CA = `-----BEGIN CERTIFICATE-----
+MIIEADCCAuigAwIBAgIID+rOSdTGfGcwDQYJKoZIhvcNAQELBQAwgYsxCzAJBgNV
+BAYTAlVTMRkwFwYDVQQKExBDbG91ZEZsYXJlLCBJbmMuMTQwMgYDVQQLEytDbG91
+ZEZsYXJlIE9yaWdpbiBTU0wgQ2VydGlmaWNhdGUgQXV0aG9yaXR5MRYwFAYDVQQH
+Ew1TYW4gRnJhbmNpc2NvMRMwEQYDVQQIEwpDYWxpZm9ybmlhMB4XDTE5MDgyMzIx
+MDgwMFoXDTI5MDgxNTE3MDAwMFowgYsxCzAJBgNVBAYTAlVTMRkwFwYDVQQKExBD
+bG91ZEZsYXJlLCBJbmMuMTQwMgYDVQQLEytDbG91ZEZsYXJlIE9yaWdpbiBTU0wg
+Q2VydGlmaWNhdGUgQXV0aG9yaXR5MRYwFAYDVQQHEw1TYW4gRnJhbmNpc2NvMRMw
+EQYDVQQIEwpDYWxpZm9ybmlhMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+AQEAwEiVZ/UoQpHmFsHvk5isBxRehukP8DG9JhFev3WZtG76WoTthvLJFRKFCHXm
+V6Z5/66Z4S09mgsUuFwvJzMnE6Ej6yIsYNCb9r9QORa8BdhrkNn6kdTly3mdnykb
+OomnwbUfLlExVgNdlP0XoRoeMwbQ4598foiHblO2B/LKuNfJzAMfS7oZe34b+vLB
+yrP/1bgCSLdc1AxQc1AC0EsQQhgcyTJNgnG4va1c7ogPlwKyhbDyZ4e59N5lbYPJ
+SmXI/cAe3jXj1FBLJZkwnoDKe0v13xeF+nF32smSH0qB7aJX2tBMW4TWtFPmzs5I
+lwrFSySWAdwYdgxw180yKU0dvwIDAQABo2YwZDAOBgNVHQ8BAf8EBAMCAQYwEgYD
+VR0TAQH/BAgwBgEB/wIBAjAdBgNVHQ4EFgQUJOhTV118NECHqeuU27rhFnj8KaQw
+HwYDVR0jBBgwFoAUJOhTV118NECHqeuU27rhFnj8KaQwDQYJKoZIhvcNAQELBQAD
+ggEBAHwOf9Ur1l0Ar5vFE6PNrZWrDfQIMyEfdgSKofCdTckbqXNTiXdgbHs+TWoQ
+wAB0pfJDAHJDXOTCWRyTeXOseeOi5Btj5CnEuw3P0oXqdqevM1/+uWp0CM35zgZ8
+VD4aITxity0djzE6Qnx3Syzz+ZkoBgTnNum7d9A66/V636x4vTeqbZFBr9erJzgz
+hhurjcoacvRNhnjtDRM0dPeiCJ50CP3wEYuvUzDHUaowOsnLCjQIkWbR7Ni6KEIk
+MOz2U0OBSif3FTkhCgZWQKOOLo1P42jHC3ssUZAtVNXrCk3fw9/E15k8NPkBazZ6
+0iykLhH1trywrKRMVw67F44IE8Y=
+-----END CERTIFICATE-----`;
+const SUPABASE_DIRECT_HOST = 'db.victuscloud.com';
+const SUPABASE_DIRECT_IP = process.env.SUPABASE_DIRECT_ORIGIN_IP || '51.77.58.191';
+const supabaseDirectAgent = new Agent({
+    connect: {
+        ca: CLOUDFLARE_ORIGIN_CA,
+        lookup: ((hostname, options, callback) => {
+            if (hostname !== SUPABASE_DIRECT_HOST)
+                return dnsLookup(hostname, options, callback);
+            const addresses = [{ address: SUPABASE_DIRECT_IP, family: 4 }];
+            return options?.all ? callback(null, addresses) : callback(null, SUPABASE_DIRECT_IP, 4);
+        }),
+    },
+});
+function createDirectSupabaseClient() {
+    const directFetch = ((input, init) => undiciFetch(input, {
+        ...init,
+        dispatcher: supabaseDirectAgent,
+        signal: AbortSignal.timeout(8000),
+    }));
+    return createClient(config.supabase.url, config.supabase.serviceKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+        global: { fetch: directFetch },
+    });
+}
 function isCertError(error) {
     const msg = String(error?.message || error || '');
     return msg.includes('unable to verify the first certificate') || msg.includes('certificate') || msg.includes('CERT_') || msg.includes('self signed');
@@ -294,6 +347,38 @@ class SupabaseService {
             return false;
         }
         return true;
+    }
+    async getWebTicketsWithoutChannel(limit = 100) {
+        const { data, error } = await this.client.from('tickets')
+            .select('*').eq('guild_id', 'victus-web').is('channel_id', null)
+            .neq('email', 'public-group@support.victuscloud.local')
+            .order('created_at', { ascending: true }).limit(limit);
+        if (error)
+            logger.error('Failed to load unbridged web tickets:', error);
+        return data || [];
+    }
+    async getUnbridgedTicketMessages(limit = 200) {
+        const { data: linkedTickets, error: ticketsError } = await this.client.from('tickets')
+            .select('id').not('channel_id', 'is', null).limit(1000);
+        if (ticketsError) {
+            logger.error('Failed to load linked ticket channels:', ticketsError);
+            return [];
+        }
+        const ids = (linkedTickets || []).map((ticket) => ticket.id);
+        if (!ids.length)
+            return [];
+        const { data, error } = await this.client.from('ticket_messages')
+            .select('*').in('ticket_id', ids).is('bridged_at', null).not('author_discord_id', 'like', 'dc:%')
+            .order('created_at', { ascending: true }).limit(limit);
+        if (error)
+            logger.error('Failed to load unbridged ticket messages:', error);
+        return data || [];
+    }
+    async releaseMessageBridgeClaim(messageId) {
+        const { error } = await this.client.from('ticket_messages')
+            .update({ bridged_at: null }).eq('id', messageId);
+        if (error)
+            logger.error('Failed to release ticket message bridge claim:', error);
     }
     /**
      * Atomically claim a website message for relaying to Discord. Returns true
@@ -1104,10 +1189,12 @@ class SupabaseService {
         }
         const endpoint = delta > 0 ? 'grant' : 'spend';
         let lastError = 'Paymenter coin mutation failed';
+        let insufficientCoins = false;
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
                 const response = await fetch(`${paymenterUrl}/api/victus/coins/${endpoint}?token=${encodeURIComponent(internalToken)}`, {
                     method: 'POST',
+                    signal: AbortSignal.timeout(10_000),
                     headers: {
                         'Authorization': `Bearer ${internalToken}`,
                         'X-Victus-Internal-Token': internalToken,
@@ -1132,21 +1219,28 @@ class SupabaseService {
                     data = { raw: text };
                 }
                 if (response.ok) {
+                    if (data?.already_claimed) {
+                        throw new Error('Discord link reward already claimed');
+                    }
                     const balance = this.paymenterCoinBalance(data);
                     if (balance !== null)
                         return balance;
                     throw new Error('Paymenter returned no COINS balance');
                 }
                 lastError = String(data?.error || data?.message || text || `HTTP ${response.status}`).slice(0, 300);
+                insufficientCoins = response.status === 422 && data?.error === 'Insufficient COINS.';
                 if (response.status < 500 && response.status !== 429)
                     break;
             }
             catch (error) {
+                insufficientCoins = false;
                 lastError = error.message;
+                if (lastError === 'Discord link reward already claimed')
+                    break;
             }
             await new Promise((resolve) => setTimeout(resolve, attempt * 500));
         }
-        throw new Error(lastError);
+        throw Object.assign(new Error(lastError), { insufficientCoins });
     }
     async mirrorProfileCoinsFromPaymenter(userId, balance, context) {
         await this.setProfileCoins(userId, balance);
@@ -1382,8 +1476,8 @@ class SupabaseService {
     // Discord Link 100 COINS reward (join + /link, revoke on leave)
     // ============================================
     /**
-     * Grant 100 COINS for linking Discord via /link. Idempotent: only grants once
-     * per discord_linked_accounts row (coins_granted flag). Uses the canonical
+     * Grant 100 COINS for linking Discord via /link. Paymenter's permanent
+     * transaction history enforces one reward per account across relinks. Uses the canonical
      * victus/coins/grant rail so the credit is Paymenter-authoritative and appears
      * in the panel's Coin History as source=discord_link.
      */
@@ -1408,6 +1502,9 @@ class SupabaseService {
         else if (row?.coins_granted) {
             logger.debug(`grantDiscordLinkCoins: already granted for ${linked.discord_id}, skipping`);
             return true;
+        }
+        if (row?.coins_last_error === 'already_claimed') {
+            return false;
         }
         if (row?.coins_revoked) {
             logger.info(`grantDiscordLinkCoins: ${linked.discord_id} previously revoked (left server), not re-granting until re-link`);
@@ -1435,27 +1532,16 @@ class SupabaseService {
             return true;
         }
         catch (e) {
-            logger.warn(`grantDiscordLinkCoins Paymenter failed for ${linked.discord_id}: ${e.message} — falling back to Supabase wallet`);
-            try {
-                const ok = await this.fallbackIncrementCp(linked.user_id, amount, 'discord link fallback');
-                if (ok) {
-                    await this.client.from('discord_linked_accounts').update({
-                        coins_granted: true,
-                        coins_granted_at: new Date().toISOString(),
-                        coins_amount: amount,
-                        coins_revoked: false,
-                        coins_revoked_at: null,
-                        coins_last_error: null,
-                    }).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id);
-                    logger.info(`grantDiscordLinkCoins: fallback +${amount} COINS to ${email} (discord ${linked.discord_id})`);
-                    return true;
-                }
+            const message = String(e.message);
+            const alreadyClaimed = message.includes('Discord link reward already claimed');
+            // A local-wallet fallback can be replayed after unlink deletes this
+            // row. Never mint this one-time reward outside Paymenter's ledger.
+            await this.client.from('discord_linked_accounts').update({
+                coins_last_error: alreadyClaimed ? 'already_claimed' : message.slice(0, 500),
+            }).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => { }, () => { });
+            if (!alreadyClaimed) {
+                logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${message}`);
             }
-            catch (fb) {
-                logger.error(`grantDiscordLinkCoins fallback failed for ${linked.discord_id}: ${fb.message}`);
-            }
-            await this.client.from('discord_linked_accounts').update({ coins_last_error: String(e.message).slice(0, 500) }).eq('user_id', linked.user_id).eq('discord_id', linked.discord_id).then(() => { }, () => { });
-            logger.error(`grantDiscordLinkCoins failed for ${linked.discord_id}: ${e.message}`);
             return false;
         }
     }
@@ -2166,6 +2252,47 @@ class SupabaseService {
             logger.error('Failed to get ticket by channel:', error);
         }
         return data;
+    }
+    /** Bypass the background-query circuit breaker for an explicit close-button action. */
+    async getTicketForClose(id, channelId) {
+        const direct = createDirectSupabaseClient();
+        for (const [column, value] of [['id', id], ['channel_id', channelId]]) {
+            if (!value)
+                continue;
+            try {
+                const { data, error } = await direct.from('tickets')
+                    .select('*, category:ticket_categories(*)')
+                    .eq(column, value).maybeSingle();
+                if (data && data.channel_id === channelId) {
+                    resetSupabaseCircuit();
+                    return data;
+                }
+                if (error)
+                    logger.warn(`Ticket close lookup failed (${column}): ${error.message}`);
+            }
+            catch (error) {
+                logger.warn(`Ticket close lookup failed (${column}): ${String(error)}`);
+            }
+        }
+        return null;
+    }
+    async closeTicketDirect(id) {
+        try {
+            const direct = createDirectSupabaseClient();
+            const { data, error } = await direct.from('tickets')
+                .update({ status: 'closed', closed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+                .eq('id', id).select('id').maybeSingle();
+            if (error || !data) {
+                logger.error('Direct ticket close failed:', error || 'Ticket not found');
+                return false;
+            }
+            resetSupabaseCircuit();
+            return true;
+        }
+        catch (error) {
+            logger.error('Direct ticket close failed:', error);
+            return false;
+        }
     }
     /**
      * Update ticket

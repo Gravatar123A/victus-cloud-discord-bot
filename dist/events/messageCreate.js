@@ -574,7 +574,7 @@ export const messageCreateEvent = {
         const hasActiveStaffSession = !!antigravityPipeline.getSession(message.channelId);
         const isStaffAiThread = message.channel.isThread() && message.channel.name.startsWith('staffai-');
         if (config.antigravity.enabled && message.inGuild() && (isStaffAiChannel || hasActiveStaffSession || isStaffAiThread)) {
-            const isStaff = (await isVictusStaffOrAdmin(message.author, message.client)) || antigravityPipeline.isAuthorized(message.member);
+            const isStaff = (await isVictusStaffOrAdmin(message.author, message.client));
             if (isStaff) {
                 if (message.content.trim().length > 0 || message.attachments.size > 0) {
                     await handleStaffAiMessage(message);

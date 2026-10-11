@@ -1,9 +1,7 @@
-import { ChannelType, EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, } from 'discord.js';
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
+import { ChannelType, EmbedBuilder, MessageFlags, SlashCommandBuilder, } from 'discord.js';
 import { modrinthResourceService, } from '../services/modrinthResourceService.js';
 import { forumDirectoryService } from '../services/forumDirectoryService.js';
-import { antigravityPipeline } from '../services/antigravityPipeline.js';
-import { supabase } from '../services/supabase.js';
-import { config } from '../config.js';
 import { VICTUS_COLORS } from '../types/index.js';
 const PRIMARY_STAFF_ROLE_ID = '1340607428252794973';
 const ALL_CATEGORIES = [
@@ -23,38 +21,7 @@ const CATEGORY_LABELS = {
     builds: 'Builds & Worldgen',
 };
 async function checkIsStaff(interaction) {
-    if (!interaction.guildId)
-        return false;
-    const member = interaction.member ||
-        (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
-    if (!member)
-        return false;
-    if (antigravityPipeline.isAuthorized(member))
-        return true;
-    if (member.permissions.has(PermissionFlagsBits.Administrator) ||
-        member.permissions.has(PermissionFlagsBits.ManageGuild) ||
-        member.permissions.has(PermissionFlagsBits.ManageChannels)) {
-        return true;
-    }
-    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
-    const staffRoleIds = new Set([
-        PRIMARY_STAFF_ROLE_ID,
-        ...(config.antigravity.staffRoleIds || []),
-        ...(settings?.ticket_staff_role_ids || []),
-        ...(settings?.ticket_admin_role_ids || []),
-    ]);
-    const rolesObj = member.roles;
-    if (rolesObj) {
-        if (Array.isArray(rolesObj)) {
-            if (rolesObj.some((id) => staffRoleIds.has(id)))
-                return true;
-        }
-        else if (rolesObj.cache && typeof rolesObj.cache.has === 'function') {
-            if (rolesObj.cache.some((r) => staffRoleIds.has(r.id)))
-                return true;
-        }
-    }
-    return false;
+    return isVictusStaffOrAdmin(interaction.user, interaction.client);
 }
 export const resourceSyncCommand = {
     data: new SlashCommandBuilder()

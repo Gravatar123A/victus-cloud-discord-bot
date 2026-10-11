@@ -1328,10 +1328,12 @@ class SupabaseService {
 
         const endpoint = delta > 0 ? 'grant' : 'spend';
         let lastError = 'Paymenter coin mutation failed';
+        let insufficientCoins = false;
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
                 const response = await fetch(`${paymenterUrl}/api/victus/coins/${endpoint}?token=${encodeURIComponent(internalToken)}`, {
                     method: 'POST',
+                    signal: AbortSignal.timeout(10_000),
                     headers: {
                         'Authorization': `Bearer ${internalToken}`,
                         'X-Victus-Internal-Token': internalToken,
@@ -1359,14 +1361,16 @@ class SupabaseService {
                     throw new Error('Paymenter returned no COINS balance');
                 }
                 lastError = String(data?.error || data?.message || text || `HTTP ${response.status}`).slice(0, 300);
+                insufficientCoins = response.status === 422 && data?.error === 'Insufficient COINS.';
                 if (response.status < 500 && response.status !== 429) break;
             } catch (error) {
+                insufficientCoins = false;
                 lastError = (error as Error).message;
                 if (lastError === 'Discord link reward already claimed') break;
             }
             await new Promise((resolve) => setTimeout(resolve, attempt * 500));
         }
-        throw new Error(lastError);
+        throw Object.assign(new Error(lastError), { insufficientCoins });
     }
 
     async mirrorProfileCoinsFromPaymenter(userId: string, balance: number, context: string): Promise<void> {

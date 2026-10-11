@@ -1,3 +1,4 @@
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 import {
     ChannelType,
     ChatInputCommandInteraction,
@@ -153,12 +154,8 @@ export const gtnCommand: Command = {
             return;
         }
 
-        const member = interaction.guild.members.cache.get(interaction.user.id);
-        const hasStaffPerms = !!member && (
-            member.permissions.has(PermissionFlagsBits.ManageMessages) ||
-            member.permissions.has(PermissionFlagsBits.ManageGuild) ||
-            member.permissions.has(PermissionFlagsBits.Administrator)
-        );
+        // These controls can mint real platform COINS, so guild permissions alone never qualify.
+        const hasStaffPerms = await isVictusStaffOrAdmin(interaction.user, interaction.client);
 
         // Resolve subcommand safely (handles both slash command and prefix interactions)
         let subcommand: string | null = null;
@@ -239,7 +236,7 @@ export const gtnCommand: Command = {
         if (subcommand === 'start') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need the **Manage Messages** or **Manage Server** permission to host a GTN game.',
+                    content: '⛔ You must be official Victus Cloud staff to host a GTN game.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -313,7 +310,7 @@ export const gtnCommand: Command = {
         if (subcommand === 'auto') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need the **Manage Server** or **Manage Messages** permission to configure automated GTN.',
+                    content: '⛔ You must be official Victus Cloud staff to configure automated GTN.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -397,7 +394,7 @@ export const gtnCommand: Command = {
         if (subcommand === 'coins') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need the **Manage Server** permission to configure Victus Coins rewards.',
+                    content: '⛔ You must be official Victus Cloud staff to configure Victus Coins rewards.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -432,7 +429,7 @@ export const gtnCommand: Command = {
         if (subcommand === 'role') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need the **Manage Server** permission to configure the announcement ping role.',
+                    content: '⛔ You must be official Victus Cloud staff to configure the announcement ping role.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -472,7 +469,7 @@ export const gtnCommand: Command = {
         if (subcommand === 'channel') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need the **Manage Server** permission to configure the GTN channel.',
+                    content: '⛔ You must be official Victus Cloud staff to configure the GTN channel.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -521,7 +518,7 @@ export const gtnCommand: Command = {
         if (subcommand === 'end') {
             if (!hasStaffPerms) {
                 await interaction.reply({
-                    content: '⛔ You need the **Manage Messages** or **Manage Server** permission to end a game.',
+                    content: '⛔ You must be official Victus Cloud staff to end a game.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;

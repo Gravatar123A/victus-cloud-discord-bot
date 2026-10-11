@@ -1,60 +1,17 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, } from 'discord.js';
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, MessageFlags, SlashCommandBuilder, } from 'discord.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { scrapeResourceUrl } from '../services/resourceScraper.js';
 import { publishedResourcesStore } from '../services/publishedResourcesStore.js';
 import { resourceSettings } from '../services/resourceSettings.js';
-import { antigravityPipeline } from '../services/antigravityPipeline.js';
-import { supabase } from '../services/supabase.js';
 import { logger } from '../utils/logger.js';
 import { VICTUS_COLORS } from '../types/index.js';
-import { config } from '../config.js';
 const PRIMARY_STAFF_ROLE_ID = '1340607428252794973';
 const CATEGORIES = ['Maps', 'Builds', 'Lobbies', 'Plugins', 'Mods', 'Bots', 'Codes', 'Other'];
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-/**
- * Robust staff permission verification:
- * Checks Administrator, ManageGuild, ManageChannels, Primary Staff Role,
- * Antigravity staff roles, and server-configured staff/admin roles.
- */
+/** Verify membership in the official Victus staff team, independent of the invoking server. */
 async function checkIsStaff(interaction) {
-    if (!interaction.guildId)
-        return false;
-    const member = interaction.member ||
-        (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
-    if (!member)
-        return false;
-    // 1. Antigravity pipeline authorization (server owner, admin, manage guild, staffRoleIds)
-    if (antigravityPipeline.isAuthorized(member)) {
-        return true;
-    }
-    // 2. High-level discord permissions
-    if (member.permissions.has(PermissionFlagsBits.Administrator) ||
-        member.permissions.has(PermissionFlagsBits.ManageGuild) ||
-        member.permissions.has(PermissionFlagsBits.ManageChannels)) {
-        return true;
-    }
-    // 3. Known staff role IDs
-    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
-    const staffRoleIds = new Set([
-        PRIMARY_STAFF_ROLE_ID,
-        ...(config.antigravity.staffRoleIds || []),
-        ...(settings?.ticket_staff_role_ids || []),
-        ...(settings?.ticket_admin_role_ids || []),
-    ]);
-    const rolesObj = member.roles;
-    if (rolesObj) {
-        if (Array.isArray(rolesObj)) {
-            if (rolesObj.some((id) => staffRoleIds.has(id)))
-                return true;
-        }
-        else if (rolesObj.cache && typeof rolesObj.cache.has === 'function') {
-            for (const id of staffRoleIds) {
-                if (rolesObj.cache.has(id))
-                    return true;
-            }
-        }
-    }
-    return false;
+    return isVictusStaffOrAdmin(interaction.user, interaction.client);
 }
 /**
  * Parses raw text or JSON file content into normalized RawResourceItem objects.

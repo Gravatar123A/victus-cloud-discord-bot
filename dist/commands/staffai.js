@@ -29,7 +29,7 @@ export const staffaiCommand = {
     async execute(interaction) {
         const member = interaction.member;
         // Verify Staff Authorization (strictly isolated to Victus Staff)
-        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client)) || antigravityPipeline.isAuthorized(member);
+        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client));
         if (!authorized) {
             await interaction.reply({
                 embeds: [createUnauthorizedEmbed()],
@@ -170,7 +170,7 @@ export const staffaiCommand = {
             return;
         }
         const member = interaction.member;
-        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client)) || antigravityPipeline.isAuthorized(member);
+        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client));
         if (!authorized) {
             await interaction.reply({
                 embeds: [createUnauthorizedEmbed()],

@@ -1,3 +1,4 @@
+import { startPvpRecovery } from '../commands/pvp.js';
 import { ActivityType, Client } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
@@ -414,6 +415,7 @@ export const readyEvent: Event = {
 
         // Viral Expansion Engine initialization
         viralExpansionService.init(client);
+        startPvpRecovery(client);
 
         // Live Minecraft Server Discovery Forum Directory initialization
         forumDirectoryService.start(client);

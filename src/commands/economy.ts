@@ -1,3 +1,4 @@
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 import {
     ActionRowBuilder,
     MessageFlags,
@@ -55,12 +56,12 @@ interface Ctx {
     isAdmin: boolean;
 }
 
-async function loadCtx(discordId: string): Promise<Ctx | null> {
+async function loadCtx(discordId: string, client: Client): Promise<Ctx | null> {
     const linked = await supabase.getLinkedAccount(discordId).catch(() => null);
     if (!linked?.user_id) return null;
     const profile = await supabase.getUserProfile(linked.user_id).catch(() => null);
     if (!profile) return null;
-    return { discordId, userId: linked.user_id, profile, isAdmin: Boolean((profile as any).is_admin) };
+    return { discordId, userId: linked.user_id, profile, isAdmin: await isVictusStaffOrAdmin({ id: discordId } as any, client) };
 }
 
 // Sync a known wallet delta (already applied locally by an economy RPC) into
@@ -134,8 +135,8 @@ function parseDiscordId(raw: string): string | null {
 }
 
 // Build a view's container for the hub.
-async function buildView(view: string, discordId: string, page = 0): Promise<ContainerBuilder> {
-    const ctx = await loadCtx(discordId);
+async function buildView(view: string, discordId: string, client: Client, page = 0): Promise<ContainerBuilder> {
+    const ctx = await loadCtx(discordId, client);
     if (!ctx) return notLinked();
     const { userId, profile, isAdmin } = ctx;
 
@@ -202,7 +203,7 @@ export const economyCommand: Command = {
 
     async execute(interaction: ChatInputCommandInteraction) {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral | V2 });
-        await interaction.editReply({ components: [await buildView('wallet', interaction.user.id)], flags: V2 });
+        await interaction.editReply({ components: [await buildView('wallet', interaction.user.id, interaction.client)], flags: V2 });
     },
 
     async handleSelectMenu(interaction: StringSelectMenuInteraction) {
@@ -213,7 +214,7 @@ export const economyCommand: Command = {
             await interaction.reply({ content: 'That panel belongs to someone else — run `/economy`.', flags: MessageFlags.Ephemeral });
             return;
         }
-        await interaction.update({ components: [await buildView(interaction.values[0], owner)], flags: V2 });
+        await interaction.update({ components: [await buildView(interaction.values[0], owner, interaction.client)], flags: V2 });
     },
 
     async handleButton(interaction: ButtonInteraction) {
@@ -230,13 +231,13 @@ export const economyCommand: Command = {
         const discordId = interaction.user.id;
 
         // Navigation / pagination
-        if (action === 'dash') return void (await interaction.update({ components: [await buildView('wallet', discordId)], flags: V2 }));
+        if (action === 'dash') return void (await interaction.update({ components: [await buildView('wallet', discordId, interaction.client)], flags: V2 }));
         if (action === 'nav2') {
             const view = parts[3] === 'convert' ? 'wallet' : parts[3];
-            return void (await interaction.update({ components: [await buildView(view, discordId)], flags: V2 }));
+            return void (await interaction.update({ components: [await buildView(view, discordId, interaction.client)], flags: V2 }));
         }
-        if (action === 'lb') return void (await interaction.update({ components: [await buildView('leaderboard', discordId, Math.max(0, parseInt(parts[3] || '0', 10) || 0))], flags: V2 }));
-        if (action === 'hist') return void (await interaction.update({ components: [await buildView('history', discordId, Math.max(0, parseInt(parts[3] || '0', 10) || 0))], flags: V2 }));
+        if (action === 'lb') return void (await interaction.update({ components: [await buildView('leaderboard', discordId, interaction.client, Math.max(0, parseInt(parts[3] || '0', 10) || 0))], flags: V2 }));
+        if (action === 'hist') return void (await interaction.update({ components: [await buildView('history', discordId, interaction.client, Math.max(0, parseInt(parts[3] || '0', 10) || 0))], flags: V2 }));
 
         // Bank
         if (action === 'bankdep') return interaction.showModal(amountModal(`econ:m:bankdep:${discordId}`, 'Deposit Coins', 'Amount of Coins to deposit'));
@@ -261,6 +262,11 @@ export const economyCommand: Command = {
             return void (await interaction.update({ components: [resultContainer(discordId, false, 'Conversion unavailable', 'Coin-to-credit and credit-to-coin conversions are no longer supported. Coins and billing credits are separate balances.', false)], flags: V2 }));
         }
 
+        // Admin controls must not even open for non-staff members.
+        if (['adjadj', 'adjfreeze'].includes(action) && !await isVictusStaffOrAdmin(interaction.user, interaction.client)) {
+            await interaction.reply({ content: 'Only official Victus Cloud staff can use this control.', flags: MessageFlags.Ephemeral });
+            return;
+        }
         // Admin
         if (action === 'adjadj') {
             const modal = new ModalBuilder()
@@ -289,7 +295,7 @@ export const economyCommand: Command = {
             const token = parts[3];
             const op = pending.get(token);
             pending.delete(token);
-            const ctx = await loadCtx(discordId);
+            const ctx = await loadCtx(discordId, interaction.client);
             if (!ctx) return void (await interaction.update({ components: [notLinked()], flags: V2 }));
             if (!op || op.expiresAt < Date.now()) {
                 return void (await interaction.update({ components: [resultContainer(discordId, false, 'Expired', 'That confirmation expired — please start again.', ctx.isAdmin)], flags: V2 }));
@@ -310,7 +316,7 @@ export const economyCommand: Command = {
         const owner = parts[3];
         if (interaction.user.id !== owner) return;
         const discordId = owner;
-        const ctx = await loadCtx(discordId);
+        const ctx = await loadCtx(discordId, interaction.client);
         if (!ctx) return void (await interaction.update({ components: [notLinked()], flags: V2 }));
 
         const val = (key: string) => {
@@ -479,8 +485,9 @@ export const economyCommand: Command = {
             const targetLinked = await supabase.getLinkedAccount(targetDiscordId).catch(() => null);
             if (!targetLinked?.user_id) return void (await interaction.update({ components: [resultContainer(discordId, false, 'Member not linked', `<@${targetDiscordId}> has not linked their account.`, true)], flags: V2 }));
             const targetUserId = targetLinked.user_id;
-            const token = stashOp(async () => {
-                const r = await supabase.econAdminAdjustCp(ctx.userId, targetUserId, delta, reason);
+            const token = stashOp(async (freshCtx) => {
+                if (!freshCtx.isAdmin) return { ok: false, title: 'Staff only', body: 'Official staff membership is required.' };
+                const r = await supabase.econAdminAdjustCp(freshCtx.userId, targetUserId, delta, reason);
                 if (!r?.ok) return { ok: false, title: 'Adjustment failed', body: r?.error || 'Something went wrong.' };
                 await syncDelta({
                     userId: targetUserId,

@@ -82,6 +82,33 @@ Do not set `MAIN_FILE` to `index.js` unless this root launcher exists in the ser
 
 ## Commands
 
+### Player versus player games
+
+Use `/rps opponent:@player amount:10`, `/tictactoe opponent:@player amount:10`, or `/connect4 opponent:@player amount:10`. `/battle opponent:@player wager:10` uses the same protected payment flow for pet battles.
+
+The amount is the stake **per player**, from 1 to 5,000 COINS (pet battles start at 5). The opponent must accept before either balance is charged. Once both Paymenter deductions succeed, the match begins. A 10-coin match deducts 10 from each player and pays the winner 20; the winner gains 10 overall and the loser loses 10. Draws refund both stakes. There is no house fee or new coin reward.
+
+RPS choices are hidden until the result. Board games enforce turns and reject old board buttons. Each player has 60 seconds to act; a missed turn or forfeit awards the pot to the opponent. If neither RPS player chooses, both are refunded. Unaccepted challenges expire after two minutes without deductions. Players can participate in one match at a time, across all servers, with a **10-second cooldown** after completion.
+
+Matches and payment references are saved in `data/pvp-matches.json` before coin mutations. Preserve this file on persistent storage and run one active bot process. Startup and a five-second recovery worker resume confirmed funding, payouts, refunds, and expired matches. An ambiguous payment stays pending and retries the same reference. Account destinations are fixed at acceptance, so unlinking cannot redirect a refund or payout. Failed second-player funding refunds the confirmed first stake. The authoritative wallet is Paymenter; website mirrors and history are updated afterward.
+
+### Mining, selling and raids
+
+- `/mine` gives one drop immediately and leaves a reusable **Mine** button. The same one-second anti-spam guard applies to buttons, `/mine`, and `/rpg mine`. Fishing has a reusable button and a five-second interval.
+- `/sell` opens a material picker. `/sell item:iron quantity:10` sells only the selected amount. Both `/sell` and `/rpg sell` support the same options. `category:common` sells coal, iron, and gold while preserving diamonds and netherite; `category:fish` keeps every ore. Selling all ores or everything requires an explicit category selection.
+- Sales consume whole-coin lots, keeping fractional leftovers: requesting eight coal sells five for one coin and keeps three. The inventory shows progress toward equipment upgrades, and crafting cannot downgrade an existing tool.
+- `/attack` and `/cast` share a persistent 15-second player cooldown across servers. A defeated or expired boss rests for one hour. Total rewards never exceed its displayed pool. Failed payouts remain pending and retry during raid maintenance, including after a later raid has started.
+
+RPG sales reserve inventory in a durable journal before paying coins, using a stable payment reference for recovery. Keep the `data/` directory on persistent storage and run **one active bot process** for inventory operations. Do not delete `data/expansion-store.json` during deployment. Raid updates additionally use database compare-and-swap protection. Legacy raids stored locally with invalid database IDs are imported using valid UUIDs without resetting the raid's cooldown. Database outages stop game mutations instead of falling back to stale inventories or spawning a fresh boss.
+
+### Official staff access
+
+`DISCORD_SUPPORT_GUILD_ID` must identify the official Victus Cloud server. Platform admin commands, coin adjustments, resource reward approvals, GTN/Unscramble reward and event controls, staff AI, diagnostics, and sensitive announcement controls require a freshly fetched member of that server with an official staff/admin role (or its owner). Supported roles are the established Victus staff role, `DISCORD_STAFF_ROLE_IDS`, and the official server's `ticket_staff_role_ids` / `ticket_admin_role_ids` settings.
+
+External server ownership, Discord Administrator permission, bot application ownership, or a website admin flag alone do not grant platform access. Missing support-server configuration or failed membership verification denies access. Buttons, modals, and economy confirmations recheck access, so removing a staff role revokes old panels too. Ordinary server moderation permissions remain server-local.
+
+Build and verify with `npm test`. Deploy the source and compiled output together, retain `data/`, and restart the bot. Startup auto-registration publishes the new sell options unless `DISCORD_AUTO_REGISTER_COMMANDS=false`; in that case run `npm run register` as part of deployment.
+
 ### User Commands
 
 | Command | Description |

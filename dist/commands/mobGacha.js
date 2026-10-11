@@ -1,8 +1,8 @@
-import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageFlags, } from 'discord.js';
+import { createPvpChallenge } from './pvp.js';
+import { SlashCommandBuilder, MessageFlags, } from 'discord.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { viralExpansionStore } from '../services/viralExpansionStore.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
-import { CoinTransactionLock } from '../services/coinTransactionLock.js';
 export const tameCommand = {
     data: new SlashCommandBuilder()
         .setName('tame')
@@ -75,155 +75,8 @@ export const battleCommand = {
         .setDescription('Amount of COINS to wager (each player wagers this amount)')
         .setRequired(true)
         .setMinValue(5)
-        .setMaxValue(10000)),
-    cooldown: 15,
+        .setMaxValue(5000)),
     async execute(interaction) {
-        const challenger = interaction.user;
-        const opponent = interaction.options.getUser('opponent', true);
-        const wager = interaction.options.getInteger('wager', true);
-        if (opponent.id === challenger.id || opponent.bot) {
-            await interaction.reply({ content: 'Invalid opponent selected.', flags: MessageFlags.Ephemeral });
-            return;
-        }
-        const chalInv = await viralExpansionStore.getInventory(challenger.id);
-        const oppInv = await viralExpansionStore.getInventory(opponent.id);
-        if (chalInv.mobs_json.length === 0) {
-            await interaction.reply({
-                content: '⚠️ You do not have any tamed mobs! Tame one first with `/tame`.',
-                flags: MessageFlags.Ephemeral,
-            });
-            return;
-        }
-        if (oppInv.mobs_json.length === 0) {
-            await interaction.reply({
-                content: `⚠️ <@${opponent.id}> does not have any tamed mobs in their zoo yet.`,
-                flags: MessageFlags.Ephemeral,
-            });
-            return;
-        }
-        // Verify both have linked accounts and balances
-        const chalVictus = await CoinTransactionLock.resolveLinkedUser(challenger.id);
-        const oppVictus = await CoinTransactionLock.resolveLinkedUser(opponent.id);
-        if (!chalVictus) {
-            await interaction.reply({
-                content: '⚠️ You must link your Victus Cloud account (`/link`) before wagering real COINS.',
-                flags: MessageFlags.Ephemeral,
-            });
-            return;
-        }
-        if (!oppVictus) {
-            await interaction.reply({
-                content: `⚠️ <@${opponent.id}> has not linked their Victus Cloud account yet.`,
-                flags: MessageFlags.Ephemeral,
-            });
-            return;
-        }
-        const chalBal = await CoinTransactionLock.getCoinsBalance(chalVictus.email);
-        const oppBal = await CoinTransactionLock.getCoinsBalance(oppVictus.email);
-        if (chalBal < wager) {
-            await interaction.reply({
-                content: `⚠️ You only have **${chalBal} COINS**, but attempted to wager **${wager} COINS**.`,
-                flags: MessageFlags.Ephemeral,
-            });
-            return;
-        }
-        if (oppBal < wager) {
-            await interaction.reply({
-                content: `⚠️ <@${opponent.id}> only has **${oppBal} COINS**, insufficient for this ${wager} wager.`,
-                flags: MessageFlags.Ephemeral,
-            });
-            return;
-        }
-        // Send challenge prompt
-        const container = ComponentsV2.baseContainer(ComponentsV2.Accents.warning);
-        const promptText = `# ⚔️ Mob Arena Battle Challenge!\n\n` +
-            `<@${challenger.id}> has challenged <@${opponent.id}> to a Mob Duel!\n\n` +
-            `› **Pot Size:** **${wager * 2} COINS** (Winner takes all!)\n` +
-            `› **Wager Per Player:** \`${wager} COINS\`\n\n` +
-            `<@${opponent.id}>, click **[Accept Duel]** within 45 seconds to battle!`;
-        container.addTextDisplayComponents(ComponentsV2.text(promptText));
-        const acceptBtn = new ButtonBuilder()
-            .setCustomId('victus_battle_accept_btn')
-            .setLabel('Accept Duel')
-            .setEmoji('⚔️')
-            .setStyle(ButtonStyle.Success);
-        const declineBtn = new ButtonBuilder()
-            .setCustomId('victus_battle_decline_btn')
-            .setLabel('Decline')
-            .setStyle(ButtonStyle.Danger);
-        const row = new ActionRowBuilder().addComponents(acceptBtn, declineBtn);
-        const reply = await interaction.reply({
-            components: [container, row],
-            flags: ComponentsV2.IS_COMPONENTS_V2,
-            fetchReply: true,
-        });
-        const collector = reply.createMessageComponentCollector({
-            componentType: ComponentType.Button,
-            time: 45_000,
-        });
-        collector.on('collect', async (btn) => {
-            if (btn.user.id !== opponent.id) {
-                await btn.reply({ content: 'Only the challenged player can respond!', flags: MessageFlags.Ephemeral });
-                return;
-            }
-            if (btn.customId === 'victus_battle_decline_btn') {
-                collector.stop('declined');
-                await btn.deferUpdate();
-                const decC = ComponentsV2.baseContainer(ComponentsV2.Accents.danger);
-                decC.addTextDisplayComponents(ComponentsV2.text(`# 🏳️ Challenge Declined\n\n<@${opponent.id}> declined the duel.`));
-                await reply.edit({ components: [decC], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
-                return;
-            }
-            collector.stop('accepted');
-            await btn.deferUpdate();
-            // Execute duel with atomic wager deductions and payout
-            const chalMob = chalInv.mobs_json[0];
-            const oppMob = oppInv.mobs_json[0];
-            // Atomic wager deduction for challenger
-            const chalDeduct = await CoinTransactionLock.executeWagerTransaction(challenger.id, wager, 'battle_wager', `duel:${challenger.id}:${Date.now()}`, `Duel wager vs ${opponent.username}`, async () => ({ won: false, payoutAmount: 0, payload: null }));
-            if (!chalDeduct.success) {
-                const errC = ComponentsV2.baseContainer(ComponentsV2.Accents.danger);
-                errC.addTextDisplayComponents(ComponentsV2.text(`Duel cancelled: Challenger balance lock failed.`));
-                await reply.edit({ components: [errC], flags: ComponentsV2.IS_COMPONENTS_V2 });
-                return;
-            }
-            // Atomic wager deduction for opponent
-            const oppDeduct = await CoinTransactionLock.executeWagerTransaction(opponent.id, wager, 'battle_wager', `duel:${opponent.id}:${Date.now()}`, `Duel wager vs ${challenger.username}`, async () => ({ won: false, payoutAmount: 0, payload: null }));
-            if (!oppDeduct.success) {
-                // Refund challenger
-                await CoinTransactionLock.grantCoins(challenger.id, wager, 'duel_refund', `refund:${challenger.id}`, 'Duel cancelled refund');
-                const errC = ComponentsV2.baseContainer(ComponentsV2.Accents.danger);
-                errC.addTextDisplayComponents(ComponentsV2.text(`Duel cancelled: Opponent balance lock failed.`));
-                await reply.edit({ components: [errC], flags: ComponentsV2.IS_COMPONENTS_V2 });
-                return;
-            }
-            // Combat calculation: Power with variance
-            const chalScore = chalMob.power * ((Math.random() * 0.4) + 0.8);
-            const oppScore = oppMob.power * ((Math.random() * 0.4) + 0.8);
-            const challengerWon = chalScore >= oppScore;
-            const winner = challengerWon ? challenger : opponent;
-            const winnerMob = challengerWon ? chalMob : oppMob;
-            const loserMob = challengerWon ? oppMob : chalMob;
-            const totalPot = wager * 2;
-            await CoinTransactionLock.grantCoins(winner.id, totalPot, 'battle_win', `duel_pot:${winner.id}:${Date.now()}`, `Won duel against ${challengerWon ? opponent.username : challenger.username} (+${totalPot} COINS)`);
-            const winContainer = ComponentsV2.baseContainer(ComponentsV2.Accents.success);
-            const duelResultText = `# 🏆 Duel Finished: <@${winner.id}> Triumphs!\n\n` +
-                `**Matchup:**\n` +
-                `› <@${challenger.id}>: **${chalMob.name}** (\`${chalMob.power} CP\`)\n` +
-                `› <@${opponent.id}>: **${oppMob.name}** (\`${oppMob.power} CP\`)\n\n` +
-                `In a fierce clash, **${winnerMob.name}** landed a decisive strike on **${loserMob.name}**!\n\n` +
-                `### 💰 Spoils of War:\n` +
-                `› **Winner:** <@${winner.id}> claimed the **${totalPot} COINS** pot!\n` +
-                `› **Credited:** Direct to Victus Cloud user panel balance!`;
-            winContainer.addTextDisplayComponents(ComponentsV2.text(duelResultText));
-            await reply.edit({ components: [winContainer], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
-        });
-        collector.on('end', async (_, reason) => {
-            if (reason === 'time') {
-                const timeoutC = ComponentsV2.baseContainer(ComponentsV2.Accents.info);
-                timeoutC.addTextDisplayComponents(ComponentsV2.text('# ⏳ Challenge Expired\n\nThe duel challenge timed out with no response.'));
-                await reply.edit({ components: [timeoutC], flags: ComponentsV2.IS_COMPONENTS_V2 }).catch(() => { });
-            }
-        });
+        return createPvpChallenge(interaction, 'battle', 'wager');
     },
 };

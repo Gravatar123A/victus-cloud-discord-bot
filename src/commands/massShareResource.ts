@@ -1,3 +1,4 @@
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 import {
     ActionRowBuilder,
     ButtonBuilder,
@@ -38,53 +39,9 @@ interface RawResourceItem {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/**
- * Robust staff permission verification:
- * Checks Administrator, ManageGuild, ManageChannels, Primary Staff Role,
- * Antigravity staff roles, and server-configured staff/admin roles.
- */
+/** Verify membership in the official Victus staff team, independent of the invoking server. */
 async function checkIsStaff(interaction: any): Promise<boolean> {
-    if (!interaction.guildId) return false;
-
-    const member = (interaction.member as GuildMember | null) ||
-        (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
-    if (!member) return false;
-
-    // 1. Antigravity pipeline authorization (server owner, admin, manage guild, staffRoleIds)
-    if (antigravityPipeline.isAuthorized(member)) {
-        return true;
-    }
-
-    // 2. High-level discord permissions
-    if (
-        member.permissions.has(PermissionFlagsBits.Administrator) ||
-        member.permissions.has(PermissionFlagsBits.ManageGuild) ||
-        member.permissions.has(PermissionFlagsBits.ManageChannels)
-    ) {
-        return true;
-    }
-
-    // 3. Known staff role IDs
-    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
-    const staffRoleIds = new Set<string>([
-        PRIMARY_STAFF_ROLE_ID,
-        ...(config.antigravity.staffRoleIds || []),
-        ...(settings?.ticket_staff_role_ids || []),
-        ...(settings?.ticket_admin_role_ids || []),
-    ]);
-
-    const rolesObj = (member as any).roles;
-    if (rolesObj) {
-        if (Array.isArray(rolesObj)) {
-            if (rolesObj.some((id: string) => staffRoleIds.has(id))) return true;
-        } else if (rolesObj.cache && typeof rolesObj.cache.has === 'function') {
-            for (const id of staffRoleIds) {
-                if (rolesObj.cache.has(id)) return true;
-            }
-        }
-    }
-
-    return false;
+    return isVictusStaffOrAdmin(interaction.user, interaction.client);
 }
 
 /**

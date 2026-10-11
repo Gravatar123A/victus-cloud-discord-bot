@@ -1,6 +1,6 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, } from 'discord.js';
+import { verifyStaffOrAdmin } from '../utils/staffAuth.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, SlashCommandBuilder, } from 'discord.js';
 import { config } from '../config.js';
-import { supabase } from '../services/supabase.js';
 import { logger } from '../utils/logger.js';
 // Pastel / Ice Aesthetic Palette
 const ICE_PALETTE = {
@@ -41,70 +41,7 @@ function toMB(bytes) {
  * 3. Junior Admins: ticket_staff roles or Antigravity staff roles
  */
 async function verifyTieredPermissions(interaction) {
-    const userId = interaction.user.id;
-    // 1. Check Discord Application Owner / Team Member (Super Owner)
-    try {
-        const app = interaction.client.application;
-        const application = typeof app?.fetch === 'function' ? await app.fetch().catch(() => app) : app;
-        const owner = application?.owner || app?.owner;
-        if (owner) {
-            if ('id' in owner && owner.id === userId) {
-                return { authorized: true, tierName: '👑 Super Owner (Application Owner)' };
-            }
-            if ('members' in owner) {
-                const teamMembers = owner.members;
-                if (teamMembers?.has?.(userId)) {
-                    return { authorized: true, tierName: '👑 Super Owner (Team)' };
-                }
-            }
-        }
-    }
-    catch (err) {
-        logger.debug('[PingAdmin] Error fetching application owner:', err);
-    }
-    // Identify target guild for role/permission evaluation
-    const supportGuildId = config.bot.supportGuildId || config.discord.guildId;
-    if (supportGuildId) {
-        const guild = await interaction.client.guilds.fetch(supportGuildId).catch(() => null);
-        if (guild) {
-            // Guild Owner (Super Owner)
-            if (guild.ownerId === userId) {
-                return { authorized: true, tierName: '👑 Super Owner (Guild Owner)' };
-            }
-            const member = await guild.members.fetch(userId).catch(() => null);
-            if (member) {
-                // Guild Administrator (Added Owner)
-                if (member.permissions.has(PermissionFlagsBits.Administrator)) {
-                    return { authorized: true, tierName: '🛡️ Added Owner (Guild Administrator)' };
-                }
-                // Check Database Bot Settings for Staff & Admin Roles
-                const settings = await supabase.getBotSettings(guild.id).catch(() => null);
-                const adminRoleIds = (settings?.ticket_admin_role_ids || []);
-                const staffRoleIds = (settings?.ticket_staff_role_ids || []);
-                const antigravityStaffRoles = config.antigravity.staffRoleIds || [];
-                // Added Owner via Admin Role
-                if (adminRoleIds.some((roleId) => member.roles.cache.has(roleId))) {
-                    return { authorized: true, tierName: '🛡️ Added Owner (Admin Role)' };
-                }
-                // Junior Admin via Staff Roles
-                const combinedJuniorRoles = [...staffRoleIds, ...antigravityStaffRoles];
-                if (combinedJuniorRoles.some((roleId) => member.roles.cache.has(roleId))) {
-                    return { authorized: true, tierName: '⚡ Junior Admin (Staff Role)' };
-                }
-            }
-        }
-    }
-    // Supabase Platform Admin check (Added Owner)
-    try {
-        const isPlatformAdmin = await supabase.isUserAdmin(userId).catch(() => false);
-        if (isPlatformAdmin) {
-            return { authorized: true, tierName: '🛡️ Added Owner (Platform Admin)' };
-        }
-    }
-    catch (err) {
-        logger.debug('[PingAdmin] Error checking Supabase admin:', err);
-    }
-    return { authorized: false };
+    return verifyStaffOrAdmin(interaction.user, interaction.client);
 }
 function buildRefreshRow() {
     return new ActionRowBuilder().addComponents(new ButtonBuilder()

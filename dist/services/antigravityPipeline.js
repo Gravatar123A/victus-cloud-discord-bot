@@ -1,8 +1,8 @@
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 import { execSync, spawn } from 'child_process';
 import { existsSync, mkdirSync, createWriteStream, readFileSync, statSync } from 'fs';
 import path from 'path';
 import { pipeline } from 'stream/promises';
-import { PermissionFlagsBits } from 'discord.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { conversationMemory } from './conversationMemory.js';
@@ -21,27 +21,8 @@ class AntigravityPipelineService {
      * Check if a GuildMember has permission to run staff Antigravity commands.
      * External Discord server owners or administrators CANNOT run internal infrastructure commands.
      */
-    isAuthorized(member) {
-        if (!member)
-            return false;
-        const supportGuildId = config.bot.supportGuildId || config.discord.guildId;
-        // Never allow external server owners/admins access to Victus Cloud internal tools
-        if (supportGuildId && member.guild.id !== supportGuildId) {
-            return false;
-        }
-        // Inside the official Victus Cloud Support Guild ONLY:
-        if (supportGuildId && member.guild.id === supportGuildId) {
-            if (member.id === member.guild.ownerId)
-                return true;
-            if (member.permissions.has(PermissionFlagsBits.Administrator))
-                return true;
-        }
-        // Configured staff role IDs inside the support guild
-        const staffRoles = config.antigravity.staffRoleIds;
-        if (staffRoles.length > 0) {
-            return staffRoles.some((roleId) => member.roles.cache.has(roleId));
-        }
-        return false;
+    async isAuthorized(member) {
+        return !!member && isVictusStaffOrAdmin(member.user, member.client);
     }
     /**
      * Get the active Antigravity conversation ID for a given channel or thread

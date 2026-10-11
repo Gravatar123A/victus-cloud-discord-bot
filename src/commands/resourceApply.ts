@@ -1,3 +1,4 @@
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 import {
     ActionRowBuilder,
     ButtonBuilder,
@@ -21,52 +22,9 @@ import { logger } from '../utils/logger.js';
 const PRIMARY_STAFF_ROLE_ID = '1340607428252794973';
 const REWARD_COINS_AMOUNT = 40;
 
-/**
- * Robust staff permission check.
- * Checks administrator permissions, manage guild, manage channels,
- * primary staff role, and any staff roles configured in server settings.
- */
-async function checkIsStaff(interaction: ButtonInteraction | ModalSubmitInteraction): Promise<boolean> {
-    if (!interaction.guildId) return false;
-
-    let member = interaction.member;
-    if (!member || !('permissions' in member) || !('roles' in member)) {
-        member = (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null)) as any;
-    }
-    if (!member) return false;
-
-    // 1. High-level permissions
-    if ('permissions' in member && typeof member.permissions !== 'string') {
-        if (
-            member.permissions.has(PermissionFlagsBits.Administrator) ||
-            member.permissions.has(PermissionFlagsBits.ManageGuild) ||
-            member.permissions.has(PermissionFlagsBits.ManageChannels)
-        ) {
-            return true;
-        }
-    }
-
-    // 2. Fetch server-configured staff roles from Supabase + default staff role
-    const settings = await supabase.getBotSettings(interaction.guildId).catch(() => null);
-    const staffRoleIds = new Set<string>([
-        PRIMARY_STAFF_ROLE_ID,
-        ...(settings?.ticket_staff_role_ids || []),
-        ...(settings?.ticket_admin_role_ids || []),
-    ]);
-
-    // 3. Member roles check (supports both RoleManager cache and raw API array)
-    const rolesObj = (member as any).roles;
-    if (rolesObj) {
-        if (Array.isArray(rolesObj)) {
-            if (rolesObj.some((id: string) => staffRoleIds.has(id))) return true;
-        } else if (rolesObj.cache && typeof rolesObj.cache.has === 'function') {
-            for (const id of staffRoleIds) {
-                if (rolesObj.cache.has(id)) return true;
-            }
-        }
-    }
-
-    return false;
+/** Verify membership in the official Victus staff team, independent of the invoking server. */
+async function checkIsStaff(interaction: any): Promise<boolean> {
+    return isVictusStaffOrAdmin(interaction.user, interaction.client);
 }
 
 export const resourceApplyCommand: Command = {

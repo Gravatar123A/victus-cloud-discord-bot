@@ -1,3 +1,4 @@
+import { rpsCommand, ticTacToeCommand, connect4Command } from './pvp.js';
 import { Client, Collection } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -93,6 +94,7 @@ export const commands = new Collection<string, Command>();
 
 // Register all commands
 const allCommands: Command[] = [
+    rpsCommand, ticTacToeCommand, connect4Command,
     pingCommand,
     pingAdminCommand,
     staffaiCommand,

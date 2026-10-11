@@ -11,7 +11,7 @@
         "register": "tsx src/deploy-commands.ts",
         "antigravity:bridge": "tsx src/scripts/antigravityBridge.ts",
         "lint": "eslint src/**/*.ts",
-        "test": "jest"
+        "test": "npm run build && node --test"
     },
     "dependencies": {
         "@napi-rs/canvas": "^1.0.9",

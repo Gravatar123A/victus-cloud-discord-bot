@@ -1,7 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
-import { viralExpansionStore } from '../services/viralExpansionStore.js';
+import { worldBossService } from '../services/worldBossService.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
 
 function renderHealthBar(current: number, max: number, size = 15): string {
@@ -21,20 +21,16 @@ export const bossCommand: Command = {
     cooldown: 3,
 
     async execute(interaction) {
-        let boss = await viralExpansionStore.getActiveWorldBoss();
-        if (!boss || boss.status !== 'active') {
-            boss = {
-                id: `boss_${Date.now()}`,
-                boss_type: 'ender_dragon',
-                max_hp: 10000,
-                current_hp: 10000,
-                pool_coins: 1000,
-                participants_json: {},
-                channel_ids: [],
-                status: 'active',
-                spawned_at: new Date().toISOString(),
-            };
-            await viralExpansionStore.saveWorldBoss(boss);
+        await interaction.deferReply({ flags: ComponentsV2.IS_COMPONENTS_V2 });
+        const state = await worldBossService.getState();
+        const boss = state.boss;
+        if (!boss) {
+            const container = ComponentsV2.baseContainer(ComponentsV2.Accents.info);
+            container.addTextDisplayComponents(ComponentsV2.text(state.pending
+                ? `Rewards are pending and will retry automatically. The next boss arrives <t:${Math.ceil(state.retryAt / 1000)}:R>.`
+                : `The raid is resting. The next boss arrives <t:${Math.ceil(state.retryAt / 1000)}:R>.`));
+            await interaction.editReply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 });
+            return;
         }
 
         const bossName = boss.boss_type === 'ender_dragon' ? '🐉 Ender Dragon' : '💀 The Wither';
@@ -54,10 +50,10 @@ export const bossCommand: Command = {
             `› **Health:** ${healthBar} (\`${boss.current_hp.toLocaleString()} / ${boss.max_hp.toLocaleString()} HP\`)\n` +
             `› **Shared Bounty Pool:** **${boss.pool_coins.toLocaleString()} COINS**\n\n` +
             `### 🏅 Top Damage Dealers\n${topRaiders}\n\n` +
-            `-# Attack using \`/attack\` or cast powerful spells with \`/cast\`! All participants split the COINS bounty upon defeat.`;
+            `-# Attack using \`/attack\` or cast powerful spells with \`/cast\`! Linked participants split the bounty. Attacks share a 15-second cooldown; defeated bosses return after 1 hour.`;
 
         container.addTextDisplayComponents(ComponentsV2.text(text));
-        await interaction.reply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 });
+        await interaction.editReply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 });
     },
 };
 
@@ -85,6 +81,11 @@ export const attackCommand: Command = {
 
         const result = await viralExpansionService.attackWorldBoss(interaction.user, type);
 
+        if (!result.success) {
+            const container = ComponentsV2.warningContainer('Raid not ready', result.message);
+            await interaction.editReply({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 });
+            return;
+        }
         const container = ComponentsV2.baseContainer(
             result.defeated ? ComponentsV2.Accents.success : ComponentsV2.Accents.primary
         );
@@ -92,20 +93,19 @@ export const attackCommand: Command = {
         if (result.defeated) {
             const winText = `# 👑 WORLD BOSS SLAIN!\n\n` +
                 `<@${interaction.user.id}> delivered the **FINAL FATAL BLOW** with a ${type.toUpperCase()} strike!\n\n` +
-                `### 💰 Bounty Distribution (1,000 COINS Pool Split):\n` +
+                `### 💰 Bounty Distribution (${result.pool.toLocaleString()} COINS Pool Split):\n` +
                 `${result.rewardSummary || 'Rewards split among raiders!'}\n\n` +
-                `-# Coins have been directly deposited to your Victus Cloud balances!`;
+                `-# Paid rewards are deposited. Pending payouts retry automatically. The next raid opens after 1 hour.`;
 
             container.addTextDisplayComponents(ComponentsV2.text(winText));
         } else {
-            const boss = await viralExpansionStore.getActiveWorldBoss();
-            const bar = renderHealthBar(result.remainingHp, boss?.max_hp || 10000);
+            const bar = renderHealthBar(result.remainingHp, result.maxHp);
 
             const hitText = `# 💥 Hit Registered on World Boss!\n\n` +
                 `You struck the beast with a **${type.toUpperCase()} strike** dealing **${result.damageDealt} DMG**!\n\n` +
                 `› **Remaining HP:** ${bar} (\`${result.remainingHp.toLocaleString()} HP\`)\n` +
-                `› **Your Contribution:** Recorded towards the **1,000 COINS** pool!\n\n` +
-                `-# Keep attacking! Upgraded pickaxes deal higher bonus damage!`;
+                `› **Your Contribution:** Recorded towards the **${result.pool.toLocaleString()} COINS** pool!\n\n` +
+                `-# Attack again in 15 seconds. /attack and /cast share the same cooldown.`;
 
             container.addTextDisplayComponents(ComponentsV2.text(hitText));
         }

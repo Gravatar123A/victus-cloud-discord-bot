@@ -52,7 +52,7 @@ export const staffaiCommand: Command = {
         const member = interaction.member as GuildMember | null;
 
         // Verify Staff Authorization (strictly isolated to Victus Staff)
-        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client)) || antigravityPipeline.isAuthorized(member);
+        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client));
         if (!authorized) {
             await interaction.reply({
                 embeds: [createUnauthorizedEmbed()],
@@ -202,7 +202,7 @@ export const staffaiCommand: Command = {
         }
 
         const member = interaction.member as GuildMember | null;
-        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client)) || antigravityPipeline.isAuthorized(member);
+        const authorized = (await isVictusStaffOrAdmin(interaction.user, interaction.client));
         if (!authorized) {
             await interaction.reply({
                 embeds: [createUnauthorizedEmbed()],

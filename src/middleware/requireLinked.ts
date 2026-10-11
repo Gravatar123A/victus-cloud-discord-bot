@@ -1,3 +1,4 @@
+import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
 import { ChatInputCommandInteraction, MessageFlags } from 'discord.js';
 import { supabase } from '../services/supabase.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
@@ -78,16 +79,13 @@ export async function requireLinked(
 export async function requireAdmin(
     interaction: ChatInputCommandInteraction
 ): Promise<boolean> {
-    const linkedAccount = await requireLinkedAccount(interaction);
-    if (!linkedAccount) return false;
-
-    const isAdmin = await supabase.isUserAdmin(linkedAccount.userId);
+    const isAdmin = await isVictusStaffOrAdmin(interaction.user, interaction.client);
 
     if (!isAdmin) {
         const container = ComponentsV2.errorContainer(
             'Permission Denied',
             'You do not have permission to use this command.\n\n' +
-            'This command is restricted to administrators.'
+            'Only current members of the official Victus Cloud staff team can use this command.'
         );
 
         if (interaction.deferred) {

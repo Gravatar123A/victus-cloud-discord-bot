@@ -1,7 +1,11 @@
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { mkdir, readFile, open, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { supabase } from './supabase.js';
 import { logger } from '../utils/logger.js';
+import { gameUuid } from './gameRules.js';
+function missingTable(error) {
+    return ['42P01', 'PGRST205'].includes(error?.code);
+}
 const STORE_PATH = join(process.cwd(), 'data', 'expansion-store.json');
 class AsyncMutex {
     queue = [];
@@ -29,15 +33,27 @@ class AsyncMutex {
 }
 const fileMutex = new AsyncMutex();
 export class ViralExpansionStore {
+    storePath;
     cache = null;
+    loading = null;
+    constructor(storePath = STORE_PATH) {
+        this.storePath = storePath;
+    }
     async loadLocalStore() {
         if (this.cache)
             return this.cache;
+        if (!this.loading)
+            this.loading = this.readLocalStore().finally(() => { this.loading = null; });
+        return this.loading;
+    }
+    async readLocalStore() {
         try {
-            const raw = await readFile(STORE_PATH, 'utf8');
+            const raw = await readFile(this.storePath, 'utf8');
             this.cache = JSON.parse(raw);
         }
-        catch {
+        catch (error) {
+            if (error?.code !== 'ENOENT')
+                throw error;
             this.cache = {
                 users: {},
                 guilds: {},
@@ -54,14 +70,23 @@ export class ViralExpansionStore {
     async saveLocalStore(store) {
         const release = await fileMutex.acquire();
         try {
+            await mkdir(dirname(this.storePath), { recursive: true });
+            const tempPath = `${this.storePath}.${Date.now()}.tmp`;
+            const file = await open(tempPath, 'w');
+            try {
+                await file.writeFile(JSON.stringify(store, null, 2));
+                await file.sync();
+            }
+            finally {
+                await file.close();
+            }
+            await rename(tempPath, this.storePath);
             this.cache = store;
-            await mkdir(dirname(STORE_PATH), { recursive: true });
-            const tempPath = `${STORE_PATH}.${Date.now()}.tmp`;
-            await writeFile(tempPath, JSON.stringify(store, null, 2), 'utf8');
-            await rename(tempPath, STORE_PATH);
         }
         catch (err) {
+            this.cache = null;
             logger.error('Failed to save expansion local store:', err);
+            throw err;
         }
         finally {
             release();
@@ -226,48 +251,43 @@ export class ViralExpansionStore {
     // INVENTORY (Minecraft Text-RPG)
     // ============================================
     async getInventory(discordId) {
-        try {
-            const { data, error } = await supabase.client
-                .from('bot_inventory')
-                .select('*')
-                .eq('discord_id', discordId)
-                .maybeSingle();
-            if (!error && data) {
-                return data;
-            }
-        }
-        catch {
-            // fallback
-        }
+        const { data, error } = await supabase.client.from('bot_inventory').select('*').eq('discord_id', discordId).maybeSingle();
+        if (error && !missingTable(error))
+            throw new Error(`Inventory unavailable: ${error.message}`);
+        if (data)
+            return structuredClone(data);
         const store = await this.loadLocalStore();
-        if (!store.inventories[discordId]) {
-            store.inventories[discordId] = {
-                discord_id: discordId,
-                ores_json: { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 },
-                fish_json: { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 },
-                mobs_json: [],
-                pickaxe_tier: 'wood',
-                rod_tier: 'wood',
-                last_mine_at: null,
-                last_fish_at: null,
-                updated_at: new Date().toISOString(),
-            };
-            await this.saveLocalStore(store);
-        }
-        return store.inventories[discordId];
+        if (error && store.inventories[discordId])
+            return structuredClone(store.inventories[discordId]);
+        return {
+            discord_id: discordId,
+            ores_json: { coal: 0, iron: 0, gold: 0, diamond: 0, netherite: 0 },
+            fish_json: { cod: 0, salmon: 0, tropical: 0, pufferfish: 0, treasure: 0 },
+            mobs_json: [], pickaxe_tier: 'wood', rod_tier: 'wood',
+            last_mine_at: null, last_fish_at: null,
+        };
     }
     async saveInventory(inv) {
-        inv.updated_at = new Date().toISOString();
-        try {
-            await supabase.client
-                .from('bot_inventory')
-                .upsert(inv);
-        }
-        catch {
-            // fallback
-        }
+        const updated = { ...inv, updated_at: new Date().toISOString() };
+        const { error } = await supabase.client.from('bot_inventory').upsert(updated);
+        if (error && !missingTable(error))
+            throw new Error(`Inventory save failed: ${error.message}`);
+        if (!error)
+            return;
         const store = await this.loadLocalStore();
-        store.inventories[inv.discord_id] = inv;
+        store.inventories[inv.discord_id] = updated;
+        await this.saveLocalStore(store);
+    }
+    async getPendingSale(discordId) {
+        return structuredClone((await this.loadLocalStore()).pending_sales?.[discordId] || null);
+    }
+    async savePendingSale(discordId, sale) {
+        const store = await this.loadLocalStore();
+        store.pending_sales ||= {};
+        if (sale)
+            store.pending_sales[discordId] = structuredClone(sale);
+        else
+            delete store.pending_sales[discordId];
         await this.saveLocalStore(store);
     }
     // ============================================
@@ -324,37 +344,66 @@ export class ViralExpansionStore {
     // ============================================
     // WORLD BOSSES
     // ============================================
-    async getActiveWorldBoss() {
-        try {
-            const { data, error } = await supabase.client
-                .from('bot_world_bosses')
-                .select('*')
-                .eq('status', 'active')
-                .order('spawned_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
-            if (!error && data)
-                return data;
-        }
-        catch {
-            // fallback
-        }
+    async getLatestWorldBoss() {
+        const { data, error } = await supabase.client.from('bot_world_bosses').select('*')
+            .order('spawned_at', { ascending: false }).limit(1).maybeSingle();
+        if (error && !missingTable(error))
+            throw new Error(`Raid unavailable: ${error.message}`);
+        if (data)
+            return structuredClone(data);
         const store = await this.loadLocalStore();
-        const active = Object.values(store.bosses).find((b) => b.status === 'active');
-        return active || null;
+        const local = structuredClone(Object.values(store.bosses).sort((a, b) => b.spawned_at.localeCompare(a.spawned_at))[0] || null);
+        if (error || !local)
+            return local;
+        // Older versions used non-UUID IDs, silently failed DB writes, and kept
+        // raids only on disk. Import that raid without resetting its cooldown.
+        const migrated = { ...local, id: gameUuid(local.id) };
+        const imported = await supabase.client.from('bot_world_bosses').insert(migrated);
+        if (imported.error && imported.error.code !== '23505')
+            throw new Error(`Raid recovery failed: ${imported.error.message}`);
+        if (imported.error)
+            return this.getLatestWorldBoss();
+        return migrated;
     }
-    async saveWorldBoss(boss) {
-        try {
-            await supabase.client
-                .from('bot_world_bosses')
-                .upsert(boss);
+    async getPendingWorldBosses() {
+        const pending = [];
+        for (let offset = 0;; offset += 100) {
+            const { data, error } = await supabase.client.from('bot_world_bosses').select('*')
+                .eq('status', 'settling').order('spawned_at').range(offset, offset + 99);
+            if (error && !missingTable(error))
+                throw new Error(`Raid payouts unavailable: ${error.message}`);
+            if (error)
+                return structuredClone(Object.values((await this.loadLocalStore()).bosses).filter(boss => boss.status === 'settling'));
+            pending.push(...(data || []));
+            if (!data || data.length < 100)
+                return pending;
         }
-        catch {
-            // fallback
-        }
+    }
+    async getActiveWorldBoss() {
+        const boss = await this.getLatestWorldBoss();
+        return boss?.status === 'active' ? boss : null;
+    }
+    /** Compare-and-swap prevents two workers accepting the same hit/final blow.
+     * Spawn IDs are derived from the previous raid, so concurrent spawns collide. */
+    async commitWorldBoss(expected, boss) {
+        const query = expected
+            ? supabase.client.from('bot_world_bosses').update(boss).eq('id', expected.id)
+                .eq('status', expected.status).eq('current_hp', expected.current_hp).select('id')
+            : supabase.client.from('bot_world_bosses').insert(boss).select('id');
+        const { data, error } = await query;
+        if (error?.code === '23505')
+            return false;
+        if (error && !missingTable(error))
+            throw new Error(`Raid save failed: ${error.message}`);
+        if (!error)
+            return !!data?.length;
         const store = await this.loadLocalStore();
-        store.bosses[boss.id] = boss;
+        const current = store.bosses[boss.id];
+        if (expected ? JSON.stringify(current) !== JSON.stringify(expected) : !!current)
+            return false;
+        store.bosses[boss.id] = structuredClone(boss);
         await this.saveLocalStore(store);
+        return true;
     }
     // ============================================
     // ALLIANCE WARS

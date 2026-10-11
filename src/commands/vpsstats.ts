@@ -144,6 +144,8 @@ export const vpsStatsCommand: Command = {
         .setDMPermission(false)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
+    adminOnly: true,
+
     async execute(interaction) {
         const isPrefix = interaction.constructor.name === 'PrefixInteraction';
 

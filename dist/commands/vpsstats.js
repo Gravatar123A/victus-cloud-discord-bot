@@ -112,6 +112,7 @@ export const vpsStatsCommand = {
         .setDescription('Display server resource statistics for the VPS')
         .setDMPermission(false)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    adminOnly: true,
     async execute(interaction) {
         const isPrefix = interaction.constructor.name === 'PrefixInteraction';
         if (isPrefix) {

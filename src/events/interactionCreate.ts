@@ -4,7 +4,7 @@ import { checkCooldown } from '../middleware/rateLimit.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import type { Event } from '../types/index.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
-import { isVictusStaffOrAdmin } from '../utils/staffAuth.js';
+import { isVictusStaffOrAdmin, isVictusStaffComponent } from '../utils/staffAuth.js';
 
 export const interactionCreateEvent: Event = {
 
@@ -27,6 +27,14 @@ export const interactionCreateEvent: Event = {
                     const translated = translateV2Components(options);
                     return origEditReply(translated);
                 };
+            }
+        }
+
+        // Recheck sensitive controls on every click/submission, including old panels.
+        if ('customId' in interaction && isVictusStaffComponent(interaction.customId)) {
+            if (!await isVictusStaffOrAdmin(interaction.user, interaction.client)) {
+                await (interaction as any).reply({ content: 'Only official Victus Cloud staff can use this control.', flags: MessageFlags.Ephemeral });
+                return;
             }
         }
 
