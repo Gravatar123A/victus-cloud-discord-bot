@@ -5,8 +5,8 @@ import { groqAi } from '../services/groqAi.js';
 import { victusAiActions } from '../services/victusAiActions.js';
 import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
-import { handleTicketChannelMessage, mirrorAiReplyToTicket } from '../services/ticketBridge.js';
 import { isChannelSummoned } from '../services/summonedChannels.js';
+import { handleDiscordTicketMessage } from '../services/discordTicketMessages.js';
 import { awardMessageXp } from '../services/activityXp.js';
 import { PrefixInteraction, translateV2Components } from '../utils/prefixInteraction.js';
 import { checkCooldown } from '../middleware/rateLimit.js';
@@ -75,16 +75,6 @@ function buildPromptFromMessage(message) {
         return `The user sent attachments and may need support: ${attachments}`;
     return '';
 }
-// When the AI answers publicly inside a ticket channel (e.g. staff /summon-ed
-// it), mirror the answer into the website ticket thread so the web user sees it.
-async function mirrorPublicReply(message, publicReply, text) {
-    if (!publicReply || !message.inGuild() || !text)
-        return;
-    const botId = message.client.user?.id;
-    if (!botId)
-        return;
-    await mirrorAiReplyToTicket(message.channelId, botId, text).catch(() => undefined);
-}
 async function replyWithAi(message, prompt, publicReply, fallbackMessage) {
     try {
         if ('sendTyping' in message.channel) {
@@ -108,7 +98,6 @@ async function replyWithAi(message, prompt, publicReply, fallbackMessage) {
                 content: formatAiMessage(content),
                 allowedMentions: { repliedUser: false },
             });
-            await mirrorPublicReply(message, publicReply, content);
             return;
         }
         const isDm = message.channel.type === ChannelType.DM;
@@ -149,7 +138,6 @@ async function replyWithAi(message, prompt, publicReply, fallbackMessage) {
             content: formatAiMessage(answer),
             allowedMentions: { repliedUser: false },
         });
-        await mirrorPublicReply(message, publicReply, answer);
     }
     catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -583,10 +571,7 @@ export const messageCreateEvent = {
             }
         }
         const summoned = message.inGuild() ? isChannelSummoned(message.channelId) : false;
-        // Mirror messages in ticket channels to the website ticket (runs even if
-        // the AI is disabled). Normally that's the end of it — but if staff have
-        // /summon-ed this channel, fall through so the AI also answers.
-        const ticketHandled = await handleTicketChannelMessage(message);
+        const ticketHandled = await handleDiscordTicketMessage(message);
         if (ticketHandled && !summoned)
             return;
         if (!groqAi.isEnabled())

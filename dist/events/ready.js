@@ -8,7 +8,6 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { NotificationTemplates } from '../embeds/notificationTemplates.js';
 import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
 import { registerApplicationCommands } from '../utils/registerCommands.js';
-import { initTicketBridge } from '../services/ticketBridge.js';
 import { startUptimeHeartbeat } from '../services/uptimeHeartbeat.js';
 import { startGiveawayScheduler } from '../commands/giveaway.js';
 import { updateServerStats } from '../commands/serverstats.js';
@@ -309,8 +308,6 @@ export const readyEvent = {
                     `Action: Linked via website`, ComponentsV2.Accents.success);
             }
         });
-        // Bridge website tickets <-> Discord ticket channels.
-        initTicketBridge(client);
         // Keep the Uptime Kuma "Discord Bot" push monitor green.
         startUptimeHeartbeat(client);
         // Start background giveaway ends_at checks scheduler

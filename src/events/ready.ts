@@ -10,7 +10,6 @@ import type { NotificationType } from '../embeds/notificationTemplates.js';
 import { sendAuditLog, sendNotificationDM } from '../utils/auditing.js';
 import type { Event } from '../types/index.js';
 import { registerApplicationCommands } from '../utils/registerCommands.js';
-import { initTicketBridge } from '../services/ticketBridge.js';
 import { startUptimeHeartbeat } from '../services/uptimeHeartbeat.js';
 import { startGiveawayScheduler } from '../commands/giveaway.js';
 import { updateServerStats } from '../commands/serverstats.js';
@@ -362,9 +361,6 @@ export const readyEvent: Event = {
                 );
             }
         });
-
-        // Bridge website tickets <-> Discord ticket channels.
-        initTicketBridge(client);
 
         // Keep the Uptime Kuma "Discord Bot" push monitor green.
         startUptimeHeartbeat(client);
