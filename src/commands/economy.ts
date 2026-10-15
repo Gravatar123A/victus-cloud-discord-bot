@@ -67,7 +67,7 @@ async function loadCtx(discordId: string, client: Client): Promise<Ctx | null> {
 // Sync a known wallet delta (already applied locally by an economy RPC) into
 // Paymenter, the source of truth, then mirror the authoritative balance back.
 // Delta-based + idempotent, so concurrent operations commute and retries never
-// double-apply. Failures are healed later by the reconciler — never throw.
+// double-apply. Failures are recorded for an exact-key retry by the reconciler.
 async function syncDelta(input: {
     userId: string;
     delta: number;

@@ -1213,7 +1213,8 @@ class SupabaseService {
      * in the history ledger, and mirror the authoritative balance back to the
      * local wallet. Used after Supabase-RPC money moves (transfers, bank,
      * admin adjusts) so both systems converge. Never throws — returns the new
-     * balance or null when Paymenter is unreachable (a later heal retries).
+     * balance or null when Paymenter is unreachable (a durable pending entry
+     * lets reconciliation retry the exact idempotent mutation).
      */
     async syncWalletDelta(input: {
         userId: string;
@@ -1234,15 +1235,32 @@ class SupabaseService {
                 }
                 return null;
             }
+            // Persist the exact operation before calling Paymenter. If the bot
+            // stops after Paymenter commits, a retry uses the same reference.
+            const { data: pending, error: pendingError } = await this.client
+                .from('economy_ledger')
+                .insert({
+                    user_id: userId,
+                    counterparty_id: null,
+                    kind: 'paymenter_sync_pending',
+                    currency: 'cp',
+                    amount: rounded,
+                    balance_after: null,
+                    reason: description.slice(0, 500),
+                    meta: { source, reference },
+                })
+                .select('id')
+                .single();
+            if (pendingError || !pending) {
+                logger.error(`COINS mutation needs manual recovery: ${source} ${reference} for ${userId} (${pendingError?.message || 'no ledger row'})`);
+                return null;
+            }
             const balance = await this.mutatePaymenterCoins(email, rounded, source, reference, description);
-            await this.recordEconomyLedger({
-                userId,
+            const { error: updateError } = await this.client.from('economy_ledger').update({
                 kind: source,
-                amount: rounded,
-                balanceAfter: balance,
-                reason: description,
-                meta: { reference },
-            }).catch(() => undefined);
+                balance_after: balance,
+            }).eq('id', pending.id).eq('kind', 'paymenter_sync_pending');
+            if (updateError) logger.warn(`COINS ledger update pending retry: ${reference} (${updateError.message})`);
             await this.mirrorProfileCoinsFromPaymenter(userId, balance, `${source} sync`).catch(() => undefined);
             return balance;
         } catch (error) {
@@ -1252,38 +1270,44 @@ class SupabaseService {
     }
 
     /**
-     * Heal one user's drift between the local wallet (profiles.total_cp) and
-     * Paymenter (source of truth). Local-ahead gaps are granted into Paymenter
-     * (idempotent per day+state, so retries never double-apply); Paymenter-ahead
-     * gaps are mirrored down (they can only come from unmirrored grants).
-     * Never throws.
+     * Retry known local economy mutations by their original idempotency keys,
+     * then copy Paymenter's authoritative balance to the local wallet. A plain
+     * balance difference is never proof that coins should be minted: it can be
+     * a legitimate Paymenter spend, such as a free-server renewal.
      */
     async healUserCoins(userId: string): Promise<'in-sync' | 'healed' | 'failed'> {
         try {
             const profile = await this.getUserProfile(userId).catch(() => null);
             const email = String((profile as any)?.email || '').trim().toLowerCase();
             if (!email) return 'failed';
+            const { data: pending, error: pendingError } = await this.client
+                .from('economy_ledger')
+                .select('id,amount,reason,meta')
+                .eq('user_id', userId)
+                .eq('kind', 'paymenter_sync_pending')
+                .order('created_at', { ascending: true });
+            if (pendingError) throw pendingError;
+            for (const row of pending || []) {
+                const source = String(row.meta?.source || '');
+                const reference = String(row.meta?.reference || '');
+                if (!source || !reference || !Number.isFinite(Number(row.amount)) || Number(row.amount) === 0) {
+                    logger.error(`Invalid pending COINS mutation ${row.id} for ${userId}`);
+                    return 'failed';
+                }
+                const balance = await this.mutatePaymenterCoins(email, Number(row.amount), source, reference, String(row.reason || source));
+                const { error: updateError } = await this.client.from('economy_ledger').update({
+                    kind: source,
+                    balance_after: balance,
+                }).eq('id', row.id).eq('kind', 'paymenter_sync_pending');
+                if (updateError) throw updateError;
+            }
             const local = Math.max(0, Math.round(Number((profile as any)?.total_cp ?? 0)));
             const live = await this.getPaymenterBalances(email).catch(() => null);
             if (!live?.found) {
-                // No billing account yet — nothing to heal against.
-                return 'in-sync';
+                return 'failed';
             }
             const remote = Math.max(0, Math.round(live.coins));
             if (local === remote) return 'in-sync';
-            if (local > remote) {
-                const day = new Date().toISOString().slice(0, 10);
-                const gap = local - remote;
-                const healed = await this.syncWalletDelta({
-                    userId,
-                    email,
-                    delta: gap,
-                    source: 'heal',
-                    reference: `heal:${userId}:${day}:${local}:${remote}`,
-                    description: `Drift repair: local wallet ${local} vs Paymenter ${remote} (+${gap} COINS)`,
-                });
-                return healed === null ? 'failed' : 'healed';
-            }
             await this.mirrorProfileCoinsFromPaymenter(userId, remote, 'heal mirror').catch(() => undefined);
             return 'healed';
         } catch (error) {
@@ -1387,9 +1411,8 @@ class SupabaseService {
 
     /**
      * Heal drift between local wallets and Paymenter (source of truth) across
-     * all users. Local-ahead gaps are granted into Paymenter idempotently;
-     * Paymenter-ahead gaps are mirrored down. Converges transient failures
-     * from either side without ever overwriting truth from a stale value.
+     * all users. Only explicitly recorded pending deltas are retried into
+     * Paymenter; ordinary drift is resolved from Paymenter to the local mirror.
      */
     async reconcilePaymenterCoins(reason = 'periodic'): Promise<{ total: number; synced: number; failed: number }> {
         if (this.paymenterReconciliationRunning) return { total: 0, synced: 0, failed: 0 };
