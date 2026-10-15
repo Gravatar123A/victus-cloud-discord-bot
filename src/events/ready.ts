@@ -292,10 +292,8 @@ export const readyEvent: Event = {
         restoreVoiceXpSessions(client);
         startLevelUpWorker(client);
 
-        // Heal drift between local wallets and Paymenter (source of truth).
-        // Local-ahead gaps are granted into Paymenter idempotently;
-        // Paymenter-ahead gaps are mirrored down. Converges transient
-        // failures from either side without ever overwriting truth.
+        // Retry recorded economy mutations, then mirror Paymenter's
+        // authoritative COINS balance to local wallets.
         const reconcileCoins = (reason: string) => {
             if (!supabase.isAvailable()) return;
             supabase.reconcilePaymenterCoins(reason).catch((error) => {
