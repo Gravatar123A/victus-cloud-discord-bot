@@ -9,7 +9,7 @@ const entrypoint = path.join(rootDir, "dist", "index.js");
 const discordJsPackage = path.join(rootDir, "node_modules", "discord.js", "package.json");
 const voicePackage = path.join(rootDir, "node_modules", "@discordjs", "voice", "package.json");
 const opusPackage = path.join(rootDir, "node_modules", "opusscript", "package.json");
-const ffmpegPackage = path.join(rootDir, "node_modules", "ffmpeg-static", "package.json");
+const ffmpegPackage = path.join(rootDir, "node_modules", "@ffmpeg-installer", "ffmpeg", "package.json");
 const edgeTtsPackage = path.join(rootDir, "node_modules", "node-edge-tts", "package.json");
 const nodeModulesDir = path.join(rootDir, "node_modules");
 

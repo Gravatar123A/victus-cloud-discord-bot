@@ -1,8 +1,11 @@
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
+import { delimiter, dirname } from 'node:path';
 import { Readable } from 'node:stream';
 import { AudioPlayerStatus, EndBehaviorType, NoSubscriberBehavior, StreamType, VoiceConnectionStatus, createAudioPlayer, createAudioResource, entersState, getVoiceConnection, joinVoiceChannel, } from '@discordjs/voice';
 import { ChannelType } from 'discord.js';
 import { EdgeTTS } from 'node-edge-tts';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { config } from '../config.js';
 import { getTicketKnowledge } from './ticketKnowledge.js';
 import { redactTicketText } from './discordTicketAi.js';
@@ -81,6 +84,12 @@ export class VoiceAssistant {
             logger.error('Voice assistant needs GROQ_API_KEY for recognition and replies.');
             return;
         }
+        const ffmpegCheck = spawnSync(ffmpegInstaller.path, ['-version'], { timeout: 5_000, windowsHide: true });
+        if (ffmpegCheck.status !== 0) {
+            logger.error(`Voice assistant FFmpeg is unavailable: ${ffmpegCheck.error?.message || ffmpegCheck.status}`);
+            return;
+        }
+        process.env.PATH = `${dirname(ffmpegInstaller.path)}${delimiter}${process.env.PATH || ''}`;
         this.player.on('error', (error) => logger.error(`Voice assistant playback failed: ${error.message}`));
         await this.ensureConnected().catch((error) => logger.warn(`Voice assistant initial connection failed: ${error.message}`));
         this.watchdog = setInterval(() => {
