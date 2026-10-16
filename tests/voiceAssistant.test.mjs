@@ -30,7 +30,8 @@ test('voice requests use the transcription and Fish speech endpoints with bounde
         calls.push({ url: String(url), init });
         if (String(url).endsWith('/audio/transcriptions')) {
             const form = init.body;
-            assert.equal(form.get('model'), 'whisper-large-v3-turbo');
+            assert.equal(form.get('model'), 'whisper-large-v3');
+            assert.match(form.get('prompt'), /Victus Cloud/);
             const file = form.get('file');
             assert.equal(file.type, 'audio/wav');
             assert.equal(Buffer.from(await file.arrayBuffer()).toString('ascii', 0, 4), 'RIFF');
@@ -65,11 +66,23 @@ test('Fish free-tier 429 pauses speech requests instead of repeatedly hitting qu
     const originalFetch = globalThis.fetch;
     let attempts = 0;
     globalThis.fetch = async () => { attempts++; return Response.json({ error: { message: 'quota exhausted' } }, { status: 429 }); };
+    assistant.synthesizeEdge = async () => Buffer.from('ID3fallback-audio');
     try {
-        await assert.rejects(assistant.synthesize('Hello'), /429/);
-        await assert.rejects(assistant.synthesize('Hello again'), /quota is unavailable/);
+        assert.equal((await assistant.synthesize('Hello')).toString(), 'ID3fallback-audio');
+        assert.equal((await assistant.synthesize('Hello again')).toString(), 'ID3fallback-audio');
         assert.equal(attempts, 1);
     } finally {
         globalThis.fetch = originalFetch;
     }
+});
+
+test('voice reply failures never turn into a text answer', async () => {
+    const assistant = new VoiceAssistant();
+    let textMessages = 0;
+    assistant.channel = { send: async () => { textMessages++; } };
+    assistant.transcribe = async () => 'How do I make a backup?';
+    assistant.answer = async () => 'Open Backups and create one.';
+    assistant.synthesize = async () => { throw new Error('No speech service available'); };
+    await assert.rejects(assistant.respond({ userId: '123', pcm: Buffer.alloc(0), durationMs: 1000 }), /No speech service available/);
+    assert.equal(textMessages, 0);
 });

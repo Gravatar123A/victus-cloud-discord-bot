@@ -10,6 +10,7 @@ const discordJsPackage = path.join(rootDir, "node_modules", "discord.js", "packa
 const voicePackage = path.join(rootDir, "node_modules", "@discordjs", "voice", "package.json");
 const opusPackage = path.join(rootDir, "node_modules", "opusscript", "package.json");
 const ffmpegPackage = path.join(rootDir, "node_modules", "ffmpeg-static", "package.json");
+const edgeTtsPackage = path.join(rootDir, "node_modules", "node-edge-tts", "package.json");
 const nodeModulesDir = path.join(rootDir, "node_modules");
 
 // 1. Ensure node_modules directory exists
@@ -22,7 +23,7 @@ try {
 }
 
 // 2. Verify critical dependencies
-if (![discordJsPackage, voicePackage, opusPackage, ffmpegPackage].every(existsSync)) {
+if (![discordJsPackage, voicePackage, opusPackage, ffmpegPackage, edgeTtsPackage].every(existsSync)) {
     console.log("[Victus Bot] Dependencies missing in node_modules. Installing required packages...");
     const tmpCache = process.platform === "win32" ? path.join(rootDir, ".npm-cache") : "/tmp/.npm";
     try {
@@ -34,7 +35,7 @@ if (![discordJsPackage, voicePackage, opusPackage, ffmpegPackage].every(existsSy
         stdio: "inherit",
         shell: process.platform === "win32",
     });
-    if (install.status !== 0 || ![discordJsPackage, voicePackage, opusPackage, ffmpegPackage].every(existsSync)) {
+    if (install.status !== 0 || ![discordJsPackage, voicePackage, opusPackage, ffmpegPackage, edgeTtsPackage].every(existsSync)) {
         console.error("[Victus Bot] Required dependency installation failed. Aborting startup.");
         process.exit(1);
     }

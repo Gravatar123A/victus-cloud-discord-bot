@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { Readable } from 'node:stream';
 import { AudioPlayerStatus, EndBehaviorType, NoSubscriberBehavior, StreamType, VoiceConnectionStatus, createAudioPlayer, createAudioResource, entersState, getVoiceConnection, joinVoiceChannel, } from '@discordjs/voice';
 import { ChannelType } from 'discord.js';
+import { EdgeTTS } from 'node-edge-tts';
 import { config } from '../config.js';
 import { getTicketKnowledge } from './ticketKnowledge.js';
 import { redactTicketText } from './discordTicketAi.js';
@@ -11,10 +12,10 @@ const OpusScript = require('opusscript');
 export const VOICE_ASSISTANT_CHANNEL_ID = process.env.VOICE_ASSISTANT_CHANNEL_ID || '1340607472129413132';
 export const VOICE_TTS_MODEL = 'fish-audio/s2.1-pro-free:free';
 const SAMPLE_RATE = 16_000;
-const MAX_UTTERANCE_MS = 18_000;
+const MAX_UTTERANCE_MS = 30_000;
 const MIN_UTTERANCE_MS = 550;
 const MAX_QUEUE = 4;
-const USER_COOLDOWN_MS = 10_000;
+const USER_COOLDOWN_MS = 1_500;
 const MEMORY_TTL_MS = 20 * 60_000;
 export function pcmToWav(pcm, sampleRate = SAMPLE_RATE) {
     const header = Buffer.alloc(44);
@@ -76,8 +77,8 @@ export class VoiceAssistant {
         if (this.watchdog)
             return;
         this.client = client;
-        if (!config.ai.providers.some((provider) => provider.name === 'groq') || !getOpenRouterKey()) {
-            logger.error('Voice assistant needs GROQ_API_KEY for recognition/replies and OPENROUTER_API_KEY for Fish Audio speech.');
+        if (!config.ai.providers.some((provider) => provider.name === 'groq')) {
+            logger.error('Voice assistant needs GROQ_API_KEY for recognition and replies.');
             return;
         }
         this.player.on('error', (error) => logger.error(`Voice assistant playback failed: ${error.message}`));
@@ -134,13 +135,15 @@ export class VoiceAssistant {
     capture(userId, connection) {
         if (userId === this.client?.user.id || connection !== this.connection || this.recordings.has(userId))
             return;
+        if (this.player.state.status !== AudioPlayerStatus.Idle)
+            return;
         if (this.queue.length >= MAX_QUEUE || Date.now() - (this.lastCapture.get(userId) || 0) < USER_COOLDOWN_MS)
             return;
         if (!this.channel?.members.has(userId))
             return;
         this.recordings.add(userId);
         const stream = connection.receiver.subscribe(userId, {
-            end: { behavior: EndBehaviorType.AfterSilence, duration: 900 },
+            end: { behavior: EndBehaviorType.AfterSilence, duration: 1_400 },
         });
         const decoder = new OpusScript(SAMPLE_RATE, 1, OpusScript.Application.AUDIO);
         const chunks = [];
@@ -215,8 +218,9 @@ export class VoiceAssistant {
     async transcribe(utterance) {
         const provider = config.ai.providers.find((item) => item.name === 'groq');
         const form = new FormData();
-        form.set('model', 'whisper-large-v3-turbo');
+        form.set('model', 'whisper-large-v3');
         form.set('response_format', 'json');
+        form.set('prompt', 'Victus Cloud support conversation about Minecraft servers, VPS, backups, COINS, billing, Discord tickets and subscriptions.');
         form.set('file', new Blob([new Uint8Array(pcmToWav(utterance.pcm))], { type: 'audio/wav' }), 'question.wav');
         const response = await fetch(`${provider.baseUrl.replace(/\/$/, '')}/audio/transcriptions`, {
             method: 'POST', headers: { Authorization: `Bearer ${provider.apiKey}` }, body: form,
@@ -258,7 +262,9 @@ export class VoiceAssistant {
         });
         return answer;
     }
-    async synthesize(answer) {
+    async synthesizeFish(answer) {
+        if (!getOpenRouterKey())
+            throw new Error('OpenRouter key is not configured');
         if (Date.now() < this.fishBlockedUntil)
             throw new Error('Fish Audio daily free-tier quota is unavailable');
         const voice = process.env.VOICE_ASSISTANT_TTS_VOICE?.trim();
@@ -287,21 +293,43 @@ export class VoiceAssistant {
             throw new Error('Fish Audio returned invalid or oversized audio');
         return audio;
     }
+    async synthesizeEdge(answer) {
+        const tts = new EdgeTTS({
+            voice: process.env.VOICE_ASSISTANT_FALLBACK_VOICE || 'en-US-AriaNeural',
+            lang: 'en-US',
+            outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
+            timeout: 15_000,
+        });
+        const chunks = [];
+        let bytes = 0;
+        for await (const chunk of tts.streamAudio(answer)) {
+            if (!Buffer.isBuffer(chunk))
+                continue;
+            bytes += chunk.length;
+            if (bytes > 5_000_000)
+                throw new Error('Fallback speech exceeded audio size limit');
+            chunks.push(chunk);
+        }
+        if (bytes < 1_000)
+            throw new Error('Fallback speech returned no playable audio');
+        return Buffer.concat(chunks);
+    }
+    async synthesize(answer) {
+        try {
+            return await this.synthesizeFish(answer);
+        }
+        catch (error) {
+            logger.warn(`Fish Audio unavailable; using voice fallback: ${error.message}`);
+            return this.synthesizeEdge(answer);
+        }
+    }
     async respond(utterance) {
         const startedAt = Date.now();
         const transcript = await this.transcribe(utterance);
         if (!transcript || transcript.length < 3 || /^\W+$/.test(transcript))
             return;
         const answer = await this.answer(utterance.userId, transcript);
-        let audio;
-        try {
-            audio = await this.synthesize(answer);
-        }
-        catch (error) {
-            logger.warn(`Voice assistant speech unavailable: ${error.message}`);
-            await this.channel?.send({ content: `<@${utterance.userId}> ${answer}` }).catch(() => { });
-            return;
-        }
+        const audio = await this.synthesize(answer);
         if (!this.connection || this.connection.state.status !== VoiceConnectionStatus.Ready)
             return;
         const resource = createAudioResource(Readable.from([audio]), { inputType: StreamType.Arbitrary });
