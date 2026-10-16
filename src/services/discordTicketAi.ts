@@ -2,6 +2,7 @@ import type { Client, TextChannel } from 'discord.js';
 import { supabase } from './supabase.js';
 import { getTicketKnowledge } from './ticketKnowledge.js';
 import { logger } from '../utils/logger.js';
+import { config } from '../config.js';
 
 export const TICKET_AI_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
 const channelChains = new Map<string, Promise<void>>();
@@ -9,6 +10,7 @@ const pendingReplies = new Map<string, { ticket: any; channel: TextChannel; quer
 const lastFailureNotice = new Map<string, number>();
 const BURST_WINDOW_MS = 1_500;
 const FAILURE_NOTICE_INTERVAL_MS = 5 * 60_000;
+let openRouterQuotaBlockedUntil = 0;
 
 export const TICKET_SYSTEM_PROMPT = `You are Victus AI, an automated first response assistant inside a private Victus Cloud Discord support ticket. Be calm, precise, and useful. You are an AI assistant powered by an external model; never claim to be a human or a model trained in Victus's datacentre.
 
@@ -52,12 +54,39 @@ function selectHistory(messages: any[], query: string, ownerId: string): string 
 }
 
 export function ticketAiConfigured(): boolean {
-    return Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS);
+    return Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS ||
+        config.ai.providers.some((provider) => provider.name === 'groq'));
+}
+
+async function generateViaGroq(prompt: string): Promise<string> {
+    const provider = config.ai.providers.find((item) => item.name === 'groq');
+    if (!provider) throw new Error('No Groq fallback is configured');
+    const startedAt = Date.now();
+    const response = await fetch(`${provider.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${provider.apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            model: provider.model,
+            messages: [
+                { role: 'system', content: TICKET_SYSTEM_PROMPT },
+                { role: 'user', content: prompt },
+            ],
+            temperature: 0.25,
+            max_tokens: 700,
+            ...(provider.model.startsWith('openai/gpt-oss-') ? { reasoning_effort: 'low' } : {}),
+        }),
+        signal: AbortSignal.timeout(25_000),
+    });
+    logger.info(`Ticket AI Groq fallback returned in ${Date.now() - startedAt}ms (${response.status})`);
+    const data = await response.json().catch(() => null) as any;
+    if (!response.ok) throw new Error(`Groq fallback failed (${response.status}): ${String(data?.error?.message || response.statusText).slice(0, 150)}`);
+    const answer = String(data?.choices?.[0]?.message?.content || '').trim();
+    if (!answer) throw new Error('Groq fallback returned an empty answer');
+    return answer.slice(0, 1800).replace(/@everyone|@here/g, '[mention]');
 }
 
 async function generate(ticket: any, query: string): Promise<string> {
     const apiKey = (process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS || '').split(/[\r\n,]+/)[0].trim();
-    if (!apiKey) throw new Error('OpenRouter key is not configured');
     const contextStartedAt = Date.now();
     const [history, knowledge] = await Promise.all([
         supabase.getTicketMessages(ticket.id, 200),
@@ -68,29 +97,47 @@ async function generate(ticket: any, query: string): Promise<string> {
         ? knowledge.map((doc) => `- ${doc.title}: ${doc.url}\n${doc.text}`).join('\n\n').slice(0, 7300)
         : 'No matching live documentation was retrieved. Do not infer current product policy.';
     const prompt = `Ticket category: ${ticket.category?.name || 'Support'}\nSubject: ${redactTicketText(String(ticket.subject || ''))}\nInitial problem: ${redactTicketText(String(ticket.description || ''))}\n\nRelevant public Victus docs:\n${docs}\n\nTicket conversation (selected relevant older messages plus recent messages):\n${selectHistory(history, query, String(ticket.discord_id || ''))}\n\nLatest customer message: ${redactTicketText(query)}`;
+    if (!apiKey || Date.now() < openRouterQuotaBlockedUntil) return generateViaGroq(prompt);
     const modelStartedAt = Date.now();
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://victuscloud.com',
-            'X-Title': 'Victus Discord Support',
-        },
-        body: JSON.stringify({
-            model: TICKET_AI_MODEL,
-            messages: [
-                { role: 'system', content: TICKET_SYSTEM_PROMPT },
-                { role: 'user', content: prompt },
-            ],
-            temperature: 0.25,
-            max_tokens: 700,
-            reasoning: { effort: 'low', exclude: true },
-        }),
-        signal: AbortSignal.timeout(45_000),
-    });
+    const hasGroqFallback = config.ai.providers.some((provider) => provider.name === 'groq');
+    let response: Response;
+    try {
+        response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://victuscloud.com',
+                'X-Title': 'Victus Discord Support',
+            },
+            body: JSON.stringify({
+                model: TICKET_AI_MODEL,
+                messages: [
+                    { role: 'system', content: TICKET_SYSTEM_PROMPT },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.25,
+                max_tokens: 700,
+                reasoning: { effort: 'low', exclude: true },
+            }),
+            signal: AbortSignal.timeout(hasGroqFallback ? 18_000 : 45_000),
+        });
+    } catch (error) {
+        if (!hasGroqFallback) throw error;
+        logger.warn(`Ticket AI primary model timed out or could not connect; using Groq fallback`);
+        return generateViaGroq(prompt);
+    }
     logger.info(`Ticket AI model for ${ticket.id} returned in ${Date.now() - modelStartedAt}ms (${response.status})`);
     const data = await response.json().catch(() => null) as any;
+    if (response.status === 429 && hasGroqFallback) {
+        openRouterQuotaBlockedUntil = Date.now() + 5 * 60_000;
+        logger.warn(`Ticket AI free-model quota reached; using Groq fallback for 5 minutes`);
+        return generateViaGroq(prompt);
+    }
+    if (response.status >= 500 && hasGroqFallback) {
+        logger.warn(`Ticket AI primary provider failed (${response.status}); using Groq fallback`);
+        return generateViaGroq(prompt);
+    }
     if (!response.ok) throw new Error(`OpenRouter request failed (${response.status}): ${String(data?.error?.message || response.statusText).slice(0, 150)}`);
     const answer = String(data?.choices?.[0]?.message?.content || '').trim();
     if (!answer) throw new Error('OpenRouter returned an empty answer');
@@ -131,7 +178,7 @@ async function respond(ticket: any, channel: TextChannel, query: string): Promis
     }
     if (!state.enabled) return;
     if (!ticketAiConfigured()) {
-        logger.warn('Ticket AI skipped: OPENROUTER_API_KEY is missing');
+        logger.warn('Ticket AI skipped: no ticket AI provider is configured');
         await notifyStaffWhenAiUnavailable(ticket, channel);
         return;
     }
@@ -189,7 +236,7 @@ export function enqueueTicketAi(ticket: any, channel: TextChannel, query: string
 
 /** Resume a recent owner question after a bot restart, but never talk over staff or a prior AI reply. */
 export async function recoverRecentUnansweredTicketAi(client: Client, guildId: string): Promise<void> {
-    const since = new Date(Date.now() - 30 * 60_000).toISOString();
+    const since = new Date(Date.now() - 45 * 60_000).toISOString();
     const ids = (await supabase.getRecentDiscordTicketMessageTicketIds(since)).slice(0, 20);
     for (const id of ids) {
         const ticket = await supabase.getTicket(id);
