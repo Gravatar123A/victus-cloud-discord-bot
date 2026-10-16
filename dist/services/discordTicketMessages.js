@@ -2,6 +2,7 @@ import { PermissionFlagsBits } from 'discord.js';
 import { supabase } from './supabase.js';
 import { ticketTranslationService } from './ticketTranslationService.js';
 import { logger } from '../utils/logger.js';
+import { enqueueTicketAi } from './discordTicketAi.js';
 const notTicketUntil = new Map();
 const NOT_TICKET_TTL_MS = 60_000;
 /** Keep Discord ticket transcripts and translation inside Discord. */
@@ -19,8 +20,10 @@ export async function handleDiscordTicketMessage(message) {
     const staffRoleIds = [
         ...(settings?.ticket_staff_role_ids || []),
         ...(settings?.ticket_admin_role_ids || []),
+        ...(ticket.category?.staff_roles || []),
     ];
     const isStaff = !!message.member && (message.member.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+        message.member.permissions?.has?.(PermissionFlagsBits.ManageChannels) ||
         staffRoleIds.some((id) => message.member?.roles.cache.has(id)));
     await supabase.logTicketMessage({
         ticket_id: ticket.id,
@@ -33,6 +36,9 @@ export async function handleDiscordTicketMessage(message) {
     void translateTicketMessage(message, ticket, isStaff).catch((error) => {
         logger.error('Discord ticket translation failed:', error);
     });
+    if (!isStaff && message.author.id === ticket.discord_id && message.content.trim() && !/^[!/]/.test(message.content.trim())) {
+        enqueueTicketAi(ticket, message.channel, message.content);
+    }
     return true;
 }
 async function translateTicketMessage(message, ticket, isStaff) {

@@ -359,6 +359,7 @@ export interface TicketCategory {
     id: string;
     guild_id: string;
     name: string;
+    premium_support?: boolean;
     emoji: string;
     description: string | null;
     priority_default: 'low' | 'medium' | 'high' | 'urgent';

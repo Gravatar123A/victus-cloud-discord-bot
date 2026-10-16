@@ -2,6 +2,8 @@ import { startPvpRecovery } from '../commands/pvp.js';
 import { ActivityType, Client } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
+import { ensurePremiumSupportCategory, isPremiumSupportCategory } from '../services/premiumSupport.js';
+import { createTicketPanel } from '../commands/ticket.js';
 import { assignLinkedRole, syncAllRankRoles, syncLinkedRoles, syncRankRole } from '../utils/roles.js';
 import { supabase } from '../services/supabase.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
@@ -271,6 +273,33 @@ export const readyEvent: Event = {
         // some Pterodactyl images do not ship the native canvas binding. The music
         // renderer already falls back to the text panel when a card is requested.
         logger.info(`Serving ${client.guilds.cache.size} guilds`);
+
+        const ticketGuildId = config.bot.supportGuildId || config.discord.guildId;
+        if (ticketGuildId) {
+            await ensurePremiumSupportCategory(ticketGuildId).catch((error) => {
+                logger.error('Premium Support category setup failed:', error);
+            });
+            try {
+                const settings = await supabase.getBotSettings(ticketGuildId);
+                const categories = await supabase.getTicketCategories(ticketGuildId);
+                if (settings?.ticket_panel_channel_id && categories.some(isPremiumSupportCategory)) {
+                    const channel = await client.channels.fetch(settings.ticket_panel_channel_id).catch(() => null) as any;
+                    if (channel?.isTextBased?.() && channel.messages?.fetch) {
+                        const recent = await channel.messages.fetch({ limit: 100 });
+                        const panelMessage = recent.find((message: any) => message.author.id === client.user.id &&
+                            message.components?.some((component: any) => JSON.stringify(component.toJSON()).includes('ticket_category_select')));
+                        const panel = createTicketPanel(categories);
+                        if (panelMessage) {
+                            await panelMessage.edit({ components: [panel], flags: ComponentsV2.IS_COMPONENTS_V2 });
+                        } else {
+                            await channel.send({ components: [panel], flags: ComponentsV2.IS_COMPONENTS_V2 });
+                        }
+                    }
+                }
+            } catch (error) {
+                logger.warn('Could not refresh the public ticket panel:', error);
+            }
+        }
 
         // Connect to the Lavalink music node now that the gateway is ready.
         try {

@@ -14,6 +14,7 @@ import { adminCommand } from './admin/index.js';
 import { configCommand } from './config.js';
 import { userCommand } from './user.js';
 import { ticketCommand } from './ticket.js';
+import { ticketAiCommand } from './ticketai.js';
 import { ticketPanelCommand, ticketPanelAliasCommand } from './ticket-panel.js';
 import { preferencesCommand } from './preferences.js';
 import { announceCommand } from './announce.js';
@@ -114,6 +115,7 @@ const allCommands: Command[] = [
     configCommand,
     userCommand,
     ticketCommand,
+    ticketAiCommand,
     ticketPanelCommand,
     ticketPanelAliasCommand,
     preferencesCommand,

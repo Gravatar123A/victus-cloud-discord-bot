@@ -2186,6 +2186,7 @@ class SupabaseService {
     async createTicketCategory(category: {
         guild_id: string;
         name: string;
+        premium_support?: boolean;
         emoji?: string;
         description?: string;
         priority_default?: string;
@@ -2567,14 +2568,54 @@ class SupabaseService {
             .from('ticket_messages')
             .select('*')
             .eq('ticket_id', ticketId)
-            .order('created_at', { ascending: true })
+            .order('created_at', { ascending: false })
             .limit(limit);
 
         if (error) {
             logger.error('Failed to get ticket messages:', error);
             return [];
         }
-        return data || [];
+        return (data || []).reverse();
+    }
+
+    /** Null means state could not be read, so callers must fail closed. */
+    async getDiscordTicketAiState(ticketId: string): Promise<{ enabled: boolean; staff_pinged_at: string | null } | null> {
+        const { data, error } = await this.client
+            .from('discord_ticket_ai_state')
+            .select('enabled,staff_pinged_at')
+            .eq('ticket_id', ticketId)
+            .maybeSingle();
+        if (error) {
+            logger.error('Failed to read Discord ticket AI state:', error);
+            return null;
+        }
+        return data || { enabled: true, staff_pinged_at: null };
+    }
+
+    async setDiscordTicketAiEnabled(ticketId: string, enabled: boolean, actorId: string): Promise<boolean> {
+        const { error } = await this.client
+            .from('discord_ticket_ai_state')
+            .upsert({
+                ticket_id: ticketId,
+                enabled,
+                disabled_by: enabled ? null : actorId,
+                disabled_at: enabled ? null : new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+            }, { onConflict: 'ticket_id' });
+        if (error) {
+            logger.error('Failed to update Discord ticket AI state:', error);
+            return false;
+        }
+        return true;
+    }
+
+    async claimDiscordTicketStaffPing(ticketId: string): Promise<boolean> {
+        const { data, error } = await this.client.rpc('discord_ticket_claim_staff_ping', { p_ticket_id: ticketId });
+        if (error) {
+            logger.error('Failed to claim Discord ticket staff ping:', error);
+            return false;
+        }
+        return data === true;
     }
 
     // ============================================

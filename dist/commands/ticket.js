@@ -9,9 +9,9 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { getLinkedAccount } from '../middleware/requireLinked.js';
 import { requireAdmin } from '../middleware/requireLinked.js';
 import { logger } from '../utils/logger.js';
-import { groqAi } from '../services/groqAi.js';
-import { formatAiMessage } from '../utils/aiMessages.js';
+import { enqueueTicketAi } from '../services/discordTicketAi.js';
 import { ticketTranslationService, TOP_10_LANGUAGES } from '../services/ticketTranslationService.js';
+import { customerMayRequestHuman, hasVerifiedPaidAccount, isPremiumSupportCategory } from '../services/premiumSupport.js';
 // ============================================
 // Custom IDs for components
 // ============================================
@@ -39,6 +39,7 @@ const CUSTOM_IDS = {
 };
 // Pending ticket data (in-memory cache for ticket creation flow)
 const pendingTickets = new Map();
+const premiumFormCategories = new Map();
 function normalizeIds(value) {
     if (!value)
         return [];
@@ -317,6 +318,26 @@ export const ticketCommand = {
             }
             if (customId.startsWith('ticket_ai_')) {
                 await handleAIHelp(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_disable_ai_')) {
+                await handleDisableTicketAi(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_ping_staff_')) {
+                await handleTicketStaffPing(interaction);
+                return;
+            }
+            if (customId.startsWith('ticket_premium_form_')) {
+                const categoryId = customId.slice('ticket_premium_form_'.length);
+                const cached = premiumFormCategories.get(interaction.user.id);
+                if (!cached || cached.category.id !== categoryId || cached.guildId !== interaction.guildId ||
+                    cached.expiresAt < Date.now() || !isPremiumSupportCategory(cached.category)) {
+                    await denyTicketAction(interaction, 'Premium Support is unavailable. Please reopen the ticket panel.');
+                    return;
+                }
+                premiumFormCategories.delete(interaction.user.id);
+                await showTicketForm(interaction, cached.category);
                 return;
             }
             if (customId.startsWith('ticket_addmember_')) {
@@ -688,6 +709,32 @@ async function handleCategorySelect(interaction) {
         }
         return;
     }
+    if (isPremiumSupportCategory(category)) {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        if (!await hasVerifiedPaidAccount(interaction.user.id)) {
+            await interaction.editReply({
+                content: '💎 Premium Support requires a verified `/link` account with a currently active paid plan. You can open a regular support ticket instead.',
+            });
+            return;
+        }
+        premiumFormCategories.set(interaction.user.id, {
+            category,
+            guildId: interaction.guildId,
+            expiresAt: Date.now() + 5 * 60_000,
+        });
+        await interaction.editReply({
+            content: '💎 Your paid account is verified. Continue to the Premium Support form.',
+            components: [new ActionRowBuilder().addComponents(new ButtonBuilder()
+                    .setCustomId(`ticket_premium_form_${category.id}`)
+                    .setLabel('Continue to form')
+                    .setStyle(ButtonStyle.Primary))],
+        });
+        return;
+    }
+    await showTicketForm(interaction, category);
+}
+async function showTicketForm(interaction, category) {
+    const categoryId = category.id;
     // Store pending ticket data
     pendingTickets.set(interaction.user.id, {
         categoryId: category.id,
@@ -739,7 +786,7 @@ async function handleCategorySelect(interaction) {
         const customInput = new TextInputBuilder()
             .setCustomId(`custom_${q.id}`)
             .setLabel(q.label)
-            .setStyle(q.style === 'paragraph' ? TextInputStyle.Paragraph : TextInputStyle.Short)
+            .setStyle(q.type === 'paragraph' ? TextInputStyle.Paragraph : TextInputStyle.Short)
             .setPlaceholder(q.placeholder || '')
             .setRequired(q.required || false)
             .setMaxLength(q.max_length || 500);
@@ -856,10 +903,26 @@ async function handleConfirmTicket(interaction) {
     const ticketNumber = await supabase.getNextTicketNumber(guild.id);
     const channelName = `ticket-${ticketNumber}`;
     // Get category for routing and staff roles
-    const category = await supabase.getTicketCategory(pending.categoryId);
+    const category = await supabase.getTicketCategory(pending.categoryId, guild.id);
+    if (!category || category.id !== pending.categoryId || category.guild_id !== guild.id || !category.enabled) {
+        await interaction.editReply({ content: 'This ticket category is no longer available. Please reopen the ticket panel.', components: [] });
+        return;
+    }
+    if (isPremiumSupportCategory(category) && !await hasVerifiedPaidAccount(interaction.user.id)) {
+        await interaction.editReply({ content: '💎 Premium Support requires a verified `/link` account with a currently active paid plan. No ticket was created.', components: [] });
+        return;
+    }
     const settings = await supabase.getBotSettings(guild.id).catch(() => null);
     // Find or create the parent category
-    let parentId = category?.discord_category_id || settings?.ticket_parent_category_id || null;
+    let parentId = category.discord_category_id || settings?.ticket_parent_category_id || null;
+    if (isPremiumSupportCategory(category) && !category.discord_category_id) {
+        let premiumParent = guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === 'premium support');
+        if (!premiumParent) {
+            premiumParent = await guild.channels.create({ name: 'Premium Support', type: ChannelType.GuildCategory });
+        }
+        parentId = premiumParent.id;
+        await supabase.updateTicketCategory(category.id, { discord_category_id: parentId });
+    }
     if (parentId) {
         const parentChannel = await guild.channels.fetch(parentId).catch(() => null);
         if (!parentChannel || parentChannel.type !== ChannelType.GuildCategory) {
@@ -945,11 +1008,7 @@ async function handleConfirmTicket(interaction) {
         });
         return;
     }
-    // Ping the staff/admin roles + the owner, then post the control panel that
-    // includes the user's entered details and a /link reminder if needed.
-    const staffPing = [...globalStaffRoleIds, ...globalAdminRoleIds]
-        .map((id) => `<@&${id}>`)
-        .join(' ');
+    // The customer controls when staff are pinged in sensitive categories.
     const controlPanel = createTicketControlPanel(ticket, interaction.user, linked);
     await ticketChannel.send({
         components: [controlPanel],
@@ -958,13 +1017,10 @@ async function handleConfirmTicket(interaction) {
     });
     // Components V2 messages can't carry a `content` field, so ping staff + the
     // owner in a separate plain message.
-    const ticketPing = `${staffPing} <@${interaction.user.id}>`.trim();
-    if (ticketPing) {
-        await ticketChannel.send({
-            content: ticketPing,
-            allowedMentions: { parse: ['roles', 'users'] },
-        }).catch(() => undefined);
-    }
+    await ticketChannel.send({
+        content: `<@${interaction.user.id}> Victus AI will help here. Please do not post passwords, tokens, payment card details, or recovery codes.`,
+        allowedMentions: { users: [interaction.user.id] },
+    }).catch(() => undefined);
     // Spawn Language Selection & Live Translation card
     const translationCard = ticketTranslationService.buildLanguageSelector(ticket.id, interaction.user.id);
     await ticketChannel.send({
@@ -981,6 +1037,7 @@ async function handleConfirmTicket(interaction) {
         flags: ComponentsV2.IS_COMPONENTS_V2,
     });
     logger.info(`Ticket #${ticket.ticket_number} created by ${interaction.user.tag}`);
+    enqueueTicketAi(ticket, ticketChannel, `${pending.subject}\n${pending.description}`);
 }
 // ============================================
 // Add member to ticket
@@ -1061,7 +1118,7 @@ export function createTicketControlPanel(ticket, user, linked) {
         .setAccentColor(ComponentsV2.Accents.purple)
         .addTextDisplayComponents(ComponentsV2.text(`# 🎟️ Support Ticket\n\n` +
         `Ticket #${ticket.ticket_number} • ${categoryEmoji} ${categoryName}\n\n` +
-        `Please wait for a staff member to assist you. Use the buttons below to manage your ticket.\n\n` +
+        `Victus AI will start with a response. Use the controls below to manage your ticket.\n\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `### 📊 Ticket Info\n` +
         `» **Owner:** ${ownerMention}\n` +
@@ -1115,6 +1172,16 @@ export function createTicketControlPanel(ticket, user, linked) {
         .setStyle(ButtonStyle.Link)
         .setURL(config.branding.website)
         .setEmoji('🖥️'));
+    if (customerMayRequestHuman(ticket.category)) {
+        buttons2.addComponents(new ButtonBuilder()
+            .setCustomId(`ticket_disable_ai_${ticket.id}`)
+            .setLabel(ticket.ai_enabled === false ? 'AI Paused' : 'Disable AI')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(ticket.ai_enabled === false), new ButtonBuilder()
+            .setCustomId(`ticket_ping_staff_${ticket.id}`)
+            .setLabel('Ping Staff')
+            .setStyle(ButtonStyle.Primary));
+    }
     container.addActionRowComponents(buttons);
     container.addActionRowComponents(buttons2);
     return container;
@@ -1194,30 +1261,46 @@ async function sendTicketArchiveSummary(interaction, ticket, settings) {
     }).catch(() => undefined);
 }
 async function handleCloseTicket(interaction) {
-    const ticketId = interaction.customId.split('_')[2];
-    const ticket = await supabase.getTicket(ticketId);
-    if (!ticket) {
-        await interaction.reply({
-            content: '❌ Ticket not found.',
-            ephemeral: true,
+    await interaction.deferUpdate();
+    const ticketId = interaction.customId.slice('ticket_close_'.length);
+    let ticket = await supabase.getTicket(ticketId);
+    if (!ticket && interaction.channelId)
+        ticket = await supabase.getTicketByChannel(interaction.channelId);
+    if (!ticket && interaction.channelId)
+        ticket = await supabase.getTicketForClose(ticketId, interaction.channelId);
+    if (!ticket || ticket.channel_id !== interaction.channelId) {
+        await interaction.followUp({
+            content: '❌ Ticket data could not be loaded. Please try again shortly.',
+            flags: MessageFlags.Ephemeral,
         });
         return;
     }
-    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    const settings = await supabase.getBotSettings(interaction.guildId || ticket.guild_id).catch(() => null);
     if (!canCloseTicket(interaction, ticket, settings)) {
-        await denyTicketAction(interaction, 'Only the ticket owner or configured staff roles can close this ticket.');
+        await interaction.followUp({
+            content: 'Only the ticket owner or configured staff roles can close this ticket.',
+            flags: MessageFlags.Ephemeral,
+        });
         return;
     }
-    // Update ticket status
-    await supabase.updateTicket(ticketId, {
+    let updated = await supabase.updateTicket(ticket.id, {
         status: 'closed',
         closed_at: new Date().toISOString(),
     });
+    if (!updated)
+        updated = await supabase.closeTicketDirect(ticket.id);
+    if (!updated) {
+        await interaction.followUp({
+            content: '❌ Ticket could not be closed right now. Please try again shortly.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
     await sendTicketArchiveSummary(interaction, ticket, settings);
     // Send closing message
     const container = ComponentsV2.successContainer('Ticket Closed', `This ticket has been closed by <@${interaction.user.id}>.\n\n` +
         `The channel will be deleted in 10 seconds.`);
-    await interaction.update({
+    await interaction.editReply({
         components: [container],
     });
     // Delete channel after delay
@@ -1312,50 +1395,71 @@ async function handleClaimTicket(interaction) {
 }
 async function handleAIHelp(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const ticketId = interaction.customId.split('_')[2];
+    const ticketId = interaction.customId.slice('ticket_ai_'.length);
     const ticket = await supabase.getTicket(ticketId);
-    if (!ticket) {
-        await interaction.editReply({ content: '❌ Ticket not found.' });
+    if (!ticket || ticket.channel_id !== interaction.channelId || ticket.guild_id !== interaction.guildId) {
+        await interaction.editReply({ content: 'This button is only valid in its ticket channel.' });
         return;
     }
-    if (!config.ai.enabled) {
-        await interaction.editReply({
-            content: 'AI support is not currently enabled. A staff member will assist you shortly.',
-        });
+    const state = await supabase.getDiscordTicketAiState(ticket.id);
+    if (!state?.enabled) {
+        await interaction.editReply({ content: 'AI replies are paused for this ticket.' });
         return;
     }
-    try {
-        const messages = await supabase.getTicketMessages(ticketId);
-        const suggestion = await groqAi.suggestForTicket({
-            subject: ticket.subject,
-            category: ticket.category?.name,
-            description: ticket.description,
-            messages,
-        });
-        await interaction.editReply({
-            content: formatAiMessage(suggestion),
-        });
+    enqueueTicketAi(ticket, interaction.channel, 'Please answer the latest question in this ticket.');
+    await interaction.editReply({ content: 'Victus AI is reviewing this ticket.' });
+}
+async function handleDisableTicketAi(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const ticketId = interaction.customId.slice('ticket_disable_ai_'.length);
+    const ticket = await supabase.getTicket(ticketId);
+    if (!ticket || ticket.channel_id !== interaction.channelId || ticket.guild_id !== interaction.guildId || ticket.status === 'closed') {
+        await interaction.editReply({ content: 'This ticket is no longer available.' });
+        return;
     }
-    catch (error) {
-        logger.error('Ticket AI suggestion failed:', error);
-        await interaction.editReply({
-            content: 'The Groq assistant could not review this ticket right now. Staff can still continue manually.',
-        });
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    const isStaff = memberHasTicketStaffAccess(interaction, settings, ticket.category);
+    const ownerMayDisable = ticket.discord_id === interaction.user.id && customerMayRequestHuman(ticket.category);
+    if (!isStaff && !ownerMayDisable) {
+        await interaction.editReply({ content: 'Only ticket staff can pause AI in this category.' });
+        return;
     }
-    if (Date.now() < 0) {
-        // Get ticket messages for context
-        const messages = await supabase.getTicketMessages(ticketId);
-        // Generate AI suggestion (simplified - would use OpenAI in production)
-        const container = ComponentsV2.infoContainer('🤖 AI Suggestion', `Based on your ticket in the **${ticket.category?.name}** category:\n\n` +
-            `**Issue:** ${ticket.subject}\n\n` +
-            `**Suggestion:** A staff member will review your ticket shortly. ` +
-            `In the meantime, please ensure you've provided all relevant details ` +
-            `including any error messages or steps to reproduce the issue.`);
-        await interaction.editReply({
-            components: [container],
-            flags: ComponentsV2.IS_COMPONENTS_V2,
-        });
+    if (!await supabase.setDiscordTicketAiEnabled(ticket.id, false, interaction.user.id)) {
+        await interaction.editReply({ content: 'AI could not be paused. Please retry or use `/ticketai off`.' });
+        return;
     }
+    await interaction.message.edit({ components: [createTicketControlPanel({ ...ticket, ai_enabled: false }, interaction.user)] }).catch(() => undefined);
+    await interaction.channel.send({ content: `⏸️ AI replies were paused by <@${interaction.user.id}>.`, allowedMentions: { users: [interaction.user.id] } }).catch(() => undefined);
+    await interaction.editReply({ content: 'AI replies are paused for this ticket.' });
+}
+async function handleTicketStaffPing(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const ticketId = interaction.customId.slice('ticket_ping_staff_'.length);
+    const ticket = await supabase.getTicket(ticketId);
+    if (!ticket || ticket.channel_id !== interaction.channelId || ticket.guild_id !== interaction.guildId || ticket.status === 'closed') {
+        await interaction.editReply({ content: 'This ticket is no longer available.' });
+        return;
+    }
+    const permittedCategory = customerMayRequestHuman(ticket.category);
+    if (!permittedCategory || ticket.discord_id !== interaction.user.id) {
+        await interaction.editReply({ content: 'Only the ticket owner can ping staff in this category.' });
+        return;
+    }
+    const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
+    const roleIds = combinedStaffRoleIds(settings, ticket.category).filter((id) => interaction.guild?.roles.cache.has(id));
+    if (!roleIds.length) {
+        await interaction.editReply({ content: 'No ticket staff role is configured. Please contact an administrator.' });
+        return;
+    }
+    if (!await supabase.claimDiscordTicketStaffPing(ticket.id)) {
+        await interaction.editReply({ content: 'Staff was pinged recently. Please allow time for a reply before pinging again.' });
+        return;
+    }
+    await interaction.channel.send({
+        content: `${roleIds.map((id) => `<@&${id}>`).join(' ')} A customer requested a human response in ticket #${ticket.ticket_number}.`,
+        allowedMentions: { roles: roleIds },
+    });
+    await interaction.editReply({ content: 'Staff has been notified. You can continue describing the issue here.' });
 }
 // ============================================
 // Utility Functions

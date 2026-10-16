@@ -85,7 +85,7 @@ if (openRouterKeys.length > 0) {
         apiKey: openRouterKeys[0],
         apiKeys: openRouterKeys,
         baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-        model: process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-lightning:free',
+        model: process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-super-vl:free',
         maxTokens: parseInt(process.env.OPENROUTER_MAX_TOKENS || '1000', 10),
         temperature: Number(process.env.AI_TEMPERATURE || '0.4'),
     });
@@ -104,7 +104,7 @@ if (azureKeys.length > 0 && azureBaseUrl) {
     });
 }
 
-const preferredProviderName = (process.env.AI_PROVIDER || '').trim().toLowerCase();
+const preferredProviderName = (process.env.AI_PROVIDER || (openRouterKeys.length ? 'openrouter' : '')).trim().toLowerCase();
 if (preferredProviderName) {
     const idx = aiProviders.findIndex(p => p.name === preferredProviderName);
     if (idx > 0) {
@@ -121,7 +121,7 @@ if (aiProviders.length === 0 && (fallbackEnvKeys.length > 0 || azureKeys.length 
         apiKey: key,
         apiKeys: [key],
         baseUrl: isGroq ? 'https://api.groq.com/openai/v1' : 'https://openrouter.ai/api/v1',
-        model: isGroq ? 'openai/gpt-oss-120b' : 'nvidia/nemotron-3.5-lightning:free',
+        model: isGroq ? 'openai/gpt-oss-120b' : 'nvidia/nemotron-3.5-super-vl:free',
         maxTokens: 700,
         temperature: 0.35,
     });
