@@ -1,12 +1,12 @@
-import type { Message, TextChannel } from 'discord.js';
+import type { Client, TextChannel } from 'discord.js';
 import { supabase } from './supabase.js';
 import { getTicketKnowledge } from './ticketKnowledge.js';
 import { logger } from '../utils/logger.js';
 
 export const TICKET_AI_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
 const channelChains = new Map<string, Promise<void>>();
-const lastReplyAt = new Map<string, number>();
-const COOLDOWN_MS = 8_000;
+const pendingReplies = new Map<string, { ticket: any; channel: TextChannel; queries: string[]; timer: ReturnType<typeof setTimeout> }>();
+const BURST_WINDOW_MS = 1_500;
 
 export const TICKET_SYSTEM_PROMPT = `You are Victus AI, an automated first response assistant inside a private Victus Cloud Discord support ticket. Be calm, precise, and useful. You are an AI assistant powered by an external model; never claim to be a human or a model trained in Victus's datacentre.
 
@@ -30,7 +30,7 @@ export function redactTicketText(input: string): string {
         .slice(0, 1800);
 }
 
-function selectHistory(messages: any[], query: string): string {
+function selectHistory(messages: any[], query: string, ownerId: string): string {
     const recent = messages.slice(-18);
     const older = messages.slice(0, -18);
     const terms = [...new Set((query.toLowerCase().match(/[a-z0-9]{4,}/g) || []))].slice(0, 16);
@@ -42,7 +42,8 @@ function selectHistory(messages: any[], query: string): string {
         .map(({ item }) => item);
     const chosen = [...relevant, ...recent];
     return chosen.map((message) => {
-        const role = String(message.author_discord_id || '').startsWith('ai:') ? 'Victus AI'
+        const role = String(message.author_discord_id || '') === `dc:${ownerId}` ? 'Customer'
+            : String(message.author_discord_id || '').startsWith('ai:') ? 'Victus AI'
             : message.author_is_staff ? 'Staff' : 'Customer';
         return `${role}: ${redactTicketText(String(message.content || '')).slice(0, 550)}`;
     }).join('\n').slice(-10_000);
@@ -62,7 +63,7 @@ async function generate(ticket: any, query: string): Promise<string> {
     const docs = knowledge.length
         ? knowledge.map((doc) => `- ${doc.title}: ${doc.url}\n${doc.text}`).join('\n\n').slice(0, 7300)
         : 'No matching live documentation was retrieved. Do not infer current product policy.';
-    const prompt = `Ticket category: ${ticket.category?.name || 'Support'}\nSubject: ${redactTicketText(String(ticket.subject || ''))}\nInitial problem: ${redactTicketText(String(ticket.description || ''))}\n\nRelevant public Victus docs:\n${docs}\n\nTicket conversation (selected relevant older messages plus recent messages):\n${selectHistory(history, query)}\n\nLatest customer message: ${redactTicketText(query)}`;
+    const prompt = `Ticket category: ${ticket.category?.name || 'Support'}\nSubject: ${redactTicketText(String(ticket.subject || ''))}\nInitial problem: ${redactTicketText(String(ticket.description || ''))}\n\nRelevant public Victus docs:\n${docs}\n\nTicket conversation (selected relevant older messages plus recent messages):\n${selectHistory(history, query, String(ticket.discord_id || ''))}\n\nLatest customer message: ${redactTicketText(query)}`;
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -113,8 +114,6 @@ async function respond(ticket: any, channel: TextChannel, query: string): Promis
     if (ticket.status === 'closed' || ticket.status === 'locked') return;
     const state = await supabase.getDiscordTicketAiState(ticket.id);
     if (!state?.enabled) return;
-    if (Date.now() - (lastReplyAt.get(ticket.id) || 0) < COOLDOWN_MS) return;
-    lastReplyAt.set(ticket.id, Date.now());
     if (!ticketAiConfigured()) {
         logger.warn('Ticket AI skipped: OPENROUTER_API_KEY is missing');
         await notifyStaffWhenAiUnavailable(ticket, channel);
@@ -140,11 +139,49 @@ async function respond(ticket: any, channel: TextChannel, query: string): Promis
     }
 }
 
-/** One model request at a time per ticket; separate tickets remain independent. */
-export function enqueueTicketAi(ticket: any, channel: TextChannel, query: string): void {
+/** One model request at a time per ticket; combine messages sent in a short burst. */
+function flushTicketAi(ticket: any, channel: TextChannel, query: string): void {
     const previous = channelChains.get(ticket.id) || Promise.resolve();
     const next = previous.then(() => respond(ticket, channel, query))
         .catch((error) => { logger.error('Ticket AI queue failed:', error); })
         .finally(() => { if (channelChains.get(ticket.id) === next) channelChains.delete(ticket.id); });
     channelChains.set(ticket.id, next);
+}
+
+export function enqueueTicketAi(ticket: any, channel: TextChannel, query: string): void {
+    const existing = pendingReplies.get(ticket.id);
+    if (existing) clearTimeout(existing.timer);
+    const queries = [...(existing?.queries || []), query].slice(-10);
+    const timer = setTimeout(() => {
+        pendingReplies.delete(ticket.id);
+        flushTicketAi(ticket, channel, queries.join('\n'));
+    }, BURST_WINDOW_MS);
+    pendingReplies.set(ticket.id, { ticket, channel, queries, timer });
+}
+
+/** Resume a recent owner question after a bot restart, but never talk over staff or a prior AI reply. */
+export async function recoverRecentUnansweredTicketAi(client: Client, guildId: string): Promise<void> {
+    const since = new Date(Date.now() - 15 * 60_000).toISOString();
+    const ids = (await supabase.getRecentDiscordTicketMessageTicketIds(since)).slice(0, 20);
+    for (const id of ids) {
+        const ticket = await supabase.getTicket(id);
+        if (!ticket || ticket.guild_id !== guildId || !['open', 'claimed'].includes(ticket.status)) continue;
+        const history = await supabase.getTicketMessages(id, 15);
+        const latest = history.at(-1);
+        if (!latest || latest.author_discord_id !== `dc:${ticket.discord_id}` ||
+            !String(latest.content || '').trim() || /^[!/]/.test(String(latest.content).trim())) continue;
+        const latestAt = Date.parse(String(latest.created_at || ''));
+        if (!Number.isFinite(latestAt) || Date.now() - latestAt < 30_000) continue;
+        if (!(await supabase.getDiscordTicketAiState(id))?.enabled) continue;
+        const channel = await client.channels.fetch(ticket.channel_id).catch(() => null);
+        if (!channel?.isTextBased() || !('send' in channel)) continue;
+        const recentDiscord = await (channel as TextChannel).messages.fetch({ limit: 20 }).catch(() => null);
+        if (!recentDiscord) continue;
+        const hasLaterAnswer = recentDiscord.some((message) => message.createdTimestamp > latestAt && (
+            (message.author.id === client.user?.id && message.content.startsWith('✨ **Victus AI**')) ||
+            (!message.author.bot && message.author.id !== ticket.discord_id)
+        ));
+        if (hasLaterAnswer) continue;
+        enqueueTicketAi(ticket, channel as TextChannel, String(latest.content));
+    }
 }

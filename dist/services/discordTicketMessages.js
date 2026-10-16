@@ -5,6 +5,10 @@ import { logger } from '../utils/logger.js';
 import { enqueueTicketAi } from './discordTicketAi.js';
 const notTicketUntil = new Map();
 const NOT_TICKET_TTL_MS = 60_000;
+export function shouldAutoReplyToTicketMessage(ticketOwnerId, authorId, content) {
+    const text = content.trim();
+    return authorId === ticketOwnerId && text.length > 0 && !/^[!/]/.test(text);
+}
 /** Keep Discord ticket transcripts and translation inside Discord. */
 export async function handleDiscordTicketMessage(message) {
     if (message.author.bot || !message.inGuild())
@@ -22,7 +26,9 @@ export async function handleDiscordTicketMessage(message) {
         ...(settings?.ticket_admin_role_ids || []),
         ...(ticket.category?.staff_roles || []),
     ];
-    const isStaff = !!message.member && (message.member.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+    const isTicketOwner = message.author.id === ticket.discord_id;
+    // Staff can open their own support ticket. In that ticket they are the customer.
+    const isStaff = !isTicketOwner && !!message.member && (message.member.permissions?.has?.(PermissionFlagsBits.Administrator) ||
         message.member.permissions?.has?.(PermissionFlagsBits.ManageChannels) ||
         staffRoleIds.some((id) => message.member?.roles.cache.has(id)));
     await supabase.logTicketMessage({
@@ -36,7 +42,7 @@ export async function handleDiscordTicketMessage(message) {
     void translateTicketMessage(message, ticket, isStaff).catch((error) => {
         logger.error('Discord ticket translation failed:', error);
     });
-    if (!isStaff && message.author.id === ticket.discord_id && message.content.trim() && !/^[!/]/.test(message.content.trim())) {
+    if (shouldAutoReplyToTicketMessage(ticket.discord_id, message.author.id, message.content)) {
         enqueueTicketAi(ticket, message.channel, message.content);
     }
     return true;

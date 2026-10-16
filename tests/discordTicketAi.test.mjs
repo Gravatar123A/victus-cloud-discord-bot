@@ -4,6 +4,7 @@ import { isCurrentPaidService, customerMayRequestHuman, isPremiumSupportCategory
 import { rankVictusDocs } from '../dist/services/ticketKnowledge.js';
 import { redactTicketText, TICKET_AI_MODEL } from '../dist/services/discordTicketAi.js';
 import { createTicketControlPanel } from '../dist/commands/ticket.js';
+import { shouldAutoReplyToTicketMessage } from '../dist/services/discordTicketMessages.js';
 
 test('paid support requires an active, unexpired, positively priced service', () => {
     const active = { status: 'active', plan_type: 'recurring', price: '3.00', expires_at: '2099-01-01' };
@@ -42,4 +43,10 @@ test('customer handoff controls appear only in sensitive categories', () => {
     assert.equal(normal.includes('ticket_ping_staff_'), false);
     assert.equal(billing.includes('ticket_disable_ai_'), true);
     assert.equal(billing.includes('ticket_ping_staff_'), true);
+});
+
+test('ticket owner receives AI replies even when they also have a staff role', () => {
+    assert.equal(shouldAutoReplyToTicketMessage('owner', 'owner', 'my server is crashing'), true);
+    assert.equal(shouldAutoReplyToTicketMessage('owner', 'staff', 'please check this'), false);
+    assert.equal(shouldAutoReplyToTicketMessage('owner', 'owner', '/ticketai off'), false);
 });

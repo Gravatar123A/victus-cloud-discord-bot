@@ -2330,6 +2330,20 @@ class SupabaseService {
         }
         return data || { enabled: true, staff_pinged_at: null };
     }
+    /** Candidate tickets for a bounded restart repair; eligibility is checked by the caller. */
+    async getRecentDiscordTicketMessageTicketIds(since, limit = 100) {
+        const { data, error } = await this.client
+            .from('ticket_messages')
+            .select('ticket_id')
+            .gte('created_at', since)
+            .order('created_at', { ascending: false })
+            .limit(limit);
+        if (error) {
+            logger.warn('Could not find recent Discord ticket messages for AI recovery:', error);
+            return [];
+        }
+        return [...new Set((data || []).map((item) => String(item.ticket_id)))];
+    }
     async setDiscordTicketAiEnabled(ticketId, enabled, actorId) {
         const { error } = await this.client
             .from('discord_ticket_ai_state')

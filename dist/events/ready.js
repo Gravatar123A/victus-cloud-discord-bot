@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
 import { ensurePremiumSupportCategory, isPremiumSupportCategory } from '../services/premiumSupport.js';
 import { createTicketPanel } from '../commands/ticket.js';
+import { recoverRecentUnansweredTicketAi } from '../services/discordTicketAi.js';
 import { assignLinkedRole, syncAllRankRoles, syncLinkedRoles, syncRankRole } from '../utils/roles.js';
 import { supabase } from '../services/supabase.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
@@ -265,6 +266,11 @@ export const readyEvent = {
             catch (error) {
                 logger.warn('Could not refresh the public ticket panel:', error);
             }
+            setTimeout(() => {
+                recoverRecentUnansweredTicketAi(client, ticketGuildId).catch((error) => {
+                    logger.warn('Could not resume recent unanswered ticket messages:', error);
+                });
+            }, 10_000).unref?.();
         }
         // Connect to the Lavalink music node now that the gateway is ready.
         try {
