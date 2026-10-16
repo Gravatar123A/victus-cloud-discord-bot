@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
+import { chmodSync, statSync } from 'node:fs';
 import { delimiter, dirname } from 'node:path';
 import { Readable } from 'node:stream';
 import { AudioPlayerStatus, EndBehaviorType, NoSubscriberBehavior, StreamType, VoiceConnectionStatus, createAudioPlayer, createAudioResource, entersState, getVoiceConnection, joinVoiceChannel, } from '@discordjs/voice';
@@ -82,6 +83,18 @@ export class VoiceAssistant {
         this.client = client;
         if (!config.ai.providers.some((provider) => provider.name === 'groq')) {
             logger.error('Voice assistant needs GROQ_API_KEY for recognition and replies.');
+            return;
+        }
+        try {
+            if (process.platform !== 'win32') {
+                // The host blocks npm postinstall scripts, including the installer's chmod step.
+                const mode = statSync(ffmpegInstaller.path).mode;
+                if (!(mode & 0o111))
+                    chmodSync(ffmpegInstaller.path, mode | 0o111);
+            }
+        }
+        catch (error) {
+            logger.error(`Voice assistant could not prepare FFmpeg: ${error.message}`);
             return;
         }
         const ffmpegCheck = spawnSync(ffmpegInstaller.path, ['-version'], { timeout: 5_000, windowsHide: true });
