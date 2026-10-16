@@ -234,6 +234,15 @@ export const messageCreateEvent: Event = {
             });
             if (moderated) return;
 
+            // Ticket replies must not wait for counting, games, AFK, prefix commands,
+            // XP, or staff AI handlers. Those paths can each do database/network IO.
+            // Keep prefixed commands on the normal path (e.g. !translate).
+            if (/^ticket-\d+$/i.test(message.channel.name) &&
+                !/^[!/]/.test(message.content.trim())) {
+                const ticketHandled = await handleDiscordTicketMessage(message);
+                if (ticketHandled) return;
+            }
+
             // Viral Expansion: Record message for chat velocity, airdrops, wild mobs & Guild Battle Pass XP
             viralExpansionService.recordChatMessage(message).catch(() => {});
 

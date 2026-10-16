@@ -6,7 +6,9 @@ import { logger } from '../utils/logger.js';
 export const TICKET_AI_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
 const channelChains = new Map<string, Promise<void>>();
 const pendingReplies = new Map<string, { ticket: any; channel: TextChannel; queries: string[]; timer: ReturnType<typeof setTimeout> }>();
+const lastFailureNotice = new Map<string, number>();
 const BURST_WINDOW_MS = 1_500;
+const FAILURE_NOTICE_INTERVAL_MS = 5 * 60_000;
 
 export const TICKET_SYSTEM_PROMPT = `You are Victus AI, an automated first response assistant inside a private Victus Cloud Discord support ticket. Be calm, precise, and useful. You are an AI assistant powered by an external model; never claim to be a human or a model trained in Victus's datacentre.
 
@@ -56,14 +58,17 @@ export function ticketAiConfigured(): boolean {
 async function generate(ticket: any, query: string): Promise<string> {
     const apiKey = (process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS || '').split(/[\r\n,]+/)[0].trim();
     if (!apiKey) throw new Error('OpenRouter key is not configured');
+    const contextStartedAt = Date.now();
     const [history, knowledge] = await Promise.all([
         supabase.getTicketMessages(ticket.id, 200),
         getTicketKnowledge(`${ticket.category?.name || ''} ${ticket.subject || ''} ${query}`),
     ]);
+    logger.info(`Ticket AI context for ${ticket.id} loaded in ${Date.now() - contextStartedAt}ms (${history.length} messages, ${knowledge.length} docs)`);
     const docs = knowledge.length
         ? knowledge.map((doc) => `- ${doc.title}: ${doc.url}\n${doc.text}`).join('\n\n').slice(0, 7300)
         : 'No matching live documentation was retrieved. Do not infer current product policy.';
     const prompt = `Ticket category: ${ticket.category?.name || 'Support'}\nSubject: ${redactTicketText(String(ticket.subject || ''))}\nInitial problem: ${redactTicketText(String(ticket.description || ''))}\n\nRelevant public Victus docs:\n${docs}\n\nTicket conversation (selected relevant older messages plus recent messages):\n${selectHistory(history, query, String(ticket.discord_id || ''))}\n\nLatest customer message: ${redactTicketText(query)}`;
+    const modelStartedAt = Date.now();
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -84,6 +89,7 @@ async function generate(ticket: any, query: string): Promise<string> {
         }),
         signal: AbortSignal.timeout(45_000),
     });
+    logger.info(`Ticket AI model for ${ticket.id} returned in ${Date.now() - modelStartedAt}ms (${response.status})`);
     const data = await response.json().catch(() => null) as any;
     if (!response.ok) throw new Error(`OpenRouter request failed (${response.status}): ${String(data?.error?.message || response.statusText).slice(0, 150)}`);
     const answer = String(data?.choices?.[0]?.message?.content || '').trim();
@@ -93,27 +99,37 @@ async function generate(ticket: any, query: string): Promise<string> {
 
 async function notifyStaffWhenAiUnavailable(ticket: any, channel: TextChannel): Promise<void> {
     // The free model has a daily quota. A failed model call must not strand a ticket.
+    if ((lastFailureNotice.get(ticket.id) || 0) > Date.now() - FAILURE_NOTICE_INTERVAL_MS) return;
     const settings = await supabase.getBotSettings(ticket.guild_id).catch(() => null);
     const roleIds = [...new Set([
         ...(settings?.ticket_staff_role_ids || []),
         ...(settings?.ticket_admin_role_ids || []),
         ...(ticket.category?.staff_roles || []),
     ])].filter((id) => /^\d{17,20}$/.test(String(id)) && channel.guild.roles.cache.has(String(id)));
-    if (!roleIds.length) {
-        await channel.send({ content: 'Victus AI is temporarily unavailable. Please wait for staff to respond.', allowedMentions: { parse: [] } }).catch(() => undefined);
-        return;
-    }
-    if (!await supabase.claimDiscordTicketStaffPing(ticket.id).catch(() => false)) return;
-    await channel.send({
+    const mayPing = roleIds.length > 0 && await supabase.claimDiscordTicketStaffPing(ticket.id).catch(() => false);
+    const sent = await channel.send(mayPing ? {
         content: `Victus AI is temporarily unavailable. ${roleIds.map((id) => `<@&${id}>`).join(' ')} Please review this ticket.`,
         allowedMentions: { roles: roleIds },
-    }).catch((error) => logger.warn('Could not notify ticket staff after AI failure:', error));
+    } : {
+        content: 'Victus AI is temporarily unavailable. Your message is still in this ticket; staff can review it here.',
+        allowedMentions: { parse: [] },
+    }).catch((error) => {
+        logger.warn('Could not post ticket AI failure notice:', error);
+        return null;
+    });
+    if (sent) lastFailureNotice.set(ticket.id, Date.now());
 }
 
 async function respond(ticket: any, channel: TextChannel, query: string): Promise<void> {
     if (ticket.status === 'closed' || ticket.status === 'locked') return;
-    const state = await supabase.getDiscordTicketAiState(ticket.id);
-    if (!state?.enabled) return;
+    const startedAt = Date.now();
+    const state = await supabase.getDiscordTicketAiState(ticket.id).catch(() => null);
+    if (!state) {
+        logger.warn(`Ticket AI state unavailable for ${ticket.id}`);
+        await notifyStaffWhenAiUnavailable(ticket, channel);
+        return;
+    }
+    if (!state.enabled) return;
     if (!ticketAiConfigured()) {
         logger.warn('Ticket AI skipped: OPENROUTER_API_KEY is missing');
         await notifyStaffWhenAiUnavailable(ticket, channel);
@@ -123,9 +139,14 @@ async function respond(ticket: any, channel: TextChannel, query: string): Promis
         await channel.sendTyping().catch(() => undefined);
         const answer = await generate(ticket, query);
         // A handoff may have occurred while the model was thinking.
-        const current = await supabase.getDiscordTicketAiState(ticket.id);
-        if (!current?.enabled) return;
+        const current = await supabase.getDiscordTicketAiState(ticket.id).catch(() => null);
+        if (!current) {
+            await notifyStaffWhenAiUnavailable(ticket, channel);
+            return;
+        }
+        if (!current.enabled) return;
         const sent = await channel.send({ content: `✨ **Victus AI**\n${answer}`, allowedMentions: { parse: [] } });
+        logger.info(`Ticket AI sent answer for ${ticket.id} in ${Date.now() - startedAt}ms`);
         await supabase.logTicketMessage({
             ticket_id: ticket.id,
             author_discord_id: `ai:${sent.author.id}`,

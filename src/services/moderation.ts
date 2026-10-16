@@ -159,6 +159,10 @@ async function recordAutomaticWarning(message: Message, reason: string, category
 export async function inspectModerationMessage(message: Message): Promise<boolean> {
     // Ordinary insults and AI classifications cannot trigger automatic warnings.
     if (!message.inGuild() || message.author.bot || !message.content.trim()) return false;
+    const content = message.content.trim().slice(0, 1800);
+    const profanity = containsProfanity(content);
+    // Most messages need no settings or database lookup at all.
+    if (!profanity.matched) return false;
     const settings = await getSettings(message.guildId!);
     if (!settings?.moderation_enabled) return false;
 
@@ -170,9 +174,6 @@ export async function inspectModerationMessage(message: Message): Promise<boolea
     if (activeChecks.has(key)) return false;
     activeChecks.add(key);
     try {
-        const content = message.content.trim().slice(0, 1800);
-        const profanity = containsProfanity(content);
-        if (!profanity.matched) return false;
         const isCussImmune = await whitelistSettings.isImmune(message.guildId!, message.author.id, 'cuss').catch(() => false);
         if (!isCussImmune) {
             const reason = profanity.reason || 'Profanity detected (multilingual bad-words database).';

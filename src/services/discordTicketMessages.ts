@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 import { enqueueTicketAi } from './discordTicketAi.js';
 
 const notTicketUntil = new Map<string, number>();
+const lastLookupFailureNotice = new Map<string, number>();
 const NOT_TICKET_TTL_MS = 60_000;
 
 export function shouldAutoReplyToTicketMessage(ticketOwnerId: string, authorId: string, content: string): boolean {
@@ -17,10 +18,30 @@ export async function handleDiscordTicketMessage(message: Message): Promise<bool
     if (message.author.bot || !message.inGuild()) return false;
     if ((notTicketUntil.get(message.channelId) || 0) > Date.now()) return false;
 
+    const startedAt = Date.now();
     const ticket = await supabase.getTicketByChannel(message.channelId).catch(() => null);
     if (!ticket || ticket.guild_id !== message.guildId) {
-        notTicketUntil.set(message.channelId, Date.now() + NOT_TICKET_TTL_MS);
+        // A transient database failure must not suppress the next message in a
+        // real ticket for a full minute.
+        const looksLikeTicket = /^ticket-\d+$/i.test(message.channel.name);
+        if (!looksLikeTicket) {
+            notTicketUntil.set(message.channelId, Date.now() + NOT_TICKET_TTL_MS);
+        } else if (!supabase.isAvailable() &&
+            (lastLookupFailureNotice.get(message.channelId) || 0) < Date.now() - 5 * 60_000) {
+            const sent = await (message.channel as any).send({
+                content: 'Victus AI cannot access ticket records right now. Your message is visible here for staff to review.',
+                allowedMentions: { parse: [] },
+            }).catch(() => null);
+            if (sent) lastLookupFailureNotice.set(message.channelId, Date.now());
+        }
         return false;
+    }
+
+    // Schedule the answer as soon as the ticket is identified. Transcript and
+    // staff-role lookups should not hold up the customer's AI response.
+    if (shouldAutoReplyToTicketMessage(ticket.discord_id, message.author.id, message.content)) {
+        enqueueTicketAi(ticket, message.channel as any, message.content);
+        logger.info(`Ticket AI queued for ${ticket.id} in ${Date.now() - message.createdTimestamp}ms (lookup ${Date.now() - startedAt}ms)`);
     }
 
     const settings = await supabase.getBotSettings(message.guildId).catch(() => null);
@@ -37,7 +58,7 @@ export async function handleDiscordTicketMessage(message: Message): Promise<bool
         staffRoleIds.some((id: string) => message.member?.roles.cache.has(id))
     );
 
-    await supabase.logTicketMessage({
+    const logged = await supabase.logTicketMessage({
         ticket_id: ticket.id,
         author_discord_id: `dc:${message.author.id}`,
         author_username: message.member?.displayName || message.author.username,
@@ -45,13 +66,11 @@ export async function handleDiscordTicketMessage(message: Message): Promise<bool
         content: message.content || '(attachment / no text)',
         attachments: [...message.attachments.values()].map((attachment) => attachment.url),
     });
+    if (!logged) logger.warn(`Ticket transcript write failed for ${ticket.id}; AI was still queued`);
 
     void translateTicketMessage(message, ticket, isStaff).catch((error) => {
         logger.error('Discord ticket translation failed:', error);
     });
-    if (shouldAutoReplyToTicketMessage(ticket.discord_id, message.author.id, message.content)) {
-        enqueueTicketAi(ticket, message.channel as any, message.content);
-    }
     return true;
 }
 
