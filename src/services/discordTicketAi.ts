@@ -135,6 +135,11 @@ async function respond(ticket: any, channel: TextChannel, query: string): Promis
         await notifyStaffWhenAiUnavailable(ticket, channel);
         return;
     }
+    // Discord's typing indicator expires before a slow free-model request does.
+    const typingTimer = setInterval(() => {
+        void channel.sendTyping().catch(() => undefined);
+    }, 7_000);
+    typingTimer.unref?.();
     try {
         await channel.sendTyping().catch(() => undefined);
         const answer = await generate(ticket, query);
@@ -157,6 +162,8 @@ async function respond(ticket: any, channel: TextChannel, query: string): Promis
     } catch (error) {
         logger.warn(`Ticket AI failed for ${ticket.id}: ${error instanceof Error ? error.message : String(error)}`);
         await notifyStaffWhenAiUnavailable(ticket, channel);
+    } finally {
+        clearInterval(typingTimer);
     }
 }
 
@@ -182,7 +189,7 @@ export function enqueueTicketAi(ticket: any, channel: TextChannel, query: string
 
 /** Resume a recent owner question after a bot restart, but never talk over staff or a prior AI reply. */
 export async function recoverRecentUnansweredTicketAi(client: Client, guildId: string): Promise<void> {
-    const since = new Date(Date.now() - 15 * 60_000).toISOString();
+    const since = new Date(Date.now() - 30 * 60_000).toISOString();
     const ids = (await supabase.getRecentDiscordTicketMessageTicketIds(since)).slice(0, 20);
     for (const id of ids) {
         const ticket = await supabase.getTicket(id);
@@ -203,6 +210,12 @@ export async function recoverRecentUnansweredTicketAi(client: Client, guildId: s
             (!message.author.bot && message.author.id !== ticket.discord_id)
         ));
         if (hasLaterAnswer) continue;
-        enqueueTicketAi(ticket, channel as TextChannel, String(latest.content));
+        const newestOwnerMessage = recentDiscord
+            .filter((message) => !message.author.bot && message.author.id === ticket.discord_id &&
+                message.createdTimestamp >= latestAt && String(message.content || '').trim() &&
+                !/^[!/]/.test(String(message.content).trim()))
+            .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
+            .first();
+        enqueueTicketAi(ticket, channel as TextChannel, String(newestOwnerMessage?.content || latest.content));
     }
 }
