@@ -3,7 +3,7 @@ import test from 'node:test';
 
 process.env.GROQ_API_KEY = 'gsk_voice_test_key';
 process.env.OPENROUTER_API_KEY = 'sk-or-voice-test-key';
-const { voiceAssistant, pcmToWav, containsAudibleSpeech, speechText, VOICE_TTS_MODEL } = await import('../dist/services/voiceAssistant.js');
+const { voiceAssistant, VoiceAssistant, pcmToWav, containsAudibleSpeech, speechText, VOICE_TTS_MODEL } = await import('../dist/services/voiceAssistant.js');
 
 test('Discord PCM becomes a valid 16 kHz mono WAV for speech recognition', () => {
     const pcm = Buffer.alloc(3200);
@@ -58,4 +58,18 @@ test('voice requests use the transcription and Fish speech endpoints with bounde
 
 test('speech output strips markdown and links', () => {
     assert.equal(speechText('**Hello**! Read https://example.com/docs for help.'), 'Hello! Read for help.');
+});
+
+test('Fish free-tier 429 pauses speech requests instead of repeatedly hitting quota', async () => {
+    const assistant = new VoiceAssistant();
+    const originalFetch = globalThis.fetch;
+    let attempts = 0;
+    globalThis.fetch = async () => { attempts++; return Response.json({ error: { message: 'quota exhausted' } }, { status: 429 }); };
+    try {
+        await assert.rejects(assistant.synthesize('Hello'), /429/);
+        await assert.rejects(assistant.synthesize('Hello again'), /quota is unavailable/);
+        assert.equal(attempts, 1);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });

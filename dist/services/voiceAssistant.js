@@ -70,6 +70,7 @@ export class VoiceAssistant {
     busy = false;
     connecting = false;
     lastFailureNotice = 0;
+    fishBlockedUntil = 0;
     watchdog = null;
     async start(client) {
         if (this.watchdog)
@@ -80,7 +81,7 @@ export class VoiceAssistant {
             return;
         }
         this.player.on('error', (error) => logger.error(`Voice assistant playback failed: ${error.message}`));
-        await this.ensureConnected();
+        await this.ensureConnected().catch((error) => logger.warn(`Voice assistant initial connection failed: ${error.message}`));
         this.synthesize('Victus AI is ready.').then((audio) => {
             logger.info(`Voice assistant Fish Audio startup probe succeeded (${audio.length} bytes)`);
         }).catch((error) => logger.error(`Voice assistant Fish Audio startup probe failed: ${error.message}`));
@@ -261,6 +262,8 @@ export class VoiceAssistant {
         return answer;
     }
     async synthesize(answer) {
+        if (Date.now() < this.fishBlockedUntil)
+            throw new Error('Fish Audio daily free-tier quota is unavailable');
         const voice = process.env.VOICE_ASSISTANT_TTS_VOICE?.trim();
         const response = await fetch('https://openrouter.ai/api/v1/audio/speech', {
             method: 'POST',
@@ -273,8 +276,13 @@ export class VoiceAssistant {
             body: JSON.stringify({ model: VOICE_TTS_MODEL, input: answer, response_format: 'mp3', ...(voice ? { voice } : {}) }),
             signal: AbortSignal.timeout(22_000),
         });
-        if (!response.ok)
+        if (!response.ok) {
+            if (response.status === 429) {
+                this.fishBlockedUntil = Date.now() + 6 * 60 * 60_000;
+                logger.warn('Fish Audio free-tier quota reached; pausing speech requests for six hours.');
+            }
             throw new Error(`Fish Audio TTS returned ${response.status}: ${(await response.text()).slice(0, 160)}`);
+        }
         if (!response.headers.get('content-type')?.startsWith('audio/'))
             throw new Error('Fish Audio returned a non-audio response');
         const audio = Buffer.from(await response.arrayBuffer());
@@ -288,7 +296,15 @@ export class VoiceAssistant {
         if (!transcript || transcript.length < 3 || /^\W+$/.test(transcript))
             return;
         const answer = await this.answer(utterance.userId, transcript);
-        const audio = await this.synthesize(answer);
+        let audio;
+        try {
+            audio = await this.synthesize(answer);
+        }
+        catch (error) {
+            logger.warn(`Voice assistant speech unavailable: ${error.message}`);
+            await this.channel?.send({ content: `<@${utterance.userId}> ${answer}` }).catch(() => { });
+            return;
+        }
         if (!this.connection || this.connection.state.status !== VoiceConnectionStatus.Ready)
             return;
         const resource = createAudioResource(Readable.from([audio]), { inputType: StreamType.Arbitrary });
