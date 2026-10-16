@@ -7,6 +7,9 @@ import path from "node:path";
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const entrypoint = path.join(rootDir, "dist", "index.js");
 const discordJsPackage = path.join(rootDir, "node_modules", "discord.js", "package.json");
+const voicePackage = path.join(rootDir, "node_modules", "@discordjs", "voice", "package.json");
+const opusPackage = path.join(rootDir, "node_modules", "opusscript", "package.json");
+const ffmpegPackage = path.join(rootDir, "node_modules", "ffmpeg-static", "package.json");
 const nodeModulesDir = path.join(rootDir, "node_modules");
 
 // 1. Ensure node_modules directory exists
@@ -19,18 +22,22 @@ try {
 }
 
 // 2. Verify critical dependencies
-if (!existsSync(discordJsPackage)) {
-    console.log("[Victus Bot] Dependencies missing in node_modules. Running clean production install...");
+if (![discordJsPackage, voicePackage, opusPackage, ffmpegPackage].every(existsSync)) {
+    console.log("[Victus Bot] Dependencies missing in node_modules. Installing required packages...");
     const tmpCache = process.platform === "win32" ? path.join(rootDir, ".npm-cache") : "/tmp/.npm";
     try {
         mkdirSync(tmpCache, { recursive: true });
     } catch {}
 
-    spawnSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund"], {
+    const install = spawnSync("npm", ["install", "--no-audit", "--no-fund"], {
         cwd: rootDir,
         stdio: "inherit",
         shell: process.platform === "win32",
     });
+    if (install.status !== 0 || ![discordJsPackage, voicePackage, opusPackage, ffmpegPackage].every(existsSync)) {
+        console.error("[Victus Bot] Required dependency installation failed. Aborting startup.");
+        process.exit(1);
+    }
 }
 
 // 3. Verify compiled entrypoint and critical dist modules

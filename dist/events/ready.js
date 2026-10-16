@@ -24,6 +24,7 @@ import { forumDirectoryService } from '../services/forumDirectoryService.js';
 import { hubBridgeService } from '../services/hubBridgeService.js';
 import { gtnService } from '../services/gtnService.js';
 import { unscrambleService } from '../services/unscrambleService.js';
+import { voiceAssistant } from '../services/voiceAssistant.js';
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
 /**
@@ -288,6 +289,7 @@ export const readyEvent = {
         await syncLinkedRoles(client);
         await syncAllRankRoles(client);
         restoreVoiceXpSessions(client);
+        voiceAssistant.start(client).catch((error) => logger.error('Voice assistant startup failed:', error));
         startLevelUpWorker(client);
         // Retry recorded economy mutations, then mirror Paymenter's
         // authoritative COINS balance to local wallets.

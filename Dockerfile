@@ -1,5 +1,5 @@
 # --- Stage 1: Build ---
-FROM node:20-alpine AS builder
+FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -17,15 +17,16 @@ COPY src/ ./src/
 RUN npm run build
 
 # --- Stage 2: Production ---
-FROM node:20-alpine
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
 # Set environment
 ENV NODE_ENV=production
 
-# Fix TLS cert verification (alpine ca-certificates) and ensure time is correct
-RUN apk add --no-cache ca-certificates tzdata && update-ca-certificates
+# Discord voice requires the glibc DAVE binding and FFmpeg for speech playback.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package*.json ./

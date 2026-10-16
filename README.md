@@ -144,6 +144,12 @@ VICTUS_AI_SYSTEM_PROMPT=
 
 After changing AI env vars, restart the bot so it can reload configuration.
 
+### Always-on voice support
+
+The bot automatically joins voice channel `1340607472129413132` on startup and reconnects if disconnected. Set `VOICE_ASSISTANT_CHANNEL_ID` to move it to another voice channel. Members speak normally; after a short pause, the bot transcribes the question with Groq Whisper, answers with the configured Groq chat model and relevant public Victus docs, and speaks with OpenRouter Fish Audio S2.1 Pro Free. It keeps the last four exchanges per member for 20 minutes in memory. It does not save audio or transcripts to disk.
+
+Requires `GROQ_API_KEY`, `OPENROUTER_API_KEY`, Node.js 22.12 or later, Connect and Speak permissions, and FFmpeg. `VOICE_ASSISTANT_TTS_VOICE` is optional; the request omits it to use Fish Audio's default when supported. Each utterance is capped at 18 seconds, quiet audio is ignored, and requests are queued and rate limited. A startup speech synthesis probe reports whether the Fish endpoint works. Fish Audio's free endpoint has rate and availability limits; if speech fails, the bot posts a short failure notice in the voice channel chat.
+
 ### Server entitlement roles
 
 The bot synchronizes Victus server entitlements with Discord on startup, account linking,
