@@ -98,7 +98,6 @@ export class VoiceAssistant {
     private readonly memory = new Map<string, { turns: Turn[]; updatedAt: number }>();
     private busy = false;
     private connecting = false;
-    private lastFailureNotice = 0;
     private fishBlockedUntil = 0;
     private watchdog: ReturnType<typeof setInterval> | null = null;
 
@@ -230,10 +229,6 @@ export class VoiceAssistant {
                     await this.respond(utterance);
                 } catch (error) {
                     logger.error(`Voice assistant response failed for ${utterance.userId}: ${(error as Error).message}`);
-                    if (this.channel && Date.now() - this.lastFailureNotice > 5 * 60_000) {
-                        this.lastFailureNotice = Date.now();
-                        this.channel.send('Victus AI is having trouble replying by voice right now. Please try again shortly or open a support ticket.').catch(() => {});
-                    }
                 }
             }
         } finally {

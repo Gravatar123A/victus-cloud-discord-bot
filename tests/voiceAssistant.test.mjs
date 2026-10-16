@@ -86,3 +86,13 @@ test('voice reply failures never turn into a text answer', async () => {
     await assert.rejects(assistant.respond({ userId: '123', pcm: Buffer.alloc(0), durationMs: 1000 }), /No speech service available/);
     assert.equal(textMessages, 0);
 });
+
+test('voice queue failures stay in logs instead of posting to channel chat', async () => {
+    const assistant = new VoiceAssistant();
+    let textMessages = 0;
+    assistant.channel = { members: new Map([['123', {}]]), send: async () => { textMessages++; } };
+    assistant.respond = async () => { throw new Error('Speech service failed'); };
+    assistant.queue.push({ userId: '123', pcm: Buffer.alloc(0), durationMs: 1000 });
+    await assistant.drain();
+    assert.equal(textMessages, 0);
+});

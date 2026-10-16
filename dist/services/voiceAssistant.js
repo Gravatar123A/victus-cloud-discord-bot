@@ -74,7 +74,6 @@ export class VoiceAssistant {
     memory = new Map();
     busy = false;
     connecting = false;
-    lastFailureNotice = 0;
     fishBlockedUntil = 0;
     watchdog = null;
     async start(client) {
@@ -226,10 +225,6 @@ export class VoiceAssistant {
                 }
                 catch (error) {
                     logger.error(`Voice assistant response failed for ${utterance.userId}: ${error.message}`);
-                    if (this.channel && Date.now() - this.lastFailureNotice > 5 * 60_000) {
-                        this.lastFailureNotice = Date.now();
-                        this.channel.send('Victus AI is having trouble replying by voice right now. Please try again shortly or open a support ticket.').catch(() => { });
-                    }
                 }
             }
         }
