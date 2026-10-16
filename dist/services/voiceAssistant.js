@@ -82,9 +82,6 @@ export class VoiceAssistant {
         }
         this.player.on('error', (error) => logger.error(`Voice assistant playback failed: ${error.message}`));
         await this.ensureConnected().catch((error) => logger.warn(`Voice assistant initial connection failed: ${error.message}`));
-        this.synthesize('Victus AI is ready.').then((audio) => {
-            logger.info(`Voice assistant Fish Audio startup probe succeeded (${audio.length} bytes)`);
-        }).catch((error) => logger.error(`Voice assistant Fish Audio startup probe failed: ${error.message}`));
         this.watchdog = setInterval(() => {
             this.ensureConnected().catch((error) => logger.warn(`Voice assistant reconnect failed: ${error.message}`));
             const cutoff = Date.now() - MEMORY_TTL_MS;
