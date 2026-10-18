@@ -11,7 +11,7 @@ import { isChannelSummoned } from '../services/summonedChannels.js';
 import { handleDiscordTicketMessage } from '../services/discordTicketMessages.js';
 import { awardMessageXp } from '../services/activityXp.js';
 import { PrefixInteraction, translateV2Components } from '../utils/prefixInteraction.js';
-import { checkCooldown } from '../middleware/rateLimit.js';
+import { checkBurstLimit, checkCooldown } from '../middleware/rateLimit.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { calculateLevel } from '../utils/vccrs.js';
 import { buildFinalEmbedPayload } from '../commands/embed.js';
@@ -385,6 +385,7 @@ export const messageCreateEvent: Event = {
         }
 
         if (isCommand) {
+            if (!checkBurstLimit(message.author.id)) return;
             const rawArgs = content.slice(commandPrefix.length).trim();
             if (rawArgs.length > 0) {
                 const args: string[] = [];
@@ -488,8 +489,8 @@ export const messageCreateEvent: Event = {
                     // Check standard commands
                     const command = message.client.commands.get(commandName);
                     if (command) {
-                        if (command.cooldown) {
-                            const remaining = checkCooldown({ user: message.author } as any, commandName, command.cooldown);
+                        {
+                            const remaining = checkCooldown({ user: message.author } as any, commandName, command.cooldown || 2);
                             if (remaining > 0) {
                                 const container = ComponentsV2.warningContainer(
                                     'Slow Down!',

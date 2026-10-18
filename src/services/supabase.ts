@@ -163,7 +163,7 @@ async function describeFunctionError(error: unknown): Promise<string> {
 
 class RobustWebSocket extends ws {
     constructor(address: any, protocols?: any, options?: any) {
-        super(address, protocols, { ...options, rejectUnauthorized: false });
+        super(address, protocols, { ...options, rejectUnauthorized: true });
     }
 }
 

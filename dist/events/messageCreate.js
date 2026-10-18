@@ -9,7 +9,7 @@ import { isChannelSummoned } from '../services/summonedChannels.js';
 import { handleDiscordTicketMessage } from '../services/discordTicketMessages.js';
 import { awardMessageXp } from '../services/activityXp.js';
 import { PrefixInteraction, translateV2Components } from '../utils/prefixInteraction.js';
-import { checkCooldown } from '../middleware/rateLimit.js';
+import { checkBurstLimit, checkCooldown } from '../middleware/rateLimit.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { calculateLevel } from '../utils/vccrs.js';
 import { buildFinalEmbedPayload } from '../commands/embed.js';
@@ -345,6 +345,8 @@ export const messageCreateEvent = {
             commandPrefix = mentionNickPrefix;
         }
         if (isCommand) {
+            if (!checkBurstLimit(message.author.id))
+                return;
             const rawArgs = content.slice(commandPrefix.length).trim();
             if (rawArgs.length > 0) {
                 const args = [];
@@ -436,8 +438,8 @@ export const messageCreateEvent = {
                     // Check standard commands
                     const command = message.client.commands.get(commandName);
                     if (command) {
-                        if (command.cooldown) {
-                            const remaining = checkCooldown({ user: message.author }, commandName, command.cooldown);
+                        {
+                            const remaining = checkCooldown({ user: message.author }, commandName, command.cooldown || 2);
                             if (remaining > 0) {
                                 const container = ComponentsV2.warningContainer('Slow Down!', `Please wait **${remaining}** second${remaining > 1 ? 's' : ''} before using this command again.`);
                                 await message.reply(translateV2Components({ components: [container], flags: ComponentsV2.IS_COMPONENTS_V2 })).catch(() => { });
