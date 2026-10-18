@@ -93,12 +93,15 @@ export async function backfillVictusAiKnowledge(): Promise<number> {
     return processed;
 }
 
-export async function addStaffKnowledge(guildId: string, authorId: string, title: string, answer: string): Promise<string> {
+export async function addStaffKnowledge(guildId: string, authorId: string, entry: {
+    title: string; question: string; answer: string; category: string; rawNote: string;
+}): Promise<string> {
     const sourceId = crypto.randomUUID();
     const { data, error } = await supabase.client.from('victus_ai_knowledge').insert({
         guild_id: guildId, source_type: 'staff_command', source_id: sourceId,
-        ticket_id: null, title: sanitizeAiText(title, 160), question: sanitizeAiText(title, 160),
-        answer: sanitizeAiText(answer, 1400), category: 'Staff guidance', created_by: authorId,
+        ticket_id: null, title: sanitizeAiText(entry.title, 160), question: sanitizeAiText(entry.question, 300),
+        answer: sanitizeAiText(entry.answer, 1400), category: sanitizeAiText(entry.category, 100),
+        raw_note: sanitizeAiText(entry.rawNote, 2000), created_by: authorId,
     }).select('id').single();
     if (error || !data) throw new Error(error?.message || 'Knowledge write failed');
     return String(data.id);
