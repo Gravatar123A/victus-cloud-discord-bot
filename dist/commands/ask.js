@@ -5,6 +5,9 @@ import { victusAiActions } from '../services/victusAiActions.js';
 import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
 import { aiConversationMemory } from '../services/aiConversationMemory.js';
+import { getAiMemory, recordAiTurn } from '../services/victusAiContext.js';
+import { victusAiConfigured } from '../services/victusAiCompletion.js';
+import { config } from '../config.js';
 export const askCommand = {
     data: new SlashCommandBuilder()
         .setName('ask')
@@ -28,9 +31,9 @@ export const askCommand = {
         else {
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         }
-        if (!groqAi.isEnabled()) {
+        if (!victusAiConfigured()) {
             await interaction.editReply({
-                content: 'AI chat is not configured yet. Set `GROQ_API_KEY` (or Azure credentials) in the bot environment, then restart the bot.',
+                content: 'AI chat is not configured yet. Set `OPENROUTER_API_KEY` in the bot environment.',
             });
             return;
         }
@@ -55,12 +58,18 @@ export const askCommand = {
                 await interaction.editReply({
                     content: formatAiMessage(content),
                 });
+                const actionSession = aiConversationMemory.getSessionId(interaction.channelId || interaction.user.id, interaction.user.id, !interaction.guildId, false);
+                const actionScope = publicReply ? 'public' : 'private';
+                void recordAiTurn(interaction.user.id, actionSession, actionScope, 'user', question).catch((error) => logger.warn('Victus AI memory write failed:', error));
+                void recordAiTurn(interaction.user.id, actionSession, actionScope, 'assistant', content).catch((error) => logger.warn('Victus AI memory write failed:', error));
                 return;
             }
             const isDm = !interaction.guildId;
             const channelId = interaction.channelId || interaction.user.id;
             const sessionId = aiConversationMemory.getSessionId(channelId, interaction.user.id, isDm, false);
             const history = aiConversationMemory.getHistory(sessionId);
+            const scope = publicReply ? 'public' : 'private';
+            const memory = await getAiMemory(interaction.user.id, sessionId, scope, question).catch(() => '');
             const linked = await supabase.getLinkedAccount(interaction.user.id).catch(() => null);
             const profile = linked ? await supabase.getUserProfile(linked.user_id).catch(() => null) : null;
             const answer = await groqAi.askVictus(question, {
@@ -71,10 +80,14 @@ export const askCommand = {
                 publicReply,
                 channelName: interaction.channel?.name,
                 guildName: interaction.guild?.name,
+                guildId: interaction.guildId || config.bot.supportGuildId,
                 history,
+                memory,
             });
             aiConversationMemory.addTurn(sessionId, 'user', question);
             aiConversationMemory.addTurn(sessionId, 'assistant', answer);
+            await recordAiTurn(interaction.user.id, sessionId, scope, 'user', question).catch((error) => logger.warn('Victus AI memory write failed:', error));
+            await recordAiTurn(interaction.user.id, sessionId, scope, 'assistant', answer).catch((error) => logger.warn('Victus AI memory write failed:', error));
             await interaction.editReply({
                 content: formatAiMessage(answer),
             });

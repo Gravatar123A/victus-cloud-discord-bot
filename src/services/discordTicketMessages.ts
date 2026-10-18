@@ -3,6 +3,7 @@ import { supabase } from './supabase.js';
 import { ticketTranslationService } from './ticketTranslationService.js';
 import { logger } from '../utils/logger.js';
 import { enqueueTicketAi } from './discordTicketAi.js';
+import { recordAiTurn, recordStaffTicketHandling } from './victusAiContext.js';
 
 const notTicketUntil = new Map<string, number>();
 const lastLookupFailureNotice = new Map<string, number>();
@@ -67,6 +68,17 @@ export async function handleDiscordTicketMessage(message: Message): Promise<bool
         attachments: [...message.attachments.values()].map((attachment) => attachment.url),
     });
     if (!logged) logger.warn(`Ticket transcript write failed for ${ticket.id}; AI was still queued`);
+    if (logged && isTicketOwner && message.content.trim()) {
+        void recordAiTurn(message.author.id, `ticket:${ticket.id}`, 'private', 'user', message.content)
+            .catch((error) => logger.warn('Victus AI ticket memory write failed:', error));
+    }
+    if (logged && isStaff && message.content.trim()) {
+        void recordStaffTicketHandling(ticket, logged, message.content).catch((error) =>
+            logger.warn('Victus AI could not learn from staff ticket reply:', error));
+        void recordAiTurn(String(ticket.discord_id), `ticket:${ticket.id}`, 'private', 'assistant',
+            `Staff response: ${message.content}`).catch((error) =>
+            logger.warn('Victus AI staff response memory write failed:', error));
+    }
 
     void translateTicketMessage(message, ticket, isStaff).catch((error) => {
         logger.error('Discord ticket translation failed:', error);
