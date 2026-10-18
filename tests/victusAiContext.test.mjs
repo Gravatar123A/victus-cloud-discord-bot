@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getAiMemory, mayLearnFromTicket, sanitizeAiText } from '../dist/services/victusAiContext.js';
-import { completeVictusAi, VICTUS_AI_MODEL } from '../dist/services/victusAiCompletion.js';
+import { completeVictusAi, VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL } from '../dist/services/victusAiCompletion.js';
 import { supabase } from '../dist/services/supabase.js';
 
 test('ticket learning ignores sensitive categories and account-specific instructions', () => {
@@ -18,7 +18,7 @@ test('knowledge and memory redaction strips common secrets before storage', () =
     }
 });
 
-test('customer AI completion requests the ticket Nemotron model', async () => {
+test('customer AI completion prioritizes the ticket Nemotron model', async () => {
     const originalFetch = globalThis.fetch;
     const originalKey = process.env.OPENROUTER_API_KEY;
     const originalKeys = process.env.OPENROUTER_API_KEYS;
@@ -32,8 +32,8 @@ test('customer AI completion requests the ticket Nemotron model', async () => {
     };
     try {
         assert.equal(await completeVictusAi('Rules', 'Question'), 'A concise answer');
-        assert.equal(requested.model, VICTUS_AI_MODEL);
-        assert.equal(requested.model, 'nvidia/nemotron-3.5-super-vl:free');
+        assert.deepEqual(requested.models, [VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL]);
+        assert.equal(requested.models[0], 'nvidia/nemotron-3.5-super-vl:free');
     } finally {
         globalThis.fetch = originalFetch;
         if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;

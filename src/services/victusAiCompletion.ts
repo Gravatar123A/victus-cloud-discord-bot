@@ -2,6 +2,7 @@ import { supabase } from './supabase.js';
 
 /** The one primary model used for customer-facing Victus AI replies. */
 export const VICTUS_AI_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
+export const VICTUS_AI_FALLBACK_MODEL = 'nvidia/nemotron-3.5-lightning:free';
 
 let cachedKey = '';
 let keyExpiresAt = 0;
@@ -27,23 +28,45 @@ export function victusAiConfigured(): boolean {
 
 export async function completeVictusAi(system: string, prompt: string, maxTokens = 700): Promise<string> {
     const key = await getVictusAiKey();
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${key}`, 'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://victuscloud.com', 'X-Title': 'Victus Cloud Discord AI',
-        },
-        body: JSON.stringify({
-            model: VICTUS_AI_MODEL,
-            messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-            temperature: 0.25, max_tokens: maxTokens,
-            reasoning: { effort: 'low', exclude: true },
-        }),
-        signal: AbortSignal.timeout(45_000),
-    });
-    const payload = await response.json().catch(() => null) as any;
-    if (!response.ok) throw new Error(`Victus AI failed (${response.status}): ${String(payload?.error?.message || response.statusText).slice(0, 150)}`);
-    return clean(String(payload?.choices?.[0]?.message?.content || '').trim());
+    const messages = [{ role: 'system', content: system }, { role: 'user', content: prompt }];
+    const request = async (models: string[], timeoutMs: number): Promise<string> => {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${key}`, 'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://victuscloud.com', 'X-Title': 'Victus Cloud Discord AI',
+            },
+            // OpenRouter tries the second model if the first model's providers fail.
+            body: JSON.stringify({
+                models, messages, temperature: 0.25, max_tokens: maxTokens,
+            }),
+            signal: AbortSignal.timeout(timeoutMs),
+        });
+        const payload = await response.json().catch(() => null) as any;
+        if (!response.ok) {
+            const error = new Error(`Victus AI failed (${response.status}): ${String(payload?.error?.message || response.statusText).slice(0, 150)}`);
+            Object.assign(error, { status: response.status });
+            throw error;
+        }
+        const answer = clean(String(payload?.choices?.[0]?.message?.content || '').trim());
+        if (!answer) throw new Error('Victus AI returned an empty answer');
+        return answer;
+    };
+
+    try {
+        return await request([VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL], 45_000);
+    } catch (error) {
+        const status = (error as Error & { status?: number }).status;
+        const retryable = status === undefined || status === 408 || status >= 500;
+        if (!retryable) throw error;
+        // A single bounded retry covers empty responses, timeouts, and transient
+        // provider failures without looping on quota or authentication errors.
+        try {
+            return await request([VICTUS_AI_FALLBACK_MODEL], 65_000);
+        } catch (fallbackError) {
+            throw new Error(`Victus AI primary and fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+        }
+    }
 }
 
 function clean(answer: string): string {

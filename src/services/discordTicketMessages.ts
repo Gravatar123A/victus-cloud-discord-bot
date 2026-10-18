@@ -3,15 +3,16 @@ import { supabase } from './supabase.js';
 import { ticketTranslationService } from './ticketTranslationService.js';
 import { logger } from '../utils/logger.js';
 import { enqueueTicketAi } from './discordTicketAi.js';
+import { hasReadableTicketAttachment, ticketAiQueryWithAttachments } from './ticketAiAttachments.js';
 import { recordAiTurn, recordStaffTicketHandling } from './victusAiContext.js';
 
 const notTicketUntil = new Map<string, number>();
 const lastLookupFailureNotice = new Map<string, number>();
 const NOT_TICKET_TTL_MS = 60_000;
 
-export function shouldAutoReplyToTicketMessage(ticketOwnerId: string, authorId: string, content: string): boolean {
+export function shouldAutoReplyToTicketMessage(ticketOwnerId: string, authorId: string, content: string, hasAttachments = false): boolean {
     const text = content.trim();
-    return authorId === ticketOwnerId && text.length > 0 && !/^[!/]/.test(text);
+    return authorId === ticketOwnerId && (text.length > 0 || hasAttachments) && !/^[!/]/.test(text);
 }
 
 /** Keep Discord ticket transcripts and translation inside Discord. */
@@ -40,8 +41,8 @@ export async function handleDiscordTicketMessage(message: Message): Promise<bool
 
     // Schedule the answer as soon as the ticket is identified. Transcript and
     // staff-role lookups should not hold up the customer's AI response.
-    if (shouldAutoReplyToTicketMessage(ticket.discord_id, message.author.id, message.content)) {
-        enqueueTicketAi(ticket, message.channel as any, message.content);
+    if (shouldAutoReplyToTicketMessage(ticket.discord_id, message.author.id, message.content, hasReadableTicketAttachment(message))) {
+        enqueueTicketAi(ticket, message.channel as any, ticketAiQueryWithAttachments(message).catch(() => message.content));
         logger.info(`Ticket AI queued for ${ticket.id} in ${Date.now() - message.createdTimestamp}ms (lookup ${Date.now() - startedAt}ms)`);
     }
 
