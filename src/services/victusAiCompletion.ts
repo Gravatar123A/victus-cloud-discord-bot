@@ -6,6 +6,7 @@ export const VICTUS_AI_FALLBACK_MODEL = 'nvidia/nemotron-3.5-lightning:free';
 
 let cachedKey = '';
 let keyExpiresAt = 0;
+let openRouterQuotaUntil = 0;
 
 async function getVictusAiKey(): Promise<string> {
     const envKey = (process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS || '')
@@ -23,12 +24,37 @@ async function getVictusAiKey(): Promise<string> {
 }
 
 export function victusAiConfigured(): boolean {
-    return Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS || process.env.SUPABASE_SERVICE_KEY);
+    return Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS
+        || process.env.SUPABASE_SERVICE_KEY || process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS);
 }
 
 export async function completeVictusAi(system: string, prompt: string, maxTokens = 700): Promise<string> {
-    const key = await getVictusAiKey();
     const messages = [{ role: 'system', content: system }, { role: 'user', content: prompt }];
+    const groqKey = (process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS || '').split(/[\r\n,]+/)[0].trim();
+    const requestGroq = async (): Promise<string> => {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'openai/gpt-oss-120b', messages,
+                temperature: 0.25, max_tokens: Math.max(700, maxTokens) }),
+            signal: AbortSignal.timeout(30_000),
+        });
+        const payload = await response.json().catch(() => null) as any;
+        if (!response.ok) throw new Error(`Groq AI failed (${response.status}): ${String(payload?.error?.message || response.statusText).slice(0, 150)}`);
+        const answer = clean(String(payload?.choices?.[0]?.message?.content || '').trim());
+        if (!answer) throw new Error('Groq AI returned an empty answer');
+        return answer;
+    };
+
+    let key = '';
+    let openRouterError: unknown;
+    if (Date.now() >= openRouterQuotaUntil) {
+        try {
+            key = await getVictusAiKey();
+        } catch (error) {
+            openRouterError = error;
+        }
+    }
     const request = async (models: string[], timeoutMs: number): Promise<string> => {
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
@@ -53,20 +79,33 @@ export async function completeVictusAi(system: string, prompt: string, maxTokens
         return answer;
     };
 
-    try {
-        return await request([VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL], 45_000);
-    } catch (error) {
-        const status = (error as Error & { status?: number }).status;
-        const retryable = status === undefined || status === 408 || status >= 500;
-        if (!retryable) throw error;
-        // A single bounded retry covers empty responses, timeouts, and transient
-        // provider failures without looping on quota or authentication errors.
+    if (key) {
         try {
-            return await request([VICTUS_AI_FALLBACK_MODEL], 65_000);
-        } catch (fallbackError) {
-            throw new Error(`Victus AI primary and fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+            return await request([VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL], 45_000);
+        } catch (error) {
+            openRouterError = error;
+            const status = (error as Error & { status?: number }).status;
+            if (status === 429 && groqKey) openRouterQuotaUntil = Date.now() + 30 * 60_000;
+            // The OpenRouter model fallback helps with transient provider errors;
+            // a quota error needs a different provider, not another free request.
+            if (status === undefined || status === 408 || status >= 500) {
+                try {
+                    return await request([VICTUS_AI_FALLBACK_MODEL], 65_000);
+                } catch (fallbackError) {
+                    openRouterError = fallbackError;
+                }
+            }
         }
     }
+
+    if (groqKey) {
+        try {
+            return await requestGroq();
+        } catch (groqError) {
+            throw new Error(`Victus AI providers unavailable: ${openRouterError instanceof Error ? openRouterError.message : String(openRouterError || 'OpenRouter quota cooling down')}; ${groqError instanceof Error ? groqError.message : String(groqError)}`);
+        }
+    }
+    throw openRouterError || new Error('Victus AI has no available provider key.');
 }
 
 function clean(answer: string): string {

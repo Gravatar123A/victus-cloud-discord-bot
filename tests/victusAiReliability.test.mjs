@@ -30,6 +30,8 @@ test('OpenRouter gets a second verified free model and retries one transient 502
 
 test('quota errors do not spend another free request', async () => {
     process.env.OPENROUTER_API_KEY = 'test-only-key';
+    const originalGroqKey = process.env.GROQ_API_KEY;
+    delete process.env.GROQ_API_KEY;
     let calls = 0;
     globalThis.fetch = async () => { calls++; return new Response(JSON.stringify({ error: { message: 'limit reached' } }), { status: 429 }); };
     try {
@@ -39,6 +41,8 @@ test('quota errors do not spend another free request', async () => {
         globalThis.fetch = originalFetch;
         if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
         else process.env.OPENROUTER_API_KEY = originalKey;
+        if (originalGroqKey === undefined) delete process.env.GROQ_API_KEY;
+        else process.env.GROQ_API_KEY = originalGroqKey;
     }
 });
 
@@ -87,4 +91,29 @@ test('attached text logs are read as redacted excerpts, including a later cause'
     assert.equal(hasReadableTicketAttachment({ attachments: new Map([['one', {
         url: 'https://example.com/private.txt', name: 'private.txt', size: 10, contentType: 'text/plain',
     }]]) }), false);
+});
+
+test('OpenRouter daily quota falls back to Groq and cools down before retrying OpenRouter', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-only-key';
+    const originalGroqKey = process.env.GROQ_API_KEY;
+    process.env.GROQ_API_KEY = 'test-groq-key';
+    const urls = [];
+    globalThis.fetch = async (url) => {
+        urls.push(String(url));
+        return String(url).includes('openrouter.ai')
+            ? new Response(JSON.stringify({ error: { message: 'free-models-per-day exceeded' } }), { status: 429 })
+            : new Response(JSON.stringify({ choices: [{ message: { content: 'Groq answer' } }] }), { status: 200 });
+    };
+    try {
+        assert.equal(await completeVictusAi('Be safe', 'Help'), 'Groq answer');
+        assert.equal(await completeVictusAi('Be safe', 'Help again'), 'Groq answer');
+        assert.equal(urls.filter((url) => url.includes('openrouter.ai')).length, 1);
+        assert.equal(urls.filter((url) => url.includes('groq.com')).length, 2);
+    } finally {
+        globalThis.fetch = originalFetch;
+        if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+        else process.env.OPENROUTER_API_KEY = originalKey;
+        if (originalGroqKey === undefined) delete process.env.GROQ_API_KEY;
+        else process.env.GROQ_API_KEY = originalGroqKey;
+    }
 });
