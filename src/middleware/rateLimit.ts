@@ -1,8 +1,26 @@
 import { Collection, ChatInputCommandInteraction } from 'discord.js';
-import { logger } from '../utils/logger.js';
 
 // Store cooldowns: Map<commandName, Map<userId, timestamp>>
 const cooldowns = new Collection<string, Collection<string, number>>();
+const burstWindows = new Map<string, { startedAt: number; count: number }>();
+
+/** Bound total bot interactions from a user, including commands without a cooldown. */
+export function checkBurstLimit(userId: string, limit = 10, windowMs = 10_000): boolean {
+    const now = Date.now();
+    const current = burstWindows.get(userId);
+    if (!current || now - current.startedAt >= windowMs) {
+        burstWindows.set(userId, { startedAt: now, count: 1 });
+        if (burstWindows.size > 10_000) {
+            for (const [key, value] of burstWindows) {
+                if (now - value.startedAt >= windowMs) burstWindows.delete(key);
+            }
+        }
+        return true;
+    }
+    if (current.count >= limit) return false;
+    current.count += 1;
+    return true;
+}
 
 /**
  * Check and apply command cooldown
@@ -33,7 +51,9 @@ export function checkCooldown(
     timestamps.set(interaction.user.id, now);
 
     // Clean up expired cooldowns after the cooldown period
-    setTimeout(() => timestamps.delete(interaction.user.id), cooldownAmount);
+    setTimeout(() => {
+        if (timestamps.get(interaction.user.id) === now) timestamps.delete(interaction.user.id);
+    }, cooldownAmount);
 
     return 0;
 }

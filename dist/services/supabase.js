@@ -144,7 +144,7 @@ async function describeFunctionError(error) {
 }
 class RobustWebSocket extends ws {
     constructor(address, protocols, options) {
-        super(address, protocols, { ...options, rejectUnauthorized: false });
+        super(address, protocols, { ...options, rejectUnauthorized: true });
     }
 }
 // ============================================

@@ -1,6 +1,6 @@
 import { Interaction, MessageFlags } from 'discord.js';
 import { logger } from '../utils/logger.js';
-import { checkCooldown } from '../middleware/rateLimit.js';
+import { checkBurstLimit, checkCooldown } from '../middleware/rateLimit.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
 import type { Event } from '../types/index.js';
 import { viralExpansionService } from '../services/viralExpansionService.js';
@@ -10,6 +10,12 @@ export const interactionCreateEvent: Event = {
 
     name: 'interactionCreate',
     async execute(interaction: Interaction) {
+        if (!checkBurstLimit(interaction.user.id)) {
+            if (interaction.isRepliable()) {
+                await interaction.reply({ content: 'Please slow down and try again in a few seconds.', flags: MessageFlags.Ephemeral }).catch(() => {});
+            }
+            return;
+        }
         // Intercept prefix command message component interactions and translate V2 components
         if (interaction.isMessageComponent()) {
             const isV2 = interaction.message.flags?.has(32768) ?? false;
@@ -64,8 +70,8 @@ export const interactionCreateEvent: Event = {
             }
 
             // Check cooldown
-            if (command.cooldown) {
-                const remaining = checkCooldown(interaction, interaction.commandName, command.cooldown);
+            {
+                const remaining = checkCooldown(interaction, interaction.commandName, command.cooldown || 2);
                 if (remaining > 0) {
                     const container = ComponentsV2.warningContainer(
                         'Slow Down!',
@@ -109,7 +115,7 @@ export const interactionCreateEvent: Event = {
                     ? '🔒 TLS certificate verification failed - check container CA certificates.'
                     : isSupabaseError
                         ? '🗄️ Account data temporarily unavailable - Supabase is unreachable.'
-                        : `Details: \`${errMsg.slice(0, 300)}\``;
+                        : 'Please try again later or contact support with the command name and time.';
 
                 const container = ComponentsV2.errorContainer(
                     'Command Error',
