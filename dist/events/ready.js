@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { ensurePremiumSupportCategory, isPremiumSupportCategory } from '../services/premiumSupport.js';
 import { createTicketPanel } from '../commands/ticket.js';
 import { recoverRecentUnansweredTicketAi } from '../services/discordTicketAi.js';
+import { backfillVictusAiKnowledge } from '../services/victusAiContext.js';
 import { assignLinkedRole, syncAllRankRoles, syncLinkedRoles, syncRankRole } from '../utils/roles.js';
 import { supabase } from '../services/supabase.js';
 import { ComponentsV2 } from '../embeds/componentsV2.js';
@@ -242,6 +243,10 @@ export const readyEvent = {
         logger.info(`Serving ${client.guilds.cache.size} guilds`);
         const ticketGuildId = config.bot.supportGuildId || config.discord.guildId;
         if (ticketGuildId) {
+            setTimeout(() => {
+                void backfillVictusAiKnowledge();
+                setInterval(() => void backfillVictusAiKnowledge(), 60_000).unref?.();
+            }, 30_000).unref?.();
             await ensurePremiumSupportCategory(ticketGuildId).catch((error) => {
                 logger.error('Premium Support category setup failed:', error);
             });

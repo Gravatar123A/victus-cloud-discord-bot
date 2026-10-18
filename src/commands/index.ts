@@ -23,6 +23,7 @@ import { accountCommand } from './account.js';
 import { linkPanelAliasCommand, linkPanelCommand } from './link-panel.js';
 import { createAccountCommand } from './create-account.js';
 import { askCommand } from './ask.js';
+import { aiKnowledgeCommand } from './aiknowledge.js';
 import { summonCommand } from './summon.js';
 import { economyCommand } from './economy.js';
 import { musicCommands } from './music/index.js';
@@ -126,6 +127,7 @@ const allCommands: Command[] = [
     linkPanelAliasCommand,
     createAccountCommand,
     askCommand,
+    aiKnowledgeCommand,
     summonCommand,
     economyCommand,
     prefixCommand,

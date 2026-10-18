@@ -28,6 +28,8 @@ import { countingService } from '../services/countingService.js';
 import { gtnService } from '../services/gtnService.js';
 import { unscrambleService } from '../services/unscrambleService.js';
 import { aiConversationMemory } from '../services/aiConversationMemory.js';
+import { victusAiConfigured } from '../services/victusAiCompletion.js';
+import { getAiMemory, recordAiTurn } from '../services/victusAiContext.js';
 const SETTINGS_TTL_MS = 20_000;
 const MAX_QUEUE_DEPTH = 3;
 const aiChannelCache = new Map();
@@ -98,6 +100,10 @@ async function replyWithAi(message, prompt, publicReply, fallbackMessage) {
                 content: formatAiMessage(content),
                 allowedMentions: { repliedUser: false },
             });
+            const actionSession = aiConversationMemory.getSessionId(message.channelId, message.author.id, message.channel.type === ChannelType.DM, message.channel.isThread());
+            const actionScope = publicReply ? 'public' : 'private';
+            void recordAiTurn(message.author.id, actionSession, actionScope, 'user', prompt).catch((error) => logger.warn('Victus AI memory write failed:', error));
+            void recordAiTurn(message.author.id, actionSession, actionScope, 'assistant', content).catch((error) => logger.warn('Victus AI memory write failed:', error));
             return;
         }
         const isDm = message.channel.type === ChannelType.DM;
@@ -119,6 +125,8 @@ async function replyWithAi(message, prompt, publicReply, fallbackMessage) {
             }
         }
         const history = aiConversationMemory.getHistory(sessionId);
+        const scope = publicReply ? 'public' : 'private';
+        const memory = await getAiMemory(message.author.id, sessionId, scope, prompt).catch(() => '');
         const linked = await supabase.getLinkedAccount(message.author.id).catch(() => null);
         const profile = linked ? await supabase.getUserProfile(linked.user_id).catch(() => null) : null;
         const answer = await groqAi.askVictus(effectivePrompt, {
@@ -129,11 +137,15 @@ async function replyWithAi(message, prompt, publicReply, fallbackMessage) {
             publicReply,
             channelName: 'name' in message.channel ? message.channel.name : undefined,
             guildName: message.guild?.name,
+            guildId: message.guildId || config.bot.supportGuildId,
             history,
+            memory,
         });
         // Store conversation turns in memory
         aiConversationMemory.addTurn(sessionId, 'user', prompt);
         aiConversationMemory.addTurn(sessionId, 'assistant', answer);
+        await recordAiTurn(message.author.id, sessionId, scope, 'user', prompt).catch((error) => logger.warn('Victus AI memory write failed:', error));
+        await recordAiTurn(message.author.id, sessionId, scope, 'assistant', answer).catch((error) => logger.warn('Victus AI memory write failed:', error));
         await message.reply({
             content: formatAiMessage(answer),
             allowedMentions: { repliedUser: false },
@@ -211,6 +223,15 @@ export const messageCreateEvent = {
             });
             if (moderated)
                 return;
+            // Ticket replies must not wait for counting, games, AFK, prefix commands,
+            // XP, or staff AI handlers. Those paths can each do database/network IO.
+            // Keep prefixed commands on the normal path (e.g. !translate).
+            if (/^ticket-\d+$/i.test(message.channel.name) &&
+                !/^[!/]/.test(message.content.trim())) {
+                const ticketHandled = await handleDiscordTicketMessage(message);
+                if (ticketHandled)
+                    return;
+            }
             // Viral Expansion: Record message for chat velocity, airdrops, wild mobs & Guild Battle Pass XP
             viralExpansionService.recordChatMessage(message).catch(() => { });
             // Counting Game: Process message if in active counting channel
@@ -574,7 +595,7 @@ export const messageCreateEvent = {
         const ticketHandled = await handleDiscordTicketMessage(message);
         if (ticketHandled && !summoned)
             return;
-        if (!groqAi.isEnabled())
+        if (!victusAiConfigured())
             return;
         if (message.channel.type === ChannelType.DM) {
             const prompt = buildPromptFromMessage(message);

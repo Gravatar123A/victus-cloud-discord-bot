@@ -2548,16 +2548,16 @@ class SupabaseService {
         author_is_staff: boolean;
         content: string;
         attachments?: string[];
-    }): Promise<boolean> {
-        const { error } = await this.client
+    }): Promise<string | null> {
+        const { data, error } = await this.client
             .from('ticket_messages')
-            .insert(message);
+            .insert(message).select('id').single();
 
         if (error) {
             logger.error('Failed to log ticket message:', error);
-            return false;
+            return null;
         }
-        return true;
+        return String(data.id);
     }
 
     /**
