@@ -2,16 +2,15 @@ import { MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { verifyStaffOrAdmin } from '../utils/staffAuth.js';
 import { addStaffKnowledge, removeStaffKnowledge } from '../services/victusAiContext.js';
 import { supabase } from '../services/supabase.js';
+import { structureStaffKnowledge } from '../services/staffKnowledge.js';
 export const aiKnowledgeCommand = {
     data: new SlashCommandBuilder()
         .setName('aiknowledge')
         .setDescription('Manage private Victus AI guidance (official staff only)')
         .setDMPermission(false)
-        .addSubcommand((sub) => sub.setName('add').setDescription('Teach Victus AI verified guidance')
-        .addStringOption((opt) => opt.setName('topic').setDescription('Searchable topic or question')
-        .setRequired(true).setMaxLength(160))
-        .addStringOption((opt) => opt.setName('guidance').setDescription('Verified answer or procedure')
-        .setRequired(true).setMaxLength(1400)))
+        .addSubcommand((sub) => sub.setName('add').setDescription('Teach Victus AI in your own words')
+        .addStringOption((opt) => opt.setName('note').setDescription('Write the fact or procedure in your own words')
+        .setRequired(true).setMaxLength(2000)))
         .addSubcommand((sub) => sub.setName('list').setDescription('List recent staff-added guidance'))
         .addSubcommand((sub) => sub.setName('remove').setDescription('Remove staff-added guidance by ID')
         .addStringOption((opt) => opt.setName('id').setDescription('Knowledge entry ID')
@@ -25,14 +24,10 @@ export const aiKnowledgeCommand = {
         const action = interaction.options.getSubcommand();
         try {
             if (action === 'add') {
-                const topic = interaction.options.getString('topic', true).trim();
-                const guidance = interaction.options.getString('guidance', true).trim();
-                if (topic.length < 4 || guidance.length < 20) {
-                    await interaction.editReply('Use a topic of at least 4 characters and guidance of at least 20 characters.');
-                    return;
-                }
-                const id = await addStaffKnowledge(interaction.guildId, interaction.user.id, topic, guidance);
-                await interaction.editReply(`Saved private Victus AI guidance. ID: \`${id}\``);
+                const note = interaction.options.getString('note', true);
+                const entry = await structureStaffKnowledge(note);
+                const id = await addStaffKnowledge(interaction.guildId, interaction.user.id, entry);
+                await interaction.editReply(`Saved private Victus AI guidance under **${entry.title}**.\n**What AI understood:** ${entry.answer}\nID: \`${id}\``);
             }
             else if (action === 'remove') {
                 const id = interaction.options.getString('id', true).trim();
