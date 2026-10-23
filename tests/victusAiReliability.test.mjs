@@ -1,11 +1,40 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { completeVictusAi, VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL } from '../dist/services/victusAiCompletion.js';
+import { normalizeVictusLinks } from '../dist/services/victusLinks.js';
 import { hasReadableTicketAttachment, summarizeTicketLog, ticketAiQueryWithAttachments } from '../dist/services/ticketAiAttachments.js';
 import { shouldAutoReplyToTicketMessage } from '../dist/services/discordTicketMessages.js';
 
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.OPENROUTER_API_KEY;
+
+test('Victus URLs use verified domains and canonical destinations', () => {
+    assert.equal(normalizeVictusLinks('Visit victorcloud.com/free.'), 'Visit https://victuscloud.com/free.');
+    assert.equal(normalizeVictusLinks('[Billing](https://billing.victorcloud.com)'), '[Billing](https://billing.victuscloud.com)');
+    assert.equal(normalizeVictusLinks('https://victorcloud.com/knowledgebase'), 'https://victuscloud.com/documentation');
+    assert.equal(normalizeVictusLinks('https://support.victorcloud.com/tickets'), 'https://victuscloud.com/support/tickets');
+    assert.equal(normalizeVictusLinks('https://victuscloud.com.evil.com/free'), 'https://victuscloud.com');
+    assert.equal(normalizeVictusLinks('https://example.org/docs'), 'https://example.org/docs');
+    assert.equal(normalizeVictusLinks('https://example.org/?search=victorcloud.com'), 'https://example.org/?search=victorcloud.com');
+    assert.equal(normalizeVictusLinks('support@victuscloud.com'), 'support@victuscloud.com');
+    assert.equal(normalizeVictusLinks('https://victuscloud.com@evil.com'), 'https://victuscloud.com');
+    assert.equal(normalizeVictusLinks('https://victuscloud.com/documentation/example'), 'https://victuscloud.com/documentation/example');
+});
+
+test('model replies correct a hallucinated Victus domain before delivery', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-only-key';
+    globalThis.fetch = async () => new Response(JSON.stringify({
+        choices: [{ message: { content: 'Open https://victorcloud.com/support/tickets for staff help.' } }],
+    }), { status: 200 });
+    try {
+        assert.equal(await completeVictusAi('Use accurate links', 'Where are tickets?'),
+            'Open https://victuscloud.com/support/tickets for staff help.');
+    } finally {
+        globalThis.fetch = originalFetch;
+        if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+        else process.env.OPENROUTER_API_KEY = originalKey;
+    }
+});
 
 test('OpenRouter gets a second verified free model and retries one transient 502', async () => {
     process.env.OPENROUTER_API_KEY = 'test-only-key';
