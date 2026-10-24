@@ -3,6 +3,14 @@ import test from 'node:test';
 import { getAiMemory, mayLearnFromTicket, sanitizeAiText } from '../dist/services/victusAiContext.js';
 import { completeVictusAi, VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL } from '../dist/services/victusAiCompletion.js';
 import { supabase } from '../dist/services/supabase.js';
+import { formatAiMessage } from '../dist/utils/aiMessages.js';
+import { normalizeAiMarkdown } from '../dist/utils/aiMarkdown.js';
+
+test('model Markdown escapes are cleaned for Discord while code remains literal', () => {
+    assert.equal(formatAiMessage(String.raw`\*\*Ready\*\* to help`), '**Ready** to help');
+    assert.equal(normalizeAiMarkdown(String.raw`Use \*\*Start\*\* then ` + '`\\*\\*literal\\*\\*`'),
+        'Use **Start** then `\\*\\*literal\\*\\*`');
+});
 
 test('ticket learning ignores sensitive categories and account-specific instructions', () => {
     assert.equal(mayLearnFromTicket('Billing', 'Why is my invoice wrong?', 'We will investigate this invoice and refund it.'), false);
@@ -27,11 +35,11 @@ test('customer AI completion prioritizes the ticket Nemotron model', async () =>
     let requested;
     globalThis.fetch = async (_url, options) => {
         requested = JSON.parse(options.body);
-        return new Response(JSON.stringify({ choices: [{ message: { content: 'A concise answer' } }] }),
+        return new Response(JSON.stringify({ choices: [{ message: { content: String.raw`\*\*A concise answer\*\*` } }] }),
             { status: 200, headers: { 'Content-Type': 'application/json' } });
     };
     try {
-        assert.equal(await completeVictusAi('Rules', 'Question'), 'A concise answer');
+        assert.equal(await completeVictusAi('Rules', 'Question'), '**A concise answer**');
         assert.deepEqual(requested.models, [VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL]);
         assert.equal(requested.models[0], 'nvidia/nemotron-3.5-super-vl:free');
     } finally {

@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
 import { normalizeVictusLinks } from './victusLinks.js';
+import { normalizeAiMarkdown } from '../utils/aiMarkdown.js';
 /** The one primary model used for customer-facing Victus AI replies. */
 export const VICTUS_AI_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
 export const VICTUS_AI_FALLBACK_MODEL = 'nvidia/nemotron-3.5-lightning:free';
@@ -117,5 +118,5 @@ export async function completeVictusAi(system, prompt, maxTokens = 700) {
 function clean(answer) {
     if (!answer)
         throw new Error('Victus AI returned an empty answer');
-    return normalizeVictusLinks(answer.slice(0, 1800).replace(/@everyone|@here/g, '[mention]')).slice(0, 1900);
+    return normalizeAiMarkdown(normalizeVictusLinks(answer.slice(0, 1800).replace(/@everyone|@here/g, '[mention]'))).slice(0, 1900);
 }
