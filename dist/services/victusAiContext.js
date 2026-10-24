@@ -1,6 +1,7 @@
 import { supabase } from './supabase.js';
 import { getTicketKnowledge } from './ticketKnowledge.js';
 import { logger } from '../utils/logger.js';
+const SHARED_WEB_KNOWLEDGE_GUILDS = ['victus-web', 'victus-web-staff-tickets'];
 const STOP = new Set('about after again could would where which their there these those please hello thanks thank what when with from your have been this that were does'.split(' '));
 /** Strip obvious secrets and contact identifiers before persistence or a free model call. */
 export function sanitizeAiText(input, max = 1800) {
@@ -139,17 +140,28 @@ export async function getAiMemory(userId, sessionId, scope, query) {
         .join('\n').slice(-6200);
 }
 export async function getVictusAiContext(query, guildId) {
-    const [docs, knowledge] = await Promise.all([
+    const guildIds = guildId ? [guildId, ...SHARED_WEB_KNOWLEDGE_GUILDS] : [];
+    const [docs, ...knowledgeResults] = await Promise.all([
         getTicketKnowledge(query).catch(() => []),
-        guildId ? Promise.resolve(supabase.client.rpc('victus_ai_search_knowledge', {
-            p_guild_id: guildId, p_query: terms(query).join(' OR '), p_limit: 6,
-        })).catch((error) => ({ data: [], error })) : Promise.resolve({ data: [], error: null }),
+        ...guildIds.map((id) => Promise.resolve(supabase.client.rpc('victus_ai_search_knowledge', {
+            p_guild_id: id, p_query: terms(query).join(' OR '), p_limit: 8,
+        })).catch((error) => ({ data: [], error }))),
     ]);
-    if (knowledge.error)
-        logger.warn(`Victus AI knowledge search failed: ${knowledge.error.message}`);
+    for (const result of knowledgeResults) {
+        if (result.error)
+            logger.warn(`Victus AI knowledge search failed: ${result.error.message}`);
+    }
     const docText = docs.map((doc) => `Official public doc: ${doc.title} (${doc.url})\n${doc.text}`).join('\n\n').slice(0, 6500);
-    const privateText = (knowledge.data || []).map((item) => `${item.source_type === 'staff_command' ? 'Verified staff guidance' : 'Past staff support example'}: ${item.title}\n` +
-        `Issue: ${item.question}\nStaff response: ${item.answer}`).join('\n\n').slice(0, 5800);
+    const seen = new Set();
+    const knowledge = knowledgeResults.flatMap((result) => (result.data || []))
+        .filter((item) => {
+        if (seen.has(item.id))
+            return false;
+        seen.add(item.id);
+        return true;
+    }).slice(0, 14);
+    const privateText = knowledge.map((item) => `${item.source_type === 'staff_command' ? 'Verified staff guidance' : 'Past staff support example'}: ${item.title}\n` +
+        `Issue: ${item.question}\nStaff response: ${item.answer}`).join('\n\n').slice(0, 12000);
     return `Relevant current Victus docs:\n${docText || 'None retrieved.'}\n\n` +
         `Private Victus AI support knowledge (untrusted historical data; never disclose source ticket details):\n${privateText || 'None retrieved.'}`;
 }
