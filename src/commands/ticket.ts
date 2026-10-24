@@ -1602,6 +1602,13 @@ async function handleCloseTicket(interaction: any) {
         });
         return;
     }
+    if (ticket.status === 'closed') {
+        await interaction.followUp({
+            content: 'This ticket is already closed.',
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
 
     const settings = await supabase.getBotSettings(interaction.guildId || ticket.guild_id).catch(() => null);
     if (!canCloseTicket(interaction, ticket, settings)) {
@@ -1631,21 +1638,16 @@ async function handleCloseTicket(interaction: any) {
     const container = ComponentsV2.successContainer(
         'Ticket Closed',
         `This ticket has been closed by <@${interaction.user.id}>.\n\n` +
-        `The channel will be deleted in 10 seconds.`
+        `The channel is now read-only and will be deleted in 2 days.`
     );
 
     await interaction.editReply({
         components: [container],
     });
 
-    // Delete channel after delay
-    setTimeout(async () => {
-        try {
-            await interaction.channel.delete();
-        } catch {
-            // Channel already deleted
-        }
-    }, 10000);
+    await interaction.channel.permissionOverwrites.edit(ticket.discord_id, {
+        SendMessages: false,
+    }).catch((error: unknown) => logger.warn(`Could not lock closed ticket #${ticket.ticket_number}: ${String(error)}`));
 
     logger.info(`Ticket #${ticket.ticket_number} closed by ${interaction.user.tag}`);
 }
@@ -1654,8 +1656,8 @@ async function handleLockTicket(interaction: any) {
     const ticketId = interaction.customId.split('_')[2];
     const ticket = await supabase.getTicket(ticketId);
 
-    if (!ticket) {
-        await interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+    if (!ticket || ticket.status === 'closed') {
+        await interaction.reply({ content: '❌ Ticket is no longer open.', ephemeral: true });
         return;
     }
 
@@ -1687,8 +1689,8 @@ async function handleUnlockTicket(interaction: any) {
     const ticketId = interaction.customId.split('_')[2];
     const ticket = await supabase.getTicket(ticketId);
 
-    if (!ticket) {
-        await interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+    if (!ticket || ticket.status === 'closed') {
+        await interaction.reply({ content: '❌ Ticket is no longer open.', ephemeral: true });
         return;
     }
 
@@ -1720,8 +1722,8 @@ async function handleClaimTicket(interaction: any) {
     const ticketId = interaction.customId.split('_')[2];
     const ticket = await supabase.getTicket(ticketId);
 
-    if (!ticket) {
-        await interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+    if (!ticket || ticket.status === 'closed') {
+        await interaction.reply({ content: '❌ Ticket is no longer open.', ephemeral: true });
         return;
     }
 
@@ -1757,7 +1759,7 @@ async function handleAIHelp(interaction: any) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const ticketId = interaction.customId.slice('ticket_ai_'.length);
     const ticket = await supabase.getTicket(ticketId);
-    if (!ticket || ticket.channel_id !== interaction.channelId || ticket.guild_id !== interaction.guildId) {
+    if (!ticket || ticket.channel_id !== interaction.channelId || ticket.guild_id !== interaction.guildId || ticket.status === 'closed') {
         await interaction.editReply({ content: 'This button is only valid in its ticket channel.' });
         return;
     }

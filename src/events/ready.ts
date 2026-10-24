@@ -28,6 +28,7 @@ import { hubBridgeService } from '../services/hubBridgeService.js';
 import { gtnService } from '../services/gtnService.js';
 import { unscrambleService } from '../services/unscrambleService.js';
 import { voiceAssistant } from '../services/voiceAssistant.js';
+import { startTicketRetention } from '../services/ticketRetention.js';
 
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
@@ -276,6 +277,7 @@ export const readyEvent: Event = {
         // some Pterodactyl images do not ship the native canvas binding. The music
         // renderer already falls back to the text panel when a card is requested.
         logger.info(`Serving ${client.guilds.cache.size} guilds`);
+        startTicketRetention(client);
 
         const ticketGuildId = config.bot.supportGuildId || config.discord.guildId;
         if (ticketGuildId) {
