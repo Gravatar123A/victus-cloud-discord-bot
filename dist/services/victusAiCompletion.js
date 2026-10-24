@@ -32,23 +32,6 @@ export function victusAiConfigured() {
 }
 export async function completeVictusAi(system, prompt, maxTokens = 700) {
     const messages = [{ role: 'system', content: system }, { role: 'user', content: prompt }];
-    const groqKey = (process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS || '').split(/[\r\n,]+/)[0].trim();
-    const requestGroq = async () => {
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'openai/gpt-oss-120b', messages,
-                temperature: 0.25, max_tokens: Math.max(700, maxTokens) }),
-            signal: AbortSignal.timeout(30_000),
-        });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok)
-            throw new Error(`Groq AI failed (${response.status}): ${String(payload?.error?.message || response.statusText).slice(0, 150)}`);
-        const answer = clean(String(payload?.choices?.[0]?.message?.content || '').trim());
-        if (!answer)
-            throw new Error('Groq AI returned an empty answer');
-        return answer;
-    };
     let openRouterError;
     const request = async (key, models, timeoutMs) => {
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -103,14 +86,6 @@ export async function completeVictusAi(system, prompt, maxTokens = 700) {
                     openRouterError = fallbackError;
                 }
             }
-        }
-    }
-    if (groqKey) {
-        try {
-            return await requestGroq();
-        }
-        catch (groqError) {
-            throw new Error(`Victus AI providers unavailable: ${openRouterError instanceof Error ? openRouterError.message : String(openRouterError || 'OpenRouter quota cooling down')}; ${groqError instanceof Error ? groqError.message : String(groqError)}`);
         }
     }
     throw openRouterError || new Error('Victus AI has no available provider key.');

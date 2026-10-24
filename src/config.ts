@@ -85,7 +85,7 @@ if (openRouterKeys.length > 0) {
         apiKey: openRouterKeys[0],
         apiKeys: openRouterKeys,
         baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-        model: process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-super-vl:free',
+        model: 'nvidia/nemotron-3.5-super-vl:free',
         maxTokens: parseInt(process.env.OPENROUTER_MAX_TOKENS || '1000', 10),
         temperature: Number(process.env.AI_TEMPERATURE || '0.4'),
     });
@@ -127,11 +127,14 @@ if (aiProviders.length === 0 && (fallbackEnvKeys.length > 0 || azureKeys.length 
     });
 }
 
-const primaryAiProvider = aiProviders[0] || null;
+// Customer-facing bot AI must never route to a paid OpenRouter model or to
+// another paid provider when the free pool is exhausted.
+const freeAiProviders = aiProviders.filter(p => p.name === 'openrouter' && p.model.endsWith(':free'));
+const primaryAiProvider = freeAiProviders[0] || null;
 const primaryAiKeys = primaryAiProvider ? primaryAiProvider.apiKeys : [];
 const primaryAiBaseUrl = primaryAiProvider ? primaryAiProvider.baseUrl : '';
-const fallbackAiKeys = aiProviders.slice(1).flatMap(p => p.apiKeys);
-const fallbackAiBaseUrl = aiProviders[1]?.baseUrl || '';
+const fallbackAiKeys = freeAiProviders.slice(1).flatMap(p => p.apiKeys);
+const fallbackAiBaseUrl = freeAiProviders[1]?.baseUrl || '';
 
 // Validate required environment variables
 const requiredEnvVars = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY'];
@@ -192,7 +195,7 @@ export const config = {
     // GROQ_* names still work. The API KEY is a secret and is NEVER committed — set
     // AI_API_KEY (or GROQ_API_KEY) in the bot's .env on the host.
     ai: {
-        providers: aiProviders,
+        providers: freeAiProviders,
         primaryProvider: primaryAiProvider,
         apiKey: primaryAiProvider?.apiKey || '',
         apiKeys: primaryAiKeys,
@@ -200,11 +203,11 @@ export const config = {
         model: primaryAiProvider?.model || 'openai/gpt-oss-120b',
         fallbackApiKeys: fallbackAiKeys,
         fallbackBaseUrl: fallbackAiBaseUrl,
-        fallbackModel: aiProviders[1]?.model || '',
+        fallbackModel: freeAiProviders[1]?.model || '',
         temperature: primaryAiProvider?.temperature ?? 0.35,
         maxTokens: primaryAiProvider?.maxTokens ?? 700,
         systemPrompt: process.env.VICTUS_AI_SYSTEM_PROMPT || '',
-        enabled: aiProviders.length > 0,
+        enabled: freeAiProviders.length > 0,
         // Keyless web access (DuckDuckGo HTML scrape) exposed to the AI as tools.
         // Defaults to true unless AI_WEB_SEARCH is explicitly set to "false".
         webSearchEnabled: process.env.AI_WEB_SEARCH !== 'false',

@@ -149,7 +149,7 @@ test('attached text logs are read as redacted excerpts, including a later cause'
     }]]) }), false);
 });
 
-test('OpenRouter daily quota falls back to Groq and cools down before retrying OpenRouter', async () => {
+test('OpenRouter daily quota stops without routing support AI to a paid provider', async () => {
     process.env.OPENROUTER_API_KEY = 'test-groq-primary';
     const originalClient = supabase.client;
     supabase.client = { from() { return { select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: null, error: null }) }; } };
@@ -163,10 +163,10 @@ test('OpenRouter daily quota falls back to Groq and cools down before retrying O
             : new Response(JSON.stringify({ choices: [{ message: { content: 'Groq answer' } }] }), { status: 200 });
     };
     try {
-        assert.equal(await completeVictusAi('Be safe', 'Help'), 'Groq answer');
-        assert.equal(await completeVictusAi('Be safe', 'Help again'), 'Groq answer');
+        await assert.rejects(completeVictusAi('Be safe', 'Help'), /free-models-per-day/);
+        await assert.rejects(completeVictusAi('Be safe', 'Help again'));
         assert.equal(urls.filter((url) => url.includes('openrouter.ai')).length, 1);
-        assert.equal(urls.filter((url) => url.includes('groq.com')).length, 2);
+        assert.equal(urls.filter((url) => url.includes('groq.com')).length, 0);
     } finally {
         supabase.client = originalClient;
         globalThis.fetch = originalFetch;
