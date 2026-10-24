@@ -3,27 +3,30 @@ import { normalizeVictusLinks } from './victusLinks.js';
 /** The one primary model used for customer-facing Victus AI replies. */
 export const VICTUS_AI_MODEL = 'nvidia/nemotron-3.5-super-vl:free';
 export const VICTUS_AI_FALLBACK_MODEL = 'nvidia/nemotron-3.5-lightning:free';
-let cachedKey = '';
-let keyExpiresAt = 0;
-let openRouterQuotaUntil = 0;
-async function getVictusAiKey() {
-    const envKey = (process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS || '')
+const cachedKeys = new Map();
+const quotaUntil = new Map();
+async function getVictusAiKey(fallback = false) {
+    const envKey = (fallback
+        ? process.env.OPENROUTER_FALLBACK_API_KEY || ''
+        : process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS || '')
         .split(/[\r\n,]+/)[0].trim();
     if (envKey)
         return envKey;
-    if (cachedKey && keyExpiresAt > Date.now())
-        return cachedKey;
+    const configKey = fallback ? 'openrouter_fallback_api_key' : 'openrouter_api_key';
+    const cached = cachedKeys.get(configKey);
+    if (cached && cached.expiresAt > Date.now())
+        return cached.value;
     const { data, error } = await supabase.client.from('private_config').select('value')
-        .eq('key', 'openrouter_api_key').maybeSingle();
+        .eq('key', configKey).maybeSingle();
     if (error || typeof data?.value !== 'string' || !data.value.trim()) {
         throw new Error(`OpenRouter key is unavailable${error ? `: ${error.message}` : ''}`);
     }
-    cachedKey = data.value.trim();
-    keyExpiresAt = Date.now() + 5 * 60_000;
-    return cachedKey;
+    const value = data.value.trim();
+    cachedKeys.set(configKey, { value, expiresAt: Date.now() + 5 * 60_000 });
+    return value;
 }
 export function victusAiConfigured() {
-    return Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS
+    return Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_FALLBACK_API_KEY
         || process.env.SUPABASE_SERVICE_KEY || process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS);
 }
 export async function completeVictusAi(system, prompt, maxTokens = 700) {
@@ -45,17 +48,8 @@ export async function completeVictusAi(system, prompt, maxTokens = 700) {
             throw new Error('Groq AI returned an empty answer');
         return answer;
     };
-    let key = '';
     let openRouterError;
-    if (Date.now() >= openRouterQuotaUntil) {
-        try {
-            key = await getVictusAiKey();
-        }
-        catch (error) {
-            openRouterError = error;
-        }
-    }
-    const request = async (models, timeoutMs) => {
+    const request = async (key, models, timeoutMs) => {
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -79,20 +73,30 @@ export async function completeVictusAi(system, prompt, maxTokens = 700) {
             throw new Error('Victus AI returned an empty answer');
         return answer;
     };
-    if (key) {
+    for (const fallback of [false, true]) {
+        let key = '';
         try {
-            return await request([VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL], 45_000);
+            key = await getVictusAiKey(fallback);
+        }
+        catch (error) {
+            openRouterError ||= error;
+            continue;
+        }
+        if ((quotaUntil.get(key) || 0) > Date.now())
+            continue;
+        try {
+            return await request(key, [VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL], 45_000);
         }
         catch (error) {
             openRouterError = error;
             const status = error.status;
-            if (status === 429 && groqKey)
-                openRouterQuotaUntil = Date.now() + 30 * 60_000;
-            // The OpenRouter model fallback helps with transient provider errors;
-            // a quota error needs a different provider, not another free request.
+            if (status === 429 || status === 402) {
+                quotaUntil.set(key, Date.now() + 30 * 60_000);
+                continue;
+            }
             if (status === undefined || status === 408 || status >= 500) {
                 try {
-                    return await request([VICTUS_AI_FALLBACK_MODEL], 65_000);
+                    return await request(key, [VICTUS_AI_FALLBACK_MODEL], 65_000);
                 }
                 catch (fallbackError) {
                     openRouterError = fallbackError;

@@ -4,9 +4,11 @@ import { completeVictusAi, VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL } from '../
 import { normalizeVictusLinks } from '../dist/services/victusLinks.js';
 import { hasReadableTicketAttachment, summarizeTicketLog, ticketAiQueryWithAttachments } from '../dist/services/ticketAiAttachments.js';
 import { shouldAutoReplyToTicketMessage } from '../dist/services/discordTicketMessages.js';
+import { supabase } from '../dist/services/supabase.js';
 
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.OPENROUTER_API_KEY;
+const originalFallbackKey = process.env.OPENROUTER_FALLBACK_API_KEY;
 
 test('Victus URLs use verified domains and canonical destinations', () => {
     assert.equal(normalizeVictusLinks('Visit victorcloud.com/free.'), 'Visit https://victuscloud.com/free.');
@@ -58,7 +60,9 @@ test('OpenRouter gets a second verified free model and retries one transient 502
 });
 
 test('quota errors do not spend another free request', async () => {
-    process.env.OPENROUTER_API_KEY = 'test-only-key';
+    process.env.OPENROUTER_API_KEY = 'test-quota-key';
+    const originalClient = supabase.client;
+    supabase.client = { from() { return { select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: null, error: null }) }; } };
     const originalGroqKey = process.env.GROQ_API_KEY;
     delete process.env.GROQ_API_KEY;
     let calls = 0;
@@ -67,11 +71,34 @@ test('quota errors do not spend another free request', async () => {
         await assert.rejects(completeVictusAi('Be safe', 'Help'), /429/);
         assert.equal(calls, 1);
     } finally {
+        supabase.client = originalClient;
         globalThis.fetch = originalFetch;
         if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
         else process.env.OPENROUTER_API_KEY = originalKey;
         if (originalGroqKey === undefined) delete process.env.GROQ_API_KEY;
         else process.env.GROQ_API_KEY = originalGroqKey;
+    }
+});
+
+test('quota on the primary account uses the second OpenRouter account', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-primary-rotation';
+    process.env.OPENROUTER_FALLBACK_API_KEY = 'test-secondary-rotation';
+    const auth = [];
+    globalThis.fetch = async (_url, options) => {
+        auth.push(options.headers.Authorization);
+        return auth.length === 1
+            ? new Response(JSON.stringify({ error: { message: 'limit reached' } }), { status: 429 })
+            : new Response(JSON.stringify({ choices: [{ message: { content: 'Fallback account answer' } }] }), { status: 200 });
+    };
+    try {
+        assert.equal(await completeVictusAi('Be safe', 'Help'), 'Fallback account answer');
+        assert.deepEqual(auth, ['Bearer test-primary-rotation', 'Bearer test-secondary-rotation']);
+    } finally {
+        globalThis.fetch = originalFetch;
+        if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+        else process.env.OPENROUTER_API_KEY = originalKey;
+        if (originalFallbackKey === undefined) delete process.env.OPENROUTER_FALLBACK_API_KEY;
+        else process.env.OPENROUTER_FALLBACK_API_KEY = originalFallbackKey;
     }
 });
 
@@ -123,7 +150,9 @@ test('attached text logs are read as redacted excerpts, including a later cause'
 });
 
 test('OpenRouter daily quota falls back to Groq and cools down before retrying OpenRouter', async () => {
-    process.env.OPENROUTER_API_KEY = 'test-only-key';
+    process.env.OPENROUTER_API_KEY = 'test-groq-primary';
+    const originalClient = supabase.client;
+    supabase.client = { from() { return { select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: null, error: null }) }; } };
     const originalGroqKey = process.env.GROQ_API_KEY;
     process.env.GROQ_API_KEY = 'test-groq-key';
     const urls = [];
@@ -139,6 +168,7 @@ test('OpenRouter daily quota falls back to Groq and cools down before retrying O
         assert.equal(urls.filter((url) => url.includes('openrouter.ai')).length, 1);
         assert.equal(urls.filter((url) => url.includes('groq.com')).length, 2);
     } finally {
+        supabase.client = originalClient;
         globalThis.fetch = originalFetch;
         if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
         else process.env.OPENROUTER_API_KEY = originalKey;
