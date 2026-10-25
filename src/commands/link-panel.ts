@@ -83,8 +83,18 @@ function watchForCompletedLink(interaction: ButtonInteraction) {
 }
 
 async function createPersonalLinkReply(interaction: ButtonInteraction) {
-    const existingLink = await supabase.getLinkedAccount(interaction.user.id);
-    if (existingLink) {
+    const lookup = await supabase.lookupLinkedAccount(interaction.user.id);
+    if (lookup.status === 'unavailable') {
+        await interaction.reply({
+            components: [ComponentsV2.errorContainer(
+                'Account Service Unavailable',
+                'We cannot check account links right now. Your existing link has not been removed. Please try again after service recovers.'
+            )],
+            flags: ComponentsV2.IS_COMPONENTS_V2 | MessageFlags.Ephemeral,
+        });
+        return;
+    }
+    if (lookup.status === 'linked') {
         const roleSuccess = await assignLinkedRole(interaction.client, interaction.user.id);
         await interaction.reply({
             components: [

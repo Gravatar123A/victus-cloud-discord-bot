@@ -27,8 +27,15 @@ export const linkCommand = {
         }
         await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
         // Check if already linked
-        const existingLink = await supabase.getLinkedAccount(interaction.user.id);
-        if (existingLink) {
+        const lookup = await supabase.lookupLinkedAccount(interaction.user.id);
+        if (lookup.status === 'unavailable') {
+            await interaction.editReply({
+                components: [ComponentsV2.errorContainer('Account Service Unavailable', 'We cannot check account links right now. Your existing link has not been removed. Please try again after service recovers.')],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+            return;
+        }
+        if (lookup.status === 'linked') {
             const container = ComponentsV2.infoContainer('Already Linked', 'Your Discord account is already linked to a Victus Cloud account.\n\n' +
                 'If you want to link to a different account, first use `/unlink` to remove the current link.');
             await interaction.editReply({

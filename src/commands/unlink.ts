@@ -25,8 +25,18 @@ export const unlinkCommand: Command = {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
 
         // Check if linked
-        const existingLink = await supabase.getLinkedAccount(interaction.user.id);
-        if (!existingLink) {
+        const lookup = await supabase.lookupLinkedAccount(interaction.user.id);
+        if (lookup.status === 'unavailable') {
+            await interaction.editReply({
+                components: [ComponentsV2.errorContainer(
+                    'Account Service Unavailable',
+                    'We cannot check your link right now. No account has been unlinked. Please try again after service recovers.'
+                )],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+            return;
+        }
+        if (lookup.status === 'unlinked') {
             const container = ComponentsV2.infoContainer(
                 'Not Linked',
                 'Your Discord account is not linked to any Victus Cloud account.\n\n' +

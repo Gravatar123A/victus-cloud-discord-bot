@@ -319,29 +319,36 @@ class SupabaseService {
      * Get linked account by Discord ID
      */
     async getLinkedAccount(discordId) {
+        const result = await this.lookupLinkedAccount(discordId);
+        return result.status === 'linked' ? result.account : null;
+    }
+    /** Preserve the difference between no link and an unavailable database. */
+    async lookupLinkedAccount(discordId) {
         try {
             const { data, error } = await this.client
                 .from('discord_linked_accounts')
                 .select('*')
                 .eq('discord_id', discordId)
-                .single();
-            if (error && error.code !== 'PGRST116') {
+                .maybeSingle();
+            if (error) {
                 if (isCertError(error)) {
-                    logger.warn('Supabase TLS cert error on getLinkedAccount - check ca-certificates. Returning null to avoid Command Error.');
+                    logger.warn('Supabase TLS cert error on linked-account lookup - check ca-certificates.');
                 }
                 else {
                     logger.error('Failed to get linked account:', error);
                 }
+                return { status: 'unavailable' };
             }
-            return data;
+            return data ? { status: 'linked', account: data } : { status: 'unlinked' };
         }
         catch (err) {
             if (isCertError(err)) {
-                logger.warn('Supabase getLinkedAccount cert failure - returning null (secure fallback).');
-                return null;
+                logger.warn('Supabase linked-account lookup failed TLS verification.');
             }
-            logger.error('Failed to get linked account (exception):', err);
-            return null;
+            else {
+                logger.error('Failed to get linked account (exception):', err);
+            }
+            return { status: 'unavailable' };
         }
     }
     /**
@@ -363,10 +370,14 @@ class SupabaseService {
      */
     async createLinkToken(discordId, discordUsername, token, expiresAt) {
         // First, invalidate any existing tokens for this Discord ID
-        await this.client
+        const { error: deleteError } = await this.client
             .from('discord_link_tokens')
             .delete()
             .eq('discord_id', discordId);
+        if (deleteError) {
+            logger.error('Failed to replace link token:', deleteError);
+            return null;
+        }
         const { data, error } = await this.client
             .from('discord_link_tokens')
             .insert({
