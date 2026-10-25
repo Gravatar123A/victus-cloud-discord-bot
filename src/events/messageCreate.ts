@@ -3,6 +3,7 @@ import type { Message } from 'discord.js';
 import { config } from '../config.js';
 import { supabase } from '../services/supabase.js';
 import { groqAi } from '../services/groqAi.js';
+import { loadAiImages } from '../services/aiImages.js';
 import { victusAiActions } from '../services/victusAiActions.js';
 import type { Event } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -92,7 +93,8 @@ async function replyWithAi(message: Message, prompt: string, publicReply: boolea
             await message.channel.sendTyping().catch(() => undefined);
         }
 
-        const actionResult = await victusAiActions.tryHandle(prompt, {
+        const images = await loadAiImages(message.attachments.values());
+        const actionResult = images.length ? { handled: false as const } : await victusAiActions.tryHandle(prompt, {
             discordId: message.author.id,
             publicReply,
         });
@@ -159,6 +161,7 @@ async function replyWithAi(message: Message, prompt: string, publicReply: boolea
             guildId: message.guildId || config.bot.supportGuildId,
             history,
             memory,
+            images,
         });
 
         // Store conversation turns in memory
@@ -176,8 +179,9 @@ async function replyWithAi(message: Message, prompt: string, publicReply: boolea
     } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         logger.warn(`${publicReply ? 'AI channel response' : 'AI DM response'} unavailable: ${reason}`);
+        const imageError = /^(Use a PNG|Each AI image|The image must|Could not download an attached image|Could not read an attached image|An attached image)/.test(reason);
         await message.reply({
-            content: fallbackMessage,
+            content: imageError ? reason : fallbackMessage,
             allowedMentions: { repliedUser: false },
         }).catch(() => undefined);
     }
