@@ -2,7 +2,7 @@ import { PermissionFlagsBits, type Message } from 'discord.js';
 import { supabase } from './supabase.js';
 import { ticketTranslationService } from './ticketTranslationService.js';
 import { logger } from '../utils/logger.js';
-import { enqueueTicketAi } from './discordTicketAi.js';
+import { enqueueTicketAi, pauseTicketAiLocally } from './discordTicketAi.js';
 import { hasReadableTicketAttachment, ticketAiQueryWithAttachments } from './ticketAiAttachments.js';
 import { hasAiImageAttachment, loadAiImages } from './aiImages.js';
 import { recordAiTurn, recordStaffTicketHandling } from './victusAiContext.js';
@@ -64,21 +64,40 @@ export async function handleDiscordTicketMessage(message: Message): Promise<bool
     ];
     const isTicketOwner = message.author.id === ticket.discord_id;
     // Staff can open their own support ticket. In that ticket they are the customer.
-    const isStaff = !isTicketOwner && !!message.member && (
-        message.member.permissions?.has?.(PermissionFlagsBits.Administrator) ||
-        message.member.permissions?.has?.(PermissionFlagsBits.ManageChannels) ||
-        staffRoleIds.some((id: string) => message.member?.roles.cache.has(id))
+    const member = isTicketOwner ? message.member : (message.member ?? await message.guild?.members.fetch(message.author.id).catch(() => null));
+    const isStaff = !isTicketOwner && !!member && (
+        member.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+        member.permissions?.has?.(PermissionFlagsBits.ManageChannels) ||
+        staffRoleIds.some((id: string) => member.roles.cache.has(id))
     );
+
+    if (isStaff) {
+        // Stop queued and in-flight AI replies before slower transcript/knowledge writes.
+        // The database state preserves the handoff through bot restarts.
+        pauseTicketAiLocally(ticket.id);
+        const state = await supabase.getDiscordTicketAiState(ticket.id).catch(() => null);
+        if (state?.enabled !== false) {
+            const saved = await supabase.setDiscordTicketAiEnabled(ticket.id, false, message.author.id).catch(() => false);
+            if (saved) {
+                await (message.channel as any).send({
+                    content: '⏸️ Victus AI paused because staff replied. Staff can use `/ticketai resume` when AI help is needed again.',
+                    allowedMentions: { parse: [] },
+                }).catch(() => undefined);
+            } else {
+                logger.error(`Could not persist staff AI handoff for ticket ${ticket.id}; replies remain paused in this bot process`);
+            }
+        }
+    }
 
     const logged = await supabase.logTicketMessage({
         ticket_id: ticket.id,
         author_discord_id: `dc:${message.author.id}`,
-        author_username: message.member?.displayName || message.author.username,
+        author_username: member?.displayName || message.author.username,
         author_is_staff: isStaff,
         content: message.content || '(attachment / no text)',
         attachments: [...message.attachments.values()].map((attachment) => attachment.url),
     });
-    if (!logged) logger.warn(`Ticket transcript write failed for ${ticket.id}; AI was still queued`);
+    if (!logged) logger.warn(`Ticket transcript write failed for ${ticket.id}`);
     if (logged && isTicketOwner && message.content.trim()) {
         void recordAiTurn(message.author.id, `ticket:${ticket.id}`, 'private', 'user', message.content)
             .catch((error) => logger.warn('Victus AI ticket memory write failed:', error));

@@ -27,7 +27,7 @@ import { ComponentsV2 } from '../embeds/componentsV2.js';
 import { requireLinkedAccount, getLinkedAccount } from '../middleware/requireLinked.js';
 import { requireAdmin } from '../middleware/requireLinked.js';
 import { logger } from '../utils/logger.js';
-import { enqueueTicketAi } from '../services/discordTicketAi.js';
+import { enqueueTicketAi, pauseTicketAiLocally } from '../services/discordTicketAi.js';
 import { ticketTranslationService, TOP_10_LANGUAGES } from '../services/ticketTranslationService.js';
 import { customerMayRequestHuman, hasVerifiedPaidAccount, isPremiumSupportCategory } from '../services/premiumSupport.js';
 
@@ -1787,8 +1787,9 @@ async function handleDisableTicketAi(interaction: any) {
         await interaction.editReply({ content: 'Only ticket staff can pause AI in this category.' });
         return;
     }
+    pauseTicketAiLocally(ticket.id);
     if (!await supabase.setDiscordTicketAiEnabled(ticket.id, false, interaction.user.id)) {
-        await interaction.editReply({ content: 'AI could not be paused. Please retry or use `/ticketai off`.' });
+        await interaction.editReply({ content: 'AI could not be paused. Please retry or use `/ticketai pause`.' });
         return;
     }
     await interaction.message.edit({ components: [createTicketControlPanel({ ...ticket, ai_enabled: false } as any, interaction.user)] }).catch(() => undefined);
