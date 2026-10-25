@@ -12,8 +12,15 @@ export const createAccountCommand = {
     cooldown: 30,
     async execute(interaction) {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral | ComponentsV2.IS_COMPONENTS_V2 });
-        const existingLink = await supabase.getLinkedAccount(interaction.user.id);
-        if (existingLink) {
+        const lookup = await supabase.lookupLinkedAccount(interaction.user.id);
+        if (lookup.status === 'unavailable') {
+            await interaction.editReply({
+                components: [ComponentsV2.errorContainer('Account Service Unavailable', 'We cannot check account links right now. Your existing link has not been removed. Please try again after service recovers.')],
+                flags: ComponentsV2.IS_COMPONENTS_V2,
+            });
+            return;
+        }
+        if (lookup.status === 'linked') {
             await interaction.editReply({
                 components: [
                     ComponentsV2.infoContainer('Account Already Connected', 'Your Discord account is already linked to Victus Cloud.\n\nUse `/account` to view your linked profile.'),
