@@ -2,6 +2,7 @@ import { MessageFlags, SlashCommandBuilder } from 'discord.js';
 import type { Command } from '../types/index.js';
 import { supabase } from '../services/supabase.js';
 import { groqAi } from '../services/groqAi.js';
+import { loadAiImages } from '../services/aiImages.js';
 import { victusAiActions } from '../services/victusAiActions.js';
 import { logger } from '../utils/logger.js';
 import { formatAiMessage } from '../utils/aiMessages.js';
@@ -21,6 +22,12 @@ export const askCommand: Command = {
                 .setRequired(true)
                 .setMaxLength(1500)
         )
+        .addAttachmentOption((option) =>
+            option
+                .setName('image')
+                .setDescription('Optional screenshot or image for Victus AI to inspect')
+                .setRequired(false)
+        )
         .addBooleanOption((option) =>
             option
                 .setName('public')
@@ -33,6 +40,7 @@ export const askCommand: Command = {
     async execute(interaction) {
         const question = interaction.options.getString('question', true).trim();
         const publicReply = interaction.options.getBoolean('public') ?? false;
+        const attachment = interaction.options.getAttachment('image');
 
         if (publicReply) {
             await interaction.deferReply();
@@ -48,7 +56,9 @@ export const askCommand: Command = {
         }
 
         try {
-            const actionResult = await victusAiActions.tryHandle(question, {
+            const images = attachment ? await loadAiImages([attachment]) : [];
+            if (attachment && !images.length) throw new Error('Use a PNG, JPG, or WebP image for AI support.');
+            const actionResult = images.length ? { handled: false as const } : await victusAiActions.tryHandle(question, {
                 discordId: interaction.user.id,
                 publicReply,
             });
@@ -100,6 +110,7 @@ export const askCommand: Command = {
                 guildId: interaction.guildId || config.bot.supportGuildId,
                 history,
                 memory,
+                images,
             });
 
             aiConversationMemory.addTurn(sessionId, 'user', question);
@@ -114,8 +125,11 @@ export const askCommand: Command = {
             });
         } catch (error) {
             logger.error('Ask command failed:', error);
+            const reason = error instanceof Error ? error.message : '';
             await interaction.editReply({
-                content: 'AI chat failed right now. Check the API key/model settings or try again in a moment.',
+                content: /^(Use a PNG|Each AI image|The image must|Could not download an attached image|Could not read an attached image|An attached image)/.test(reason)
+                    ? reason
+                    : 'AI chat failed right now. Please try again or open a support ticket.',
             });
         }
     },

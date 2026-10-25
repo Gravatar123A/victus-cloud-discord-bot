@@ -127,6 +127,7 @@ type AiUserContext = {
     guildId?: string;
     memory?: string;
     history?: { role: 'user' | 'assistant'; content: string }[];
+    images?: { name: string; dataUrl: string }[];
 };
 
 type TicketContext = {
@@ -496,7 +497,7 @@ class GroqAiService {
             `${knowledge}\n\nEarlier personal conversation memory (only this user's authorized visibility):\n${context?.memory || 'None retrieved.'}\n\n` +
             `Recent conversation:\n${recent || 'None.'}\n\nQuestion:\n${sanitizeAiText(question, 2000)}`;
         return completeVictusAi(VICTUS_CUSTOMER_SYSTEM_PROMPT +
-            (config.ai.systemPrompt.trim() ? `\n\nAdditional operator guidance:\n${config.ai.systemPrompt.trim()}` : ''), prompt);
+            (config.ai.systemPrompt.trim() ? `\n\nAdditional operator guidance:\n${config.ai.systemPrompt.trim()}` : ''), prompt, 700, context?.images);
     }
 
     async suggestForTicket(ticket: TicketContext): Promise<string> {

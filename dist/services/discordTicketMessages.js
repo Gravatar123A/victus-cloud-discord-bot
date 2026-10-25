@@ -4,6 +4,7 @@ import { ticketTranslationService } from './ticketTranslationService.js';
 import { logger } from '../utils/logger.js';
 import { enqueueTicketAi } from './discordTicketAi.js';
 import { hasReadableTicketAttachment, ticketAiQueryWithAttachments } from './ticketAiAttachments.js';
+import { hasAiImageAttachment, loadAiImages } from './aiImages.js';
 import { recordAiTurn, recordStaffTicketHandling } from './victusAiContext.js';
 const notTicketUntil = new Map();
 const lastLookupFailureNotice = new Map();
@@ -40,8 +41,16 @@ export async function handleDiscordTicketMessage(message) {
     }
     // Schedule the answer as soon as the ticket is identified. Transcript and
     // staff-role lookups should not hold up the customer's AI response.
-    if (shouldAutoReplyToTicketMessage(ticket.discord_id, message.author.id, message.content, hasReadableTicketAttachment(message))) {
-        enqueueTicketAi(ticket, message.channel, ticketAiQueryWithAttachments(message).catch(() => message.content));
+    if (shouldAutoReplyToTicketMessage(ticket.discord_id, message.author.id, message.content, hasReadableTicketAttachment(message) || hasAiImageAttachment(message.attachments.values()))) {
+        enqueueTicketAi(ticket, message.channel, Promise.all([
+            ticketAiQueryWithAttachments(message).catch(() => message.content),
+            loadAiImages(message.attachments.values()).catch((error) => {
+                logger.warn(`Could not read ticket AI image: ${error instanceof Error ? error.message : String(error)}`);
+                return [];
+            }),
+        ]).then(([query, images]) => ({
+            query: query || 'Please inspect my attached image.', images,
+        })));
         logger.info(`Ticket AI queued for ${ticket.id} in ${Date.now() - message.createdTimestamp}ms (lookup ${Date.now() - startedAt}ms)`);
     }
     const settings = await supabase.getBotSettings(message.guildId).catch(() => null);

@@ -121,6 +121,25 @@ test('an empty provider answer retries the fallback model once', async () => {
     }
 });
 
+test('image requests send verified image bytes only to the free vision model', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-vision-key';
+    const requests = [];
+    globalThis.fetch = async (_url, options) => {
+        requests.push(JSON.parse(options.body));
+        return new Response(JSON.stringify({ choices: [{ message: { content: 'The screenshot shows a console error.' } }] }), { status: 200 });
+    };
+    try {
+        const image = { name: 'console.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' };
+        assert.match(await completeVictusAi('Be safe', 'What is wrong?', 700, [image]), /console error/);
+        assert.deepEqual(requests[0].models, [VICTUS_AI_MODEL]);
+        assert.equal(requests[0].messages[1].content[1].image_url.url, image.dataUrl);
+    } finally {
+        globalThis.fetch = originalFetch;
+        if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+        else process.env.OPENROUTER_API_KEY = originalKey;
+    }
+});
+
 test('attached text logs are read as redacted excerpts, including a later cause', async () => {
     const raw = [
         'Starting server',
