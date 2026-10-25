@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isCurrentPaidService, customerMayRequestHuman, isPremiumSupportCategory } from '../dist/services/premiumSupport.js';
 import { rankVictusDocs } from '../dist/services/ticketKnowledge.js';
-import { redactTicketText, TICKET_AI_MODEL } from '../dist/services/discordTicketAi.js';
+import { isTicketAiLocallyPaused, redactTicketText, resumeTicketAiLocally, TICKET_AI_MODEL } from '../dist/services/discordTicketAi.js';
 import { createTicketControlPanel } from '../dist/commands/ticket.js';
-import { shouldAutoReplyToTicketMessage } from '../dist/services/discordTicketMessages.js';
+import { handleDiscordTicketMessage, shouldAutoReplyToTicketMessage } from '../dist/services/discordTicketMessages.js';
+import { ticketAiCommand } from '../dist/commands/ticketai.js';
+import { supabase } from '../dist/services/supabase.js';
+import { ticketTranslationService } from '../dist/services/ticketTranslationService.js';
 
 test('paid support requires an active, unexpired, positively priced service', () => {
     const active = { status: 'active', plan_type: 'recurring', price: '3.00', expires_at: '2099-01-01' };
@@ -48,5 +51,51 @@ test('customer handoff controls appear only in sensitive categories', () => {
 test('ticket owner receives AI replies even when they also have a staff role', () => {
     assert.equal(shouldAutoReplyToTicketMessage('owner', 'owner', 'my server is crashing'), true);
     assert.equal(shouldAutoReplyToTicketMessage('owner', 'staff', 'please check this'), false);
-    assert.equal(shouldAutoReplyToTicketMessage('owner', 'owner', '/ticketai off'), false);
+    assert.equal(shouldAutoReplyToTicketMessage('owner', 'owner', '/ticketai pause'), false);
+});
+
+test('a staff reply pauses ticket AI until staff resumes it', async () => {
+    const originals = {
+        getTicketByChannel: supabase.getTicketByChannel,
+        getBotSettings: supabase.getBotSettings,
+        getDiscordTicketAiState: supabase.getDiscordTicketAiState,
+        setDiscordTicketAiEnabled: supabase.setDiscordTicketAiEnabled,
+        logTicketMessage: supabase.logTicketMessage,
+        getTranslationState: ticketTranslationService.getState,
+    };
+    const ticketId = '00000000-0000-4000-8000-000000000001';
+    const updates = [];
+    const notices = [];
+    try {
+        supabase.getTicketByChannel = async () => ({ id: ticketId, guild_id: 'guild', discord_id: 'owner', status: 'open' });
+        supabase.getBotSettings = async () => ({ ticket_staff_role_ids: ['staff-role'], ticket_admin_role_ids: [] });
+        supabase.getDiscordTicketAiState = async () => ({ enabled: true, staff_pinged_at: null });
+        supabase.setDiscordTicketAiEnabled = async (...args) => { updates.push(args); return true; };
+        supabase.logTicketMessage = async () => null;
+        ticketTranslationService.getState = async () => null;
+        const message = {
+            author: { id: 'staff', username: 'Staff', bot: false },
+            channelId: 'channel', guildId: 'guild', content: 'I can take this one.',
+            createdTimestamp: Date.now(), attachments: new Map(),
+            channel: { name: 'ticket-123', send: async (payload) => { notices.push(payload); return {}; } },
+            member: { displayName: 'Staff', permissions: { has: () => false }, roles: { cache: { has: (id) => id === 'staff-role' } } },
+            inGuild: () => true,
+        };
+        assert.equal(await handleDiscordTicketMessage(message), true);
+        assert.deepEqual(updates, [[ticketId, false, 'staff']]);
+        assert.equal(isTicketAiLocallyPaused(ticketId), true);
+        assert.match(notices[0].content, /ticketai resume/);
+    } finally {
+        Object.assign(supabase, {
+            getTicketByChannel: originals.getTicketByChannel,
+            getBotSettings: originals.getBotSettings,
+            getDiscordTicketAiState: originals.getDiscordTicketAiState,
+            setDiscordTicketAiEnabled: originals.setDiscordTicketAiEnabled,
+            logTicketMessage: originals.logTicketMessage,
+        });
+        ticketTranslationService.getState = originals.getTranslationState;
+        resumeTicketAiLocally(ticketId);
+    }
+    assert.equal(isTicketAiLocallyPaused(ticketId), false);
+    assert.ok(ticketAiCommand.data.toJSON().options.some((option) => option.name === 'resume'));
 });
