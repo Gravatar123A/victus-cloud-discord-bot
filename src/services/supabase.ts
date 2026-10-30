@@ -1341,14 +1341,28 @@ class SupabaseService {
             if (page.length < 200) break;
         }
 
+        // Retry durable, unfinished money moves before the slower balance sweep.
+        const { data: pendingRows, error: pendingLookupError } = await this.client
+            .from('economy_ledger')
+            .select('user_id')
+            .eq('kind', 'paymenter_sync_pending')
+            .limit(1000);
+        if (pendingLookupError) {
+            logger.warn(`Paymenter pending-mutation priority lookup failed: ${pendingLookupError.message}`);
+        }
+        const pendingIds = new Set((pendingRows || []).map((row) => row.user_id));
+        profiles.sort((a, b) => Number(pendingIds.has(b.id)) - Number(pendingIds.has(a.id)));
+
         let synced = 0;
         let failed = 0;
-        for (let offset = 0; offset < profiles.length; offset += 3) {
-            const batch = profiles.slice(offset, offset + 3);
-            const results = await Promise.all(batch.map((profile) => this.healUserCoins(profile.id)));
-            synced += results.filter((r) => r !== 'failed').length;
-            failed += results.filter((r) => r === 'failed').length;
-            await new Promise((resolve) => setTimeout(resolve, 150));
+        for (const profile of profiles) {
+            const result = await this.healUserCoins(profile.id);
+            if (result === 'failed') failed++;
+            else synced++;
+            // The billing admin API permits 120 requests per minute across all
+            // callers. A balance lookup can make several requests, so leave
+            // capacity for customer provisioning and interactive commands.
+            await new Promise((resolve) => setTimeout(resolve, 4000));
         }
         logger.info(`Paymenter reconciliation (${reason}): ${synced}/${profiles.length} wallets in sync${failed ? `, ${failed} failed` : ''}`);
         return { total: profiles.length, synced, failed };

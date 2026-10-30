@@ -343,10 +343,10 @@ export const readyEvent: Event = {
                 logger.error(`Paymenter COINS reconciliation failed (${reason}):`, error);
             });
         };
-        setTimeout(() => reconcileCoins('startup repair'), 20_000).unref?.();
-        const coinReconciliationTimer = setInterval(() => reconcileCoins('periodic'), 10 * 60 * 1000);
+        setTimeout(() => reconcileCoins('startup repair'), 2 * 60 * 1000).unref?.();
+        const coinReconciliationTimer = setInterval(() => reconcileCoins('periodic'), 24 * 60 * 60 * 1000);
         coinReconciliationTimer.unref?.();
-        logger.info('Paymenter COINS reconciliation worker started (10m interval)');
+        logger.info('Paymenter COINS reconciliation worker started (24h interval, paced billing reads)');
 
         await syncEntitlementRoles(client).catch((error) => {
             logger.error('Initial entitlement role sync failed:', error);
