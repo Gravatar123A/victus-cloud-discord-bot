@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { completeVictusAi, VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL } from '../dist/services/victusAiCompletion.js';
 import { normalizeVictusLinks } from '../dist/services/victusLinks.js';
+import { correctFalseMinecraftVersionClaim, getMinecraftVersionGrounding } from '../dist/services/minecraftVersionGrounding.js';
 import { hasReadableTicketAttachment, summarizeTicketLog, ticketAiQueryWithAttachments } from '../dist/services/ticketAiAttachments.js';
 import { shouldAutoReplyToTicketMessage } from '../dist/services/discordTicketMessages.js';
 import { supabase } from '../dist/services/supabase.js';
@@ -9,6 +10,57 @@ import { supabase } from '../dist/services/supabase.js';
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.OPENROUTER_API_KEY;
 const originalFallbackKey = process.env.OPENROUTER_FALLBACK_API_KEY;
+
+test('Minecraft Java 26.2 is grounded as a release and false version claims are corrected', async () => {
+    const grounding = await getMinecraftVersionGrounding('Customer: Fabric 26.2, Sodium 26.2. Will my mods work?');
+    assert.ok(grounding?.verifiedReleases.includes('26.2'));
+    assert.match(grounding.guidance, /Minecraft Java Edition 26\.2 is a real release/);
+    assert.match(grounding.guidance, /Sodium.*client-side/);
+    const wrong = 'Yes — 26.2 is not a Minecraft version. It looks like a mod version.';
+    const corrected = correctFalseMinecraftVersionClaim(wrong, grounding);
+    assert.match(corrected, /26\.2 is a real release/);
+    assert.match(corrected, /I need to correct my earlier advice/);
+    assert.doesNotMatch(corrected, /not a Minecraft version/);
+});
+
+test('new Minecraft release numbers come from the official Java manifest', async () => {
+    let manifestCalls = 0;
+    globalThis.fetch = async (url) => {
+        assert.equal(String(url), 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json');
+        manifestCalls++;
+        return new Response(JSON.stringify({ versions: [{ id: '27.1', type: 'release' },
+            { id: '27.2', type: 'snapshot' }] }), { status: 200 });
+    };
+    try {
+        const grounding = await getMinecraftVersionGrounding('Fabric Minecraft 27.1 with mods');
+        assert.equal(manifestCalls, 1);
+        assert.deepEqual(grounding?.verifiedReleases, ['27.1']);
+        assert.match(grounding.guidance, /Verified Java release version\(s\): 27\.1/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('customer AI receives verified version facts and cannot repeat the 26.2 mistake', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-minecraft-grounding';
+    let suppliedSystem = '';
+    globalThis.fetch = async (_url, options) => {
+        suppliedSystem = JSON.parse(options.body).messages[0].content;
+        return new Response(JSON.stringify({ choices: [{ message: { content:
+            '26.2 is not a Minecraft version. Change your server to 1.21.1.' } }] }), { status: 200 });
+    };
+    try {
+        const answer = await completeVictusAi('Help the customer accurately', 'Will my mods work?', 700, [],
+            'Customer: fabric 26.2\nCustomer: Sodium 26.2\nCustomer: wont my mods work?');
+        assert.match(suppliedSystem, /Verified Java release version\(s\): 26\.2/);
+        assert.match(answer, /26\.2 is a real release/);
+        assert.doesNotMatch(answer, /Change your server to 1\.21\.1/);
+    } finally {
+        globalThis.fetch = originalFetch;
+        if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+        else process.env.OPENROUTER_API_KEY = originalKey;
+    }
+});
 
 test('Victus URLs use verified domains and canonical destinations', () => {
     assert.equal(normalizeVictusLinks('Visit victorcloud.com/free.'), 'Visit https://victuscloud.com/free.');
