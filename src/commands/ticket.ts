@@ -1649,6 +1649,9 @@ async function handleCloseTicket(interaction: any) {
         SendMessages: false,
     }).catch((error: unknown) => logger.warn(`Could not lock closed ticket #${ticket.ticket_number}: ${String(error)}`));
 
+    await interaction.channel.setName(`closed-ticket-${ticket.ticket_number}`)
+        .catch((error: unknown) => logger.warn(`Could not rename closed ticket #${ticket.ticket_number}: ${String(error)}`));
+
     logger.info(`Ticket #${ticket.ticket_number} closed by ${interaction.user.tag}`);
 }
 
