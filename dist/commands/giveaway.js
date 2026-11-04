@@ -476,7 +476,11 @@ export const giveawayCommand = {
                 return;
             }
             const updatedParticipants = [...base, interaction.user.id];
-            await supabase.updateGiveaway(giveawayId, { participants: updatedParticipants });
+            const saved = await supabase.updateGiveaway(giveawayId, { participants: updatedParticipants });
+            if (!saved) {
+                await interaction.editReply({ content: '❌ Could not save your entry. Please try again.' });
+                return;
+            }
             // Refresh card message
             const card = buildGiveawayCard(fresh || giveaway, updatedParticipants.length);
             const channel = interaction.guild?.channels.cache.get(giveaway.channel_id);
@@ -525,6 +529,8 @@ export const giveawayCommand = {
                 return;
             }
             const endsAt = new Date(Date.now() + session.durationMs).toISOString();
+            let message = null;
+            let savedGiveawayId = null;
             try {
                 const tempGiveaway = {
                     id: 'temp',
@@ -552,16 +558,24 @@ export const giveawayCommand = {
                     updated_at: new Date().toISOString()
                 };
                 const card = buildGiveawayCard(tempGiveaway, 0);
-                const message = await channel.send({
+                message = await channel.send({
                     components: [card],
                     flags: V2
                 });
                 tempGiveaway.message_id = message.id;
                 const dbGiveaway = await supabase.createGiveaway(interaction.guildId, channel.id, message.id, session.prize, session.durationText, session.winnersCount, new Date(endsAt), interaction.user.id, tempGiveaway.requirements, []);
                 if (!dbGiveaway) {
+                    await message.delete().catch(async (error) => {
+                        logger.error('Failed to remove unsaved giveaway message:', error);
+                        await message.edit({
+                            components: [ComponentsV2.errorContainer('Giveaway unavailable', 'This giveaway could not be saved. Please ask a moderator to launch it again.')],
+                            flags: V2
+                        }).catch((editError) => logger.error('Failed to disable unsaved giveaway message:', editError));
+                    });
                     await interaction.reply({ content: '❌ System error writing giveaway to database.', flags: EPH });
                     return;
                 }
+                savedGiveawayId = dbGiveaway.id;
                 // Rewrite message with correct ID card
                 const actualCard = buildGiveawayCard(dbGiveaway, 0);
                 await message.edit({
@@ -575,6 +589,10 @@ export const giveawayCommand = {
             }
             catch (err) {
                 logger.error('Failed to launch giveaway:', err);
+                if (savedGiveawayId)
+                    await supabase.deleteGiveaway(savedGiveawayId);
+                if (message)
+                    await message.delete().catch((cleanupError) => logger.error('Failed to remove incomplete giveaway message:', cleanupError));
                 await interaction.reply({ content: '❌ Failed to launch giveaway. Check logs.', flags: EPH });
             }
         }

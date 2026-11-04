@@ -3285,6 +3285,7 @@ class SupabaseService {
         const { data, error } = await this.client
             .from('giveaways')
             .insert({
+                id: randomUUID(),
                 guild_id: guildId,
                 channel_id: channelId,
                 message_id: messageId,

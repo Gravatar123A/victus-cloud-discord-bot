@@ -587,7 +587,11 @@ export const giveawayCommand: Command = {
                 return;
             }
             const updatedParticipants = [...base, interaction.user.id];
-            await supabase.updateGiveaway(giveawayId, { participants: updatedParticipants });
+            const saved = await supabase.updateGiveaway(giveawayId, { participants: updatedParticipants });
+            if (!saved) {
+                await interaction.editReply({ content: '❌ Could not save your entry. Please try again.' });
+                return;
+            }
             
             // Refresh card message
             const card = buildGiveawayCard(fresh || giveaway, updatedParticipants.length);
@@ -650,6 +654,8 @@ export const giveawayCommand: Command = {
 
             const endsAt = new Date(Date.now() + session.durationMs).toISOString();
 
+            let message: any = null;
+            let savedGiveawayId: string | null = null;
             try {
                 const tempGiveaway: Giveaway = {
                     id: 'temp',
@@ -678,7 +684,7 @@ export const giveawayCommand: Command = {
                 };
 
                 const card = buildGiveawayCard(tempGiveaway, 0);
-                const message = await (channel as any).send({
+                message = await (channel as any).send({
                     components: [card],
                     flags: V2
                 });
@@ -699,9 +705,17 @@ export const giveawayCommand: Command = {
                 );
 
                 if (!dbGiveaway) {
+                    await message.delete().catch(async (error: unknown) => {
+                        logger.error('Failed to remove unsaved giveaway message:', error);
+                        await message.edit({
+                            components: [ComponentsV2.errorContainer('Giveaway unavailable', 'This giveaway could not be saved. Please ask a moderator to launch it again.')],
+                            flags: V2
+                        }).catch((editError: unknown) => logger.error('Failed to disable unsaved giveaway message:', editError));
+                    });
                     await interaction.reply({ content: '❌ System error writing giveaway to database.', flags: EPH });
                     return;
                 }
+                savedGiveawayId = dbGiveaway.id;
 
                 // Rewrite message with correct ID card
                 const actualCard = buildGiveawayCard(dbGiveaway, 0);
@@ -717,6 +731,8 @@ export const giveawayCommand: Command = {
                 });
             } catch (err) {
                 logger.error('Failed to launch giveaway:', err);
+                if (savedGiveawayId) await supabase.deleteGiveaway(savedGiveawayId);
+                if (message) await message.delete().catch((cleanupError: unknown) => logger.error('Failed to remove incomplete giveaway message:', cleanupError));
                 await interaction.reply({ content: '❌ Failed to launch giveaway. Check logs.', flags: EPH });
             }
         }
