@@ -169,6 +169,10 @@ export const interactionCreateEvent = {
                     }
                     catch (error) {
                         logger.error(`Error handling button ${customId}:`, error);
+                        if (interaction.deferred && !interaction.replied) {
+                            await interaction.editReply({ content: '❌ Something went wrong. Please try again shortly.' }).catch(() => { });
+                            return;
+                        }
                     }
                 }
             }

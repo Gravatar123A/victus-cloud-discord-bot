@@ -485,7 +485,12 @@ export const giveawayCommand: Command = {
             // database and Discord's invite API; without an early defer the
             // interaction token expires first and members see "This
             // interaction failed" instead of being entered.
-            await interaction.deferReply({ flags: EPH }).catch(() => {});
+            try {
+                await interaction.deferReply({ flags: EPH });
+            } catch (error) {
+                logger.warn(`Could not acknowledge giveaway entry: ${String(error)}`);
+                return;
+            }
 
             const giveawayId = interaction.customId.split(':')[2];
             const giveaway = await supabase.getGiveaway(giveawayId);
@@ -554,7 +559,22 @@ export const giveawayCommand: Command = {
             // 3. Invites requirement
             const invs = giveaway.requirements?.invites ?? 0;
             if (invs > 0) {
-                const invitesList = await interaction.guild?.invites.fetch().catch(() => null);
+                let invitesList;
+                let inviteTimeout: ReturnType<typeof setTimeout> | undefined;
+                try {
+                    invitesList = await Promise.race([
+                        interaction.guild!.invites.fetch(),
+                        new Promise<never>((_, reject) => {
+                            inviteTimeout = setTimeout(() => reject(new Error('Invite lookup timed out')), 8_000);
+                        }),
+                    ]);
+                } catch (error) {
+                    logger.warn(`Could not verify invites for giveaway ${giveawayId}: ${String(error)}`);
+                    await interaction.editReply({ content: '⚠️ I could not verify your invites right now. Please try again shortly.' });
+                    return;
+                } finally {
+                    if (inviteTimeout) clearTimeout(inviteTimeout);
+                }
                 const userInvites = invitesList ? invitesList.filter(i => i.inviter?.id === interaction.user.id) : null;
                 const uses = userInvites ? userInvites.reduce((sum, i) => sum + (i.uses || 0), 0) : 0;
 
@@ -592,6 +612,8 @@ export const giveawayCommand: Command = {
                 await interaction.editReply({ content: '❌ Could not save your entry. Please try again.' });
                 return;
             }
+
+            await interaction.editReply({ content: '🎉 You have successfully entered the giveaway! Good luck!' });
             
             // Refresh card message
             const card = buildGiveawayCard(fresh || giveaway, updatedParticipants.length);
@@ -601,7 +623,6 @@ export const giveawayCommand: Command = {
                 if (message) await message.edit({ components: [card], flags: V2 }).catch(() => {});
             }
 
-            await interaction.editReply({ content: '🎉 You have successfully entered the giveaway! Good luck!' });
         }
     },
 
