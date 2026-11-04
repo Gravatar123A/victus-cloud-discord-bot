@@ -418,9 +418,7 @@ export const giveawayCommand = {
             // 0. Account Linking Check (Mandatory for all entrants)
             const linked = await supabase.getLinkedAccount(interaction.user.id).catch(() => null);
             if (!linked) {
-                await interaction.editReply({
-                    components: [ComponentsV2.errorContainer('Account Not Linked', 'You must link your Discord account to Victus Cloud to participate in giveaways. Use the link panel or `/account` to link your profile.')],
-                });
+                await interaction.editReply({ content: '❌ Account not linked. Link your Discord account to Victus Cloud before entering. Use the link panel or `/account`.' });
                 return;
             }
             // 1. Role requirements
@@ -428,9 +426,7 @@ export const giveawayCommand = {
             if (rId) {
                 const hasRole = member.roles.cache.has(rId);
                 if (!hasRole) {
-                    await interaction.editReply({
-                        components: [ComponentsV2.errorContainer('Entry Blocked', `You do not have the required role: <@&${rId}>.`)],
-                    });
+                    await interaction.editReply({ content: `❌ Entry blocked: you need the <@&${rId}> role.` });
                     return;
                 }
             }
@@ -443,9 +439,7 @@ export const giveawayCommand = {
                     level = calculateLevel(Number(profile.total_xp ?? 0));
                 }
                 if (level < lvl) {
-                    await interaction.editReply({
-                        components: [ComponentsV2.errorContainer('Entry Blocked', `Your Level is too low. Required: **Level ${lvl}** (You: **Level ${level}**). Link account and check levels via \`/account\`.`)],
-                    });
+                    await interaction.editReply({ content: `❌ Entry blocked: Level ${lvl} required. Your current level is ${level}. Check your level with \`/account\`.` });
                     return;
                 }
             }
@@ -474,9 +468,7 @@ export const giveawayCommand = {
                 const userInvites = invitesList ? invitesList.filter(i => i.inviter?.id === interaction.user.id) : null;
                 const uses = userInvites ? userInvites.reduce((sum, i) => sum + (i.uses || 0), 0) : 0;
                 if (uses < invs) {
-                    await interaction.editReply({
-                        components: [ComponentsV2.errorContainer('Entry Blocked', `You do not have enough invites. Required: **\`${invs}\`** (You: **\`${uses}\`**).`)],
-                    });
+                    await interaction.editReply({ content: `❌ Entry blocked: ${invs} invites required. You currently have ${uses}.` });
                     return;
                 }
             }
@@ -485,9 +477,7 @@ export const giveawayCommand = {
             if (bst) {
                 const isBooster = member.premiumSince !== null;
                 if (!isBooster) {
-                    await interaction.editReply({
-                        components: [ComponentsV2.errorContainer('Entry Blocked', 'This giveaway is restricted to server boosters only.')],
-                    });
+                    await interaction.editReply({ content: '❌ Entry blocked: this giveaway is restricted to server boosters.' });
                     return;
                 }
             }
