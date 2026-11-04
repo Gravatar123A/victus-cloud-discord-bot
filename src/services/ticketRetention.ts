@@ -172,6 +172,10 @@ async function closeDiscordTickets(client: Client<true>, now: number): Promise<n
         }
         if (!data) continue;
         closed++;
+        if (channel?.setName) {
+            await channel.setName(`closed-ticket-${ticket.ticket_number}`)
+                .catch((channelError: unknown) => logger.warn(`Could not rename auto-closed ticket #${ticket.ticket_number}: ${String(channelError)}`));
+        }
         try {
             if (channel?.send) {
                 await channel.send({
