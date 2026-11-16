@@ -146,9 +146,10 @@ async function replyWithAi(message: Message, prompt: string, publicReply: boolea
 
         const history = aiConversationMemory.getHistory(sessionId);
         const scope = publicReply ? 'public' : 'private';
-        const memory = await getAiMemory(message.author.id, sessionId, scope, prompt).catch(() => '');
-
-        const linked = await supabase.getLinkedAccount(message.author.id).catch(() => null);
+        const [memory, linked] = await Promise.all([
+            getAiMemory(message.author.id, sessionId, scope, prompt).catch(() => ''),
+            supabase.getLinkedAccount(message.author.id).catch(() => null),
+        ]);
         const profile = linked ? await supabase.getUserProfile(linked.user_id).catch(() => null) : null;
         const answer = await groqAi.askVictus(effectivePrompt, {
             discordTag: message.author.tag,
