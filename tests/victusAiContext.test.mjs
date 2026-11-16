@@ -51,6 +51,26 @@ test('customer AI completion prioritizes the ticket Nemotron model', async () =>
     }
 });
 
+test('quick customer replies reserve the output budget for the visible answer', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalKey = process.env.OPENROUTER_API_KEY;
+    process.env.OPENROUTER_API_KEY = 'test-quick-reply';
+    let requested;
+    globalThis.fetch = async (_url, options) => {
+        requested = JSON.parse(options.body);
+        return new Response(JSON.stringify({ choices: [{ message: { content: 'Staff needs to inspect the signup error.' } }] }), { status: 200 });
+    };
+    try {
+        assert.match(await completeVictusAi('Answer directly', 'Signup failed', 300, [], '', true), /Staff needs/);
+        assert.equal(requested.max_tokens, 300);
+        assert.deepEqual(requested.reasoning, { enabled: false });
+    } finally {
+        globalThis.fetch = originalFetch;
+        if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+        else process.env.OPENROUTER_API_KEY = originalKey;
+    }
+});
+
 test('customer AI completion can load the existing private OpenRouter key', async () => {
     const originalClient = supabase.client;
     const originalFetch = globalThis.fetch;

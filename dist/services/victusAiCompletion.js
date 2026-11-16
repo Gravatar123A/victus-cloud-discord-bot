@@ -31,7 +31,7 @@ export function victusAiConfigured() {
     return Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEYS || process.env.OPENROUTER_FALLBACK_API_KEY
         || process.env.SUPABASE_SERVICE_KEY || process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS);
 }
-export async function completeVictusAi(system, prompt, maxTokens = 700, images = [], groundingQuery = '') {
+export async function completeVictusAi(system, prompt, maxTokens = 700, images = [], groundingQuery = '', fastReply = false) {
     const versionGrounding = await getMinecraftVersionGrounding(groundingQuery);
     const messages = [
         { role: 'system', content: versionGrounding ? `${system}\n\n${versionGrounding.guidance}` : system },
@@ -53,6 +53,7 @@ export async function completeVictusAi(system, prompt, maxTokens = 700, images =
             // OpenRouter tries the second model if the first model's providers fail.
             body: JSON.stringify({
                 models, messages, temperature: 0.25, max_tokens: maxTokens,
+                ...(fastReply ? { reasoning: { enabled: false } } : {}),
             }),
             signal: AbortSignal.timeout(timeoutMs),
         });
@@ -79,7 +80,7 @@ export async function completeVictusAi(system, prompt, maxTokens = 700, images =
         if ((quotaUntil.get(key) || 0) > Date.now())
             continue;
         try {
-            return await request(key, images.length ? [VICTUS_AI_MODEL] : [VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL], 45_000);
+            return await request(key, images.length ? [VICTUS_AI_MODEL] : [VICTUS_AI_MODEL, VICTUS_AI_FALLBACK_MODEL], images.length ? 35_000 : 25_000);
         }
         catch (error) {
             openRouterError = error;
@@ -90,7 +91,7 @@ export async function completeVictusAi(system, prompt, maxTokens = 700, images =
             }
             if (!images.length && (status === undefined || status === 408 || status >= 500)) {
                 try {
-                    return await request(key, [VICTUS_AI_FALLBACK_MODEL], 65_000);
+                    return await request(key, [VICTUS_AI_FALLBACK_MODEL], 20_000);
                 }
                 catch (fallbackError) {
                     openRouterError = fallbackError;
