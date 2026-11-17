@@ -286,6 +286,9 @@ class SupabaseService {
      */
     subscribeToLinks(callback) {
         logger.debug('🔌 Initializing Realtime connection to discord_linked_accounts...');
+        let reconnectFailures = 0;
+        let failuresSinceLog = 0;
+        let lastFailureLogAt = 0;
         const channel = this.client
             .channel('any-channel-name') // Channel name can be anything
             .on('postgres_changes', {
@@ -298,13 +301,26 @@ class SupabaseService {
         });
         channel.subscribe((status, error) => {
             if (status === 'SUBSCRIBED') {
-                logger.info('✅ Realtime: Successfully subscribed to database changes!');
+                if (reconnectFailures > 0) {
+                    logger.info(`✅ Realtime connection restored after ${reconnectFailures} failed attempt(s).`);
+                }
+                else {
+                    logger.info('✅ Realtime: Successfully subscribed to database changes!');
+                }
+                reconnectFailures = 0;
+                failuresSinceLog = 0;
+                lastFailureLogAt = 0;
             }
-            else if (status === 'CHANNEL_ERROR') {
-                logger.error('❌ Realtime Channel Error:', error?.message || 'Unknown error');
-            }
-            else if (status === 'TIMED_OUT') {
-                logger.warn('⚠️ Realtime: Connection timed out. Ensure "supabase_realtime" publication includes "discord_linked_accounts".');
+            else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                reconnectFailures++;
+                failuresSinceLog++;
+                const now = Date.now();
+                if (lastFailureLogAt === 0 || now - lastFailureLogAt >= 60_000) {
+                    const detail = error?.message ? `: ${error.message}` : '';
+                    logger.warn(`Supabase Realtime unavailable (${status})${detail}. Retrying automatically; ${failuresSinceLog} failed attempt(s) since last update.`);
+                    failuresSinceLog = 0;
+                    lastFailureLogAt = now;
+                }
             }
             else {
                 logger.debug(`📡 Realtime Status Update: ${status}`);

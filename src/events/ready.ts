@@ -139,6 +139,7 @@ let linkCreditsProcessing = false;
 
 async function processPendingLinkRewards(client: Client<true>): Promise<void> {
     if (!config.economy.discordLink.enabled) return;
+    if (!supabase.isAvailable()) return;
     if (linkCreditsProcessing) return;
     linkCreditsProcessing = true;
     try {
@@ -158,15 +159,18 @@ async function processPendingLinkRewards(client: Client<true>): Promise<void> {
             return;
         }
         const rows = (data || []) as Array<{ user_id: string; discord_id: string }>;
+        let grantedCount = 0;
         for (const row of rows) {
             if (!row.user_id || !row.discord_id) continue;
             // Skip if user left the guild (revoked logic will handle)
+            // Realtime may have been unavailable when this account was linked.
+            await assignLinkedRole(client, row.discord_id).catch(() => false);
             const granted = await supabase.grantDiscordLinkCoins({ user_id: row.user_id, discord_id: row.discord_id }).catch(() => false);
-            if (granted) logger.info(`Link reward repair: +${config.economy.discordLink.amount} COINS to ${row.discord_id}`);
+            if (granted) grantedCount++;
             // Small delay to avoid hammering Paymenter
             await new Promise((r) => setTimeout(r, 200));
         }
-        if (rows.length > 0) logger.info(`Link reward repair: processed ${rows.length} pending link(s)`);
+        if (grantedCount > 0) logger.info(`Link reward repair: granted ${grantedCount} of ${rows.length} pending reward(s)`);
     } catch (e) {
         logger.warn(`Link reward repair failed: ${(e as Error).message}`);
     } finally {

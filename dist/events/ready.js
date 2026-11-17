@@ -26,6 +26,7 @@ import { hubBridgeService } from '../services/hubBridgeService.js';
 import { gtnService } from '../services/gtnService.js';
 import { unscrambleService } from '../services/unscrambleService.js';
 import { voiceAssistant } from '../services/voiceAssistant.js';
+import { startTicketRetention } from '../services/ticketRetention.js';
 let dmQueueProcessing = false;
 let inviteCreditsProcessing = false;
 /**
@@ -130,6 +131,8 @@ let linkCreditsProcessing = false;
 async function processPendingLinkRewards(client) {
     if (!config.economy.discordLink.enabled)
         return;
+    if (!supabase.isAvailable())
+        return;
     if (linkCreditsProcessing)
         return;
     linkCreditsProcessing = true;
@@ -150,18 +153,21 @@ async function processPendingLinkRewards(client) {
             return;
         }
         const rows = (data || []);
+        let grantedCount = 0;
         for (const row of rows) {
             if (!row.user_id || !row.discord_id)
                 continue;
             // Skip if user left the guild (revoked logic will handle)
+            // Realtime may have been unavailable when this account was linked.
+            await assignLinkedRole(client, row.discord_id).catch(() => false);
             const granted = await supabase.grantDiscordLinkCoins({ user_id: row.user_id, discord_id: row.discord_id }).catch(() => false);
             if (granted)
-                logger.info(`Link reward repair: +${config.economy.discordLink.amount} COINS to ${row.discord_id}`);
+                grantedCount++;
             // Small delay to avoid hammering Paymenter
             await new Promise((r) => setTimeout(r, 200));
         }
-        if (rows.length > 0)
-            logger.info(`Link reward repair: processed ${rows.length} pending link(s)`);
+        if (grantedCount > 0)
+            logger.info(`Link reward repair: granted ${grantedCount} of ${rows.length} pending reward(s)`);
     }
     catch (e) {
         logger.warn(`Link reward repair failed: ${e.message}`);
@@ -241,6 +247,7 @@ export const readyEvent = {
         // some Pterodactyl images do not ship the native canvas binding. The music
         // renderer already falls back to the text panel when a card is requested.
         logger.info(`Serving ${client.guilds.cache.size} guilds`);
+        startTicketRetention(client);
         const ticketGuildId = config.bot.supportGuildId || config.discord.guildId;
         if (ticketGuildId) {
             setTimeout(() => {
@@ -305,10 +312,10 @@ export const readyEvent = {
                 logger.error(`Paymenter COINS reconciliation failed (${reason}):`, error);
             });
         };
-        setTimeout(() => reconcileCoins('startup repair'), 20_000).unref?.();
-        const coinReconciliationTimer = setInterval(() => reconcileCoins('periodic'), 10 * 60 * 1000);
+        setTimeout(() => reconcileCoins('startup repair'), 2 * 60 * 1000).unref?.();
+        const coinReconciliationTimer = setInterval(() => reconcileCoins('periodic'), 24 * 60 * 60 * 1000);
         coinReconciliationTimer.unref?.();
-        logger.info('Paymenter COINS reconciliation worker started (10m interval)');
+        logger.info('Paymenter COINS reconciliation worker started (24h interval, paced billing reads)');
         await syncEntitlementRoles(client).catch((error) => {
             logger.error('Initial entitlement role sync failed:', error);
         });
