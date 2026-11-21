@@ -12,6 +12,16 @@ const opusPackage = path.join(rootDir, "node_modules", "opusscript", "package.js
 const ffmpegPackage = path.join(rootDir, "node_modules", "@ffmpeg-installer", "ffmpeg", "package.json");
 const edgeTtsPackage = path.join(rootDir, "node_modules", "node-edge-tts", "package.json");
 const nodeModulesDir = path.join(rootDir, "node_modules");
+const apiTypesDir = path.join(nodeModulesDir, "discord-api-types");
+const nestedApiTypesDir = path.join(nodeModulesDir, "@discordjs", "voice", "node_modules", "discord-api-types");
+
+function dependenciesReady() {
+    if (![discordJsPackage, voicePackage, opusPackage, ffmpegPackage, edgeTtsPackage].every(existsSync)) return false;
+    // A partially synced npm tree can contain package.json while omitting the
+    // ESM entrypoints Discord needs. This previously crashed before login.
+    return [apiTypesDir, nestedApiTypesDir].every((dir) =>
+        !existsSync(path.join(dir, "package.json")) || existsSync(path.join(dir, "v10.mjs")));
+}
 
 // 1. Ensure node_modules directory exists
 try {
@@ -23,19 +33,22 @@ try {
 }
 
 // 2. Verify critical dependencies
-if (![discordJsPackage, voicePackage, opusPackage, ffmpegPackage, edgeTtsPackage].every(existsSync)) {
+if (!dependenciesReady()) {
     console.log("[Victus Bot] Dependencies missing in node_modules. Installing required packages...");
     const tmpCache = process.platform === "win32" ? path.join(rootDir, ".npm-cache") : "/tmp/.npm";
     try {
         mkdirSync(tmpCache, { recursive: true });
     } catch {}
 
-    const install = spawnSync("npm", ["install", "--no-audit", "--no-fund"], {
+    const installArgs = existsSync(path.join(rootDir, "package-lock.json"))
+        ? ["ci", "--include=dev", "--no-audit", "--no-fund"]
+        : ["install", "--no-audit", "--no-fund"];
+    const install = spawnSync("npm", installArgs, {
         cwd: rootDir,
         stdio: "inherit",
         shell: process.platform === "win32",
     });
-    if (install.status !== 0 || ![discordJsPackage, voicePackage, opusPackage, ffmpegPackage, edgeTtsPackage].every(existsSync)) {
+    if (install.status !== 0 || !dependenciesReady()) {
         console.error("[Victus Bot] Required dependency installation failed. Aborting startup.");
         process.exit(1);
     }
