@@ -173,8 +173,11 @@ export function resetSupabaseCircuit() {
         logger.info('✅ [Supabase Circuit Breaker] Connection restored. Resuming normal operations.');
     }
 }
-async function resilientFetch(input, init) {
+export async function resilientFetch(input, init) {
     const isProbe = init?.__isProbe === true;
+    // An Edge Function can time out while PostgREST is healthy. Its failure
+    // must not disable ticket and account queries through the shared client.
+    const isEdgeFunction = /\/functions\/v1\//.test(String(input?.url ?? input));
     if (isSupabaseCircuitOpen() && !isProbe) {
         // Fast-fail: return clean synthesized 503 response so caller fails gracefully without hanging
         return new Response(JSON.stringify({
@@ -219,7 +222,8 @@ async function resilientFetch(input, init) {
             else if (response.status === 544) {
                 errorMsg = 'Supabase 544: Database Connection Timed Out';
             }
-            tripSupabaseCircuit(errorMsg);
+            if (!isEdgeFunction)
+                tripSupabaseCircuit(errorMsg);
             // Intercept HTML bodies and replace with clean JSON so PostgREST doesn't choke or dump HTML
             return new Response(JSON.stringify({
                 code: `SUPABASE_${response.status}`,
@@ -232,14 +236,16 @@ async function resilientFetch(input, init) {
                 headers: { 'Content-Type': 'application/json' },
             });
         }
-        resetSupabaseCircuit();
+        if (!isEdgeFunction)
+            resetSupabaseCircuit();
         return response;
     }
     catch (err) {
         clearTimeout(timeoutId);
         const isTimeout = err.name === 'AbortError' || String(err.message || '').includes('timeout');
         const reason = isTimeout ? 'Supabase request timeout (>10s)' : `Supabase network error: ${err.message || 'Unknown'}`;
-        tripSupabaseCircuit(reason);
+        if (!isEdgeFunction)
+            tripSupabaseCircuit(reason);
         // Return a clean synthetic 504 Response instead of crashing or leaking raw stack
         return new Response(JSON.stringify({
             code: 'SUPABASE_FETCH_TIMEOUT',

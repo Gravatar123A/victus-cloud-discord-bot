@@ -109,6 +109,13 @@ export async function syncEntitlementRoles(client: Client, discordId?: string): 
         supabase.getPaymenterServices(),
     ]);
 
+    // The API helpers return [] during outages. Treat an empty snapshot as
+    // unavailable, otherwise a transient failure strips roles from everyone.
+    if (!records.length || !panelUsers.length || !panelServers.length || !billingUsers.length || !billingServices.length) {
+        logger.warn('Entitlement role sync skipped: one or more source snapshots are empty; keeping current roles.');
+        return 0;
+    }
+
     const panelIdsByEmail = indexUserIdsByEmail(panelUsers);
     const billingIdsByEmail = indexUserIdsByEmail(billingUsers);
     const paidServerServiceIds = activePaidServerServiceIds(panelServers);
